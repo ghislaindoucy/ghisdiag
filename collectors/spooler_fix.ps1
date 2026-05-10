@@ -1,10 +1,10 @@
 # PlanetDiag - Gestionnaire du Spooler d'impression
 # Usage:
-#   -Action list                                  -> statut service + nb total travaux (JSON)
-#   -Action printers                              -> imprimantes + travaux par imprimante (JSON)
-#   -Action cancel-job  -PrinterName <n> -JobId <id>  -> annule un travail specifique (JSON)
-#   -Action cancel-all  -PrinterName <n>          -> annule tous les travaux d'une imprimante (JSON)
-#   -Action fix                                   -> vide tout + redemarre service (JSON)
+#   -Action list                                       -> statut service + nb total travaux
+#   -Action printers                                   -> imprimantes + travaux par imprimante
+#   -Action cancel-job  -PrinterName <n> -JobId <id>  -> annule un travail specifique
+#   -Action cancel-all  -PrinterName <n>               -> annule tous les travaux d'une imprimante
+#   -Action fix                                        -> vide tout + redemarre service
 #
 # Doit etre execute avec droits administrateur.
 
@@ -52,24 +52,47 @@ function Get-QueueInfo {
     }
 }
 
+function Get-DefaultPrinterName {
+    # Win32_Printer a la propriete Default, contrairement aux objets Get-Printer
+    try {
+        $dp = Get-CimInstance -ClassName Win32_Printer -Filter "Default=True" `
+              -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dp -and $dp.Name) { return $dp.Name } else { return "" }
+    } catch {
+        return ""
+    }
+}
+
 function Get-PrinterList {
     try {
-        $printers = Get-Printer -ErrorAction Stop | Sort-Object -Property Name
+        $defaultName = Get-DefaultPrinterName
+        $printers    = Get-Printer -ErrorAction Stop | Sort-Object -Property Name
         $list = foreach ($p in $printers) {
             $jobs = @()
             try {
                 $rawJobs = Get-PrintJob -PrinterName $p.Name -ErrorAction SilentlyContinue
                 if ($rawJobs) {
                     $jobs = @(foreach ($j in $rawJobs) {
-                        $sizeKb = if ($j.Size -gt 0) { [math]::Round($j.Size / 1024, 1) } else { 0 }
+                        $sizeKb = 0
+                        try { $sizeKb = if ($j.Size -gt 0) { [math]::Round($j.Size / 1024, 1) } else { 0 } } catch {}
                         $submitted = ""
                         try { $submitted = $j.SubmittedTime.ToString("HH:mm:ss") } catch {}
+                        $docName = ""
+                        try { $docName = if ($j.DocumentName) { $j.DocumentName } else { "(sans nom)" } } catch {}
+                        $userName = ""
+                        try { $userName = if ($j.UserName) { $j.UserName } else { "" } } catch {}
+                        $jStatus = ""
+                        try { $jStatus = $j.JobStatus.ToString() } catch {}
+                        $jPages = 0
+                        try { $jPages = [int]$j.TotalPages } catch {}
+                        $jId = 0
+                        try { $jId = [int]$j.Id } catch {}
                         @{
-                            id        = [int]$j.Id
-                            document  = if ($j.DocumentName) { $j.DocumentName } else { "(sans nom)" }
-                            user      = if ($j.UserName)     { $j.UserName }     else { "" }
-                            status    = $j.JobStatus.ToString()
-                            pages     = [int]$j.TotalPages
+                            id        = $jId
+                            document  = $docName
+                            user      = $userName
+                            status    = $jStatus
+                            pages     = $jPages
                             size_kb   = $sizeKb
                             submitted = $submitted
                         }
@@ -77,14 +100,23 @@ function Get-PrinterList {
                 }
             } catch {}
 
+            $pName   = ""
+            $pStatus = "Unknown"
+            $pDriver = ""
+            $pPort   = ""
+            try { $pName   = $p.Name }              catch {}
+            try { $pStatus = $p.PrinterStatus.ToString() } catch {}
+            try { $pDriver = $p.DriverName }         catch {}
+            try { $pPort   = $p.PortName }           catch {}
+
             @{
-                name      = $p.Name
-                status    = $p.PrinterStatus.ToString()
-                is_default = [bool]$p.Default
-                driver    = if ($p.DriverName)  { $p.DriverName }  else { "" }
-                port      = if ($p.PortName)    { $p.PortName }    else { "" }
-                job_count = $jobs.Count
-                jobs      = $jobs
+                name       = $pName
+                status     = $pStatus
+                is_default = ($pName -eq $defaultName)
+                driver     = $pDriver
+                port       = $pPort
+                job_count  = $jobs.Count
+                jobs       = $jobs
             }
         }
         return @{ success = $true; printers = @($list); error = $null }
@@ -131,7 +163,7 @@ if ($Action -eq "cancel-job") {
                      printer = $PrinterName; job_id = $JobId }
     }
     Write-Output ($result | ConvertTo-Json -Depth 2)
-    exit $(if ($result.success) { 0 } else { 1 })
+    exit $(if ($result["success"]) { 0 } else { 1 })
 }
 
 # -- Action: cancel-all -------------------------------------------------------
@@ -142,7 +174,7 @@ if ($Action -eq "cancel-all") {
         exit 1
     }
     try {
-        $jobs = Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop
+        $jobs  = Get-PrintJob -PrinterName $PrinterName -ErrorAction Stop
         $count = if ($jobs) { @($jobs).Count } else { 0 }
         if ($count -gt 0) {
             $jobs | Remove-PrintJob -ErrorAction Stop
@@ -154,74 +186,78 @@ if ($Action -eq "cancel-all") {
                      printer = $PrinterName; cancelled = 0 }
     }
     Write-Output ($result | ConvertTo-Json -Depth 2)
-    exit $(if ($result.success) { 0 } else { 1 })
+    exit $(if ($result["success"]) { 0 } else { 1 })
 }
 
 # -- Action: fix --------------------------------------------------------------
-$steps    = [System.Collections.Generic.List[string]]::new()
-$success  = $true
-$errorMsg = $null
+if ($Action -eq "fix") {
+    $steps     = [System.Collections.Generic.List[string]]::new()
+    $success   = $true
+    $errorMsg  = $null
+    $queueBefore = $null  # initialise avant le try (StrictMode)
+    $queueAfter  = $null
 
-try {
-    $steps.Add("Arret du service Spooler...")
-    $svc = Get-Service -Name Spooler
-    if ($svc.Status -ne "Stopped") {
-        Stop-Service -Name Spooler -Force -ErrorAction Stop
-        $deadline = (Get-Date).AddSeconds(30)
-        while ((Get-Service -Name Spooler).Status -ne "Stopped" -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 500
-        }
-        if ((Get-Service -Name Spooler).Status -ne "Stopped") {
-            throw "Le service Spooler n'a pas pu s'arreter dans les 30 secondes."
-        }
-    }
-    $steps.Add("Service Spooler arrete.")
-
-    $steps.Add("Suppression des travaux en attente...")
-    $queueBefore = Get-QueueInfo
-    if (Test-Path $SPOOL_DIR) {
-        $items   = Get-ChildItem -Path $SPOOL_DIR -Force -ErrorAction SilentlyContinue
-        $removed = 0
-        foreach ($item in $items) {
-            try {
-                Remove-Item -Path $item.FullName -Force -Recurse -ErrorAction Stop
-                $removed++
-            } catch {
-                $steps.Add("Impossible de supprimer : $($item.Name)")
+    try {
+        $steps.Add("Arret du service Spooler...")
+        $svc = Get-Service -Name Spooler
+        if ($svc.Status -ne "Stopped") {
+            Stop-Service -Name Spooler -Force -ErrorAction Stop
+            $deadline = (Get-Date).AddSeconds(30)
+            while ((Get-Service -Name Spooler).Status -ne "Stopped" -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 500
+            }
+            if ((Get-Service -Name Spooler).Status -ne "Stopped") {
+                throw "Le service Spooler n'a pas pu s'arreter dans les 30 secondes."
             }
         }
-        $steps.Add("$removed fichiers supprimes.")
-    } else {
-        $steps.Add("Dossier spool introuvable - ignore.")
-    }
-    $queueAfter = Get-QueueInfo
+        $steps.Add("Service Spooler arrete.")
 
-    $steps.Add("Redemarrage du service Spooler...")
-    Start-Service -Name Spooler -ErrorAction Stop
-    $deadline = (Get-Date).AddSeconds(30)
-    while ((Get-Service -Name Spooler).Status -ne "Running" -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-    }
-    if ((Get-Service -Name Spooler).Status -ne "Running") {
-        throw "Le service Spooler n'a pas pu demarrer dans les 30 secondes."
-    }
-    $steps.Add("Service Spooler redemarre avec succes.")
+        $steps.Add("Suppression des travaux en attente...")
+        $queueBefore = Get-QueueInfo
+        if (Test-Path $SPOOL_DIR) {
+            $items   = Get-ChildItem -Path $SPOOL_DIR -Force -ErrorAction SilentlyContinue
+            $removed = 0
+            foreach ($item in $items) {
+                try {
+                    Remove-Item -Path $item.FullName -Force -Recurse -ErrorAction Stop
+                    $removed++
+                } catch {
+                    $steps.Add("Impossible de supprimer : $($item.Name)")
+                }
+            }
+            $steps.Add("$removed fichiers supprimes.")
+        } else {
+            $steps.Add("Dossier spool introuvable - ignore.")
+        }
+        $queueAfter = Get-QueueInfo
 
-} catch {
-    $success  = $false
-    $errorMsg = $_.Exception.Message
-    $steps.Add("ERREUR : $errorMsg")
-    try { Start-Service -Name Spooler -ErrorAction SilentlyContinue } catch {}
+        $steps.Add("Redemarrage du service Spooler...")
+        Start-Service -Name Spooler -ErrorAction Stop
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Service -Name Spooler).Status -ne "Running" -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+        }
+        if ((Get-Service -Name Spooler).Status -ne "Running") {
+            throw "Le service Spooler n'a pas pu demarrer dans les 30 secondes."
+        }
+        $steps.Add("Service Spooler redemarre avec succes.")
+
+    } catch {
+        $success  = $false
+        $errorMsg = $_.Exception.Message
+        $steps.Add("ERREUR : $errorMsg")
+        try { Start-Service -Name Spooler -ErrorAction SilentlyContinue } catch {}
+    }
+
+    $result = @{
+        action       = "fix"
+        success      = $success
+        error        = $errorMsg
+        steps        = @($steps)
+        queue_before = if ($null -ne $queueBefore) { $queueBefore } else { @{ job_count = -1 } }
+        queue_after  = if ($null -ne $queueAfter)  { $queueAfter }  else { Get-QueueInfo }
+        service      = Get-SpoolerStatus
+    }
+    Write-Output ($result | ConvertTo-Json -Depth 4)
+    exit $(if ($success) { 0 } else { 1 })
 }
-
-$result = @{
-    action       = "fix"
-    success      = $success
-    error        = $errorMsg
-    steps        = @($steps)
-    queue_before = if ($null -ne $queueBefore) { $queueBefore } else { @{ job_count = -1 } }
-    queue_after  = Get-QueueInfo
-    service      = Get-SpoolerStatus
-}
-Write-Output ($result | ConvertTo-Json -Depth 4)
-exit $(if ($success) { 0 } else { 1 })
