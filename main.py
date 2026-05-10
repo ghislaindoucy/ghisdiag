@@ -119,33 +119,44 @@ def _is_safe_output_dir(path: Path) -> tuple[bool, str]:
 def _run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> dict:
     """
     Exécute un script PowerShell de l'onglet Dépannage et retourne le JSON parsé.
-    Lève RuntimeError si le script échoue ou si le JSON est invalide.
+    Utilise -Command + forçage UTF-8 (même pattern que l'orchestrateur) pour éviter
+    les problèmes d'encodage CP850/OEM de PS 5.1 quand stdout est capturé.
     """
-    base      = get_base_path()
-    script_p  = (base / script_rel).resolve()
+    base     = get_base_path()
+    script_p = (base / script_rel).resolve()
 
     if not _validate_script_path(script_p, base):
         raise RuntimeError(f"Chemin de script invalide : {script_rel}")
 
-    cmd = [
-        _PS_EXE,
-        "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", str(script_p),
-    ] + extra_args
+    escaped_path = str(script_p).replace("'", "''")
+
+    # Les flags (-Action, -AdapterName) sont passés tels quels ;
+    # les valeurs sont single-quotées avec échappement des apostrophes internes.
+    args_parts = []
+    for arg in extra_args:
+        if arg.startswith("-"):
+            args_parts.append(arg)
+        else:
+            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
+    args_str = " ".join(args_parts)
+
+    ps_cmd = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+        f"& '{escaped_path}' {args_str}"
+    )
 
     result = subprocess.run(
-        cmd,
+        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-Command", ps_cmd],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
         shell=False,
     )
 
-    stdout = result.stdout.strip()
+    stdout = result.stdout.decode("utf-8", errors="replace").strip()
     if not stdout:
-        stderr = result.stderr.strip()[:500]
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()[:500]
         raise RuntimeError(f"Pas de sortie du script. Stderr : {stderr}")
 
     try:
