@@ -1,9 +1,9 @@
 # PlanetDiag - Gestionnaire du Spooler d'impression
 # Usage:
-#   -Action list    → retourne l'état actuel du spooler (JSON)
-#   -Action fix     → vide la file et redémarre le service (JSON)
+#   -Action list  -> retourne l'etat actuel du spooler (JSON)
+#   -Action fix   -> vide la file et redemarre le service (JSON)
 #
-# Doit être exécuté avec droits administrateur.
+# Doit etre execute avec droits administrateur.
 
 param(
     [ValidateSet("list", "fix")]
@@ -38,7 +38,7 @@ function Get-QueueInfo {
     }
 }
 
-# ── Action: list ─────────────────────────────────────────────────────────────
+# -- Action: list -------------------------------------------------------------
 if ($Action -eq "list") {
     $result = @{
         action  = "list"
@@ -51,14 +51,14 @@ if ($Action -eq "list") {
     exit 0
 }
 
-# ── Action: fix ──────────────────────────────────────────────────────────────
+# -- Action: fix --------------------------------------------------------------
 $steps   = [System.Collections.Generic.List[string]]::new()
 $success = $true
 $errorMsg = $null
 
 try {
-    # 1. Arrêt du spooler
-    $steps.Add("Arrêt du service Spooler…")
+    # 1. Arret du spooler
+    $steps.Add("Arret du service Spooler...")
     $svc = Get-Service -Name Spooler
     if ($svc.Status -ne "Stopped") {
         Stop-Service -Name Spooler -Force -ErrorAction Stop
@@ -67,16 +67,16 @@ try {
             Start-Sleep -Milliseconds 500
         }
         if ((Get-Service -Name Spooler).Status -ne "Stopped") {
-            throw "Le service Spooler n'a pas pu s'arrêter dans les 30 secondes."
+            throw "Le service Spooler n'a pas pu s'arreter dans les 30 secondes."
         }
     }
-    $steps.Add("Service Spooler arrêté.")
+    $steps.Add("Service Spooler arrete.")
 
     # 2. Vidage de la file d'impression
-    $steps.Add("Suppression des travaux d'impression en attente…")
+    $steps.Add("Suppression des travaux d'impression en attente...")
     $queueBefore = Get-QueueInfo
     if (Test-Path $SPOOL_DIR) {
-        $items = Get-ChildItem -Path $SPOOL_DIR -Force -ErrorAction SilentlyContinue
+        $items   = Get-ChildItem -Path $SPOOL_DIR -Force -ErrorAction SilentlyContinue
         $removed = 0
         foreach ($item in $items) {
             try {
@@ -86,14 +86,14 @@ try {
                 $steps.Add("Impossible de supprimer : $($item.Name)")
             }
         }
-        $steps.Add("$removed travaux supprimés.")
+        $steps.Add("$removed travaux supprimes.")
     } else {
-        $steps.Add("Dossier spool introuvable — ignoré.")
+        $steps.Add("Dossier spool introuvable - ignore.")
     }
     $queueAfter = Get-QueueInfo
 
-    # 3. Redémarrage du spooler
-    $steps.Add("Redémarrage du service Spooler…")
+    # 3. Redemarrage du spooler
+    $steps.Add("Redemarrage du service Spooler...")
     Start-Service -Name Spooler -ErrorAction Stop
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Service -Name Spooler).Status -ne "Running" -and (Get-Date) -lt $deadline) {
@@ -101,15 +101,15 @@ try {
     }
     $finalStatus = (Get-Service -Name Spooler).Status.ToString()
     if ($finalStatus -ne "Running") {
-        throw "Le service Spooler n'a pas pu démarrer dans les 30 secondes."
+        throw "Le service Spooler n'a pas pu demarrer dans les 30 secondes."
     }
-    $steps.Add("Service Spooler redémarré avec succès.")
+    $steps.Add("Service Spooler redemarre avec succes.")
 
 } catch {
     $success  = $false
     $errorMsg = $_.Exception.Message
     $steps.Add("ERREUR : $errorMsg")
-    # Tentative de redémarrage même en cas d'erreur
+    # Tentative de redemarrage meme en cas d'erreur
     try {
         Start-Service -Name Spooler -ErrorAction SilentlyContinue
     } catch {}
