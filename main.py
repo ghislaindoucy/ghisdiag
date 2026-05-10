@@ -50,7 +50,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS
+from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, get_base_path, _PS_EXE, _validate_script_path
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
 # ── Palette ───────────────────────────────────────────────────────────────────
@@ -67,10 +67,9 @@ YELLOW    = "#f9e2af"
 
 TOTAL_MODULES = len(COLLECTORS)
 
-_PREFS_MAX_BYTES = 16 * 1024   # prefs.json ne devrait jamais dépasser 16 Ko
+_PREFS_MAX_BYTES = 16 * 1024
 
 def _load_prefs() -> dict:
-    """Charge prefs.json avec validation de type et limite de taille."""
     try:
         if PREFS_FILE.stat().st_size > _PREFS_MAX_BYTES:
             logger.warning("prefs.json dépasse %d octets, ignoré", _PREFS_MAX_BYTES)
@@ -78,7 +77,6 @@ def _load_prefs() -> dict:
         raw = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {}
-        # Ne garde que les clés de type attendu (liste blanche)
         out = {}
         val = raw.get("output_dir")
         if isinstance(val, str) and len(val) < 4096:
@@ -88,7 +86,6 @@ def _load_prefs() -> dict:
         return {}
 
 def _save_prefs(prefs: dict):
-    """Sauvegarde atomique des préférences."""
     try:
         tmp = PREFS_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(prefs, indent=2, ensure_ascii=False),
@@ -98,7 +95,6 @@ def _save_prefs(prefs: dict):
         logger.warning("Impossible de sauvegarder prefs : %s", e)
 
 
-# Dossiers système où il est dangereux d'écrire des rapports
 _FORBIDDEN_OUTPUT_ROOTS = [
     Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve(),
     Path(os.environ.get("ProgramFiles", r"C:\Program Files")).resolve(),
@@ -106,7 +102,6 @@ _FORBIDDEN_OUTPUT_ROOTS = [
 ]
 
 def _is_safe_output_dir(path: Path) -> tuple[bool, str]:
-    """Vérifie que le dossier de sortie n'est pas un chemin système."""
     try:
         resolved = path.resolve()
     except OSError as e:
@@ -121,12 +116,50 @@ def _is_safe_output_dir(path: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> dict:
+    """
+    Exécute un script PowerShell de l'onglet Dépannage et retourne le JSON parsé.
+    Lève RuntimeError si le script échoue ou si le JSON est invalide.
+    """
+    base      = get_base_path()
+    script_p  = (base / script_rel).resolve()
+
+    if not _validate_script_path(script_p, base):
+        raise RuntimeError(f"Chemin de script invalide : {script_rel}")
+
+    cmd = [
+        _PS_EXE,
+        "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(script_p),
+    ] + extra_args
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        shell=False,
+    )
+
+    stdout = result.stdout.strip()
+    if not stdout:
+        stderr = result.stderr.strip()[:500]
+        raise RuntimeError(f"Pas de sortie du script. Stderr : {stderr}")
+
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"JSON invalide : {e}\nSortie : {stdout[:300]}")
+
+
 class PlanetDiagApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PlanetDiag")
         self.resizable(True, True)
-        self.minsize(640, 560)
+        self.minsize(700, 580)
         self.configure(bg=BG)
 
         self._running    = False
@@ -140,13 +173,20 @@ class PlanetDiagApp(tk.Tk):
                   else str(DEFAULT_REPORTS_DIR)
         )
 
+        # Spooler state
+        self._spooler_busy = False
+
+        # Network state
+        self._network_busy     = False
+        self._network_adapters = []  # [{"name":…, "status":…, …}]
+
         self._build_ui()
         self._set_icon()
         self.update_idletasks()
-        self.geometry("700x600")
-        x = (self.winfo_screenwidth()  - 700) // 2
-        y = (self.winfo_screenheight() - 600) // 2
-        self.geometry(f"700x600+{x}+{y}")
+        self.geometry("740x640")
+        x = (self.winfo_screenwidth()  - 740) // 2
+        y = (self.winfo_screenheight() - 640) // 2
+        self.geometry(f"740x640+{x}+{y}")
 
     def _set_icon(self):
         try:
@@ -156,25 +196,56 @@ class PlanetDiagApp(tk.Tk):
         except Exception:
             pass
 
-    # ── UI ────────────────────────────────────────────────────────────────────
+    # ── UI principale ─────────────────────────────────────────────────────────
     def _build_ui(self):
-        # ── En-tête ──────────────────────────────────────────────────────────
-        hdr = tk.Frame(self, bg=BG, pady=18)
-        hdr.pack(fill="x", padx=0)
+        # En-tête commun (hors onglets)
+        hdr = tk.Frame(self, bg=BG, pady=14)
+        hdr.pack(fill="x")
 
-        tk.Label(hdr, text="PlanetDiag", font=("Segoe UI", 26, "bold"),
+        tk.Label(hdr, text="PlanetDiag", font=("Segoe UI", 24, "bold"),
                  bg=BG, fg=ACCENT).pack()
         tk.Label(hdr, text="Outil de diagnostic Windows",
-                 font=("Segoe UI", 12), bg=BG, fg=FG).pack(pady=(2, 0))
+                 font=("Segoe UI", 11), bg=BG, fg=FG).pack(pady=(2, 0))
         tk.Label(hdr, text=f"Version {VERSION}  •  Droits administrateur requis",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(pady=(2, 0))
         tk.Label(hdr, text=f"Développé par {AUTHORS}",
                  font=("Segoe UI", 9, "italic"), bg=BG, fg=FG_MUTED).pack(pady=(1, 0))
 
-        ttk.Separator(self).pack(fill="x", padx=20, pady=(4, 0))
+        ttk.Separator(self).pack(fill="x", padx=20, pady=(6, 0))
 
-        # ── Dossier de destination ────────────────────────────────────────────
-        dest = tk.Frame(self, bg=BG, pady=12)
+        # Style des onglets
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("PD.TNotebook",
+                        background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
+        style.configure("PD.TNotebook.Tab",
+                        background=SURFACE, foreground=FG_DIM,
+                        font=("Segoe UI", 10),
+                        padding=[18, 8])
+        style.map("PD.TNotebook.Tab",
+                  background=[("selected", SURFACE2)],
+                  foreground=[("selected", FG)])
+        style.configure("PD.Horizontal.TProgressbar",
+                        background=ACCENT, troughcolor=SURFACE,
+                        bordercolor=SURFACE, lightcolor=ACCENT, darkcolor=ACCENT)
+
+        # Notebook
+        nb = ttk.Notebook(self, style="PD.TNotebook")
+        nb.pack(fill="both", expand=True)
+
+        analyse_frame = tk.Frame(nb, bg=BG)
+        nb.add(analyse_frame, text="  Analyse  ")
+
+        troubleshoot_frame = tk.Frame(nb, bg=BG)
+        nb.add(troubleshoot_frame, text="  Dépannage  ")
+
+        self._build_analyse_tab(analyse_frame)
+        self._build_troubleshoot_tab(troubleshoot_frame)
+
+    # ── Onglet Analyse ────────────────────────────────────────────────────────
+    def _build_analyse_tab(self, parent: tk.Frame):
+        # Dossier de destination
+        dest = tk.Frame(parent, bg=BG, pady=12)
         dest.pack(fill="x", padx=28)
 
         tk.Label(dest, text="Enregistrer le rapport dans :",
@@ -198,10 +269,10 @@ class PlanetDiagApp(tk.Tk):
             command=self._browse,
         ).pack(side="left", padx=(8, 0))
 
-        ttk.Separator(self).pack(fill="x", padx=20, pady=(8, 0))
+        ttk.Separator(parent).pack(fill="x", padx=20, pady=(4, 0))
 
-        # ── Bouton principal ──────────────────────────────────────────────────
-        btn_zone = tk.Frame(self, bg=BG, pady=16)
+        # Bouton principal
+        btn_zone = tk.Frame(parent, bg=BG, pady=14)
         btn_zone.pack(fill="x", padx=28)
 
         self.btn_start = tk.Button(
@@ -216,11 +287,10 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_start.pack(fill="x")
 
-        # ── Zone de progression ───────────────────────────────────────────────
-        prog_zone = tk.Frame(self, bg=BG, pady=0)
+        # Zone de progression
+        prog_zone = tk.Frame(parent, bg=BG)
         prog_zone.pack(fill="x", padx=28)
 
-        # Étape actuelle
         self.step_var = tk.StringVar(value="En attente…")
         self.step_lbl = tk.Label(
             prog_zone, textvariable=self.step_var,
@@ -228,19 +298,12 @@ class PlanetDiagApp(tk.Tk):
         )
         self.step_lbl.pack(fill="x", pady=(0, 6))
 
-        # Barre de progression
-        style = ttk.Style()
-        style.theme_use("default")
-        style.configure("PD.Horizontal.TProgressbar",
-                        background=ACCENT, troughcolor=SURFACE,
-                        bordercolor=SURFACE, lightcolor=ACCENT, darkcolor=ACCENT)
         self.pbar = ttk.Progressbar(
             prog_zone, style="PD.Horizontal.TProgressbar",
             mode="determinate", maximum=TOTAL_MODULES,
         )
         self.pbar.pack(fill="x", ipady=4, pady=(0, 4))
 
-        # Compteur modules  +  durée
         counter_row = tk.Frame(prog_zone, bg=BG)
         counter_row.pack(fill="x")
         self.counter_var = tk.StringVar(value="")
@@ -250,10 +313,10 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(counter_row, textvariable=self.elapsed_var,
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED, anchor="e").pack(side="right")
 
-        ttk.Separator(self).pack(fill="x", padx=20, pady=(12, 0))
+        ttk.Separator(parent).pack(fill="x", padx=20, pady=(10, 0))
 
-        # ── Journal d'activité ────────────────────────────────────────────────
-        log_hdr = tk.Frame(self, bg=BG)
+        # Journal d'activité
+        log_hdr = tk.Frame(parent, bg=BG)
         log_hdr.pack(fill="x", padx=28, pady=(8, 4))
         tk.Label(log_hdr, text="Journal d'activité",
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
@@ -270,8 +333,8 @@ class PlanetDiagApp(tk.Tk):
             padx=8, pady=2, command=self._open_log_file,
         ).pack(side="right", padx=(0, 6))
 
-        log_wrap = tk.Frame(self, bg=SURFACE, bd=0)
-        log_wrap.pack(fill="both", expand=True, padx=28, pady=(0, 8))
+        log_wrap = tk.Frame(parent, bg=SURFACE, bd=0)
+        log_wrap.pack(fill="both", expand=True, padx=28, pady=(0, 6))
 
         self.log = tk.Text(
             log_wrap,
@@ -286,7 +349,6 @@ class PlanetDiagApp(tk.Tk):
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
 
-        # Tags couleur dans le log
         self.log.tag_config("ok",   foreground=GREEN)
         self.log.tag_config("warn", foreground=YELLOW)
         self.log.tag_config("err",  foreground=RED)
@@ -294,8 +356,8 @@ class PlanetDiagApp(tk.Tk):
         self.log.tag_config("dim",  foreground=FG_MUTED)
         self.log.tag_config("time", foreground="#7480c2")
 
-        # ── Boutons bas ───────────────────────────────────────────────────────
-        foot = tk.Frame(self, bg=BG, pady=10)
+        # Boutons bas
+        foot = tk.Frame(parent, bg=BG, pady=10)
         foot.pack(fill="x", padx=28)
 
         self.btn_open = tk.Button(
@@ -322,7 +384,386 @@ class PlanetDiagApp(tk.Tk):
         )
         self.result_lbl.pack(side="right")
 
-    # ── Helpers log ───────────────────────────────────────────────────────────
+    # ── Onglet Dépannage ──────────────────────────────────────────────────────
+    def _build_troubleshoot_tab(self, parent: tk.Frame):
+        # Conteneur scrollable
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=BG)
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", _on_configure)
+
+        def _on_canvas_resize(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        self._build_spooler_section(inner)
+        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
+        self._build_network_section(inner)
+
+    # ── Section Spooler ───────────────────────────────────────────────────────
+    def _build_spooler_section(self, parent: tk.Frame):
+        section = tk.Frame(parent, bg=BG, pady=16)
+        section.pack(fill="x", padx=28)
+
+        tk.Label(section, text="🖨  Spooler d'impression",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(section,
+                 text="Vide la file d'attente et redémarre le service pour résoudre les impressions bloquées.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 10))
+
+        row = tk.Frame(section, bg=BG)
+        row.pack(fill="x")
+
+        # Bloc statut
+        status_frame = tk.Frame(row, bg=SURFACE, padx=14, pady=10)
+        status_frame.pack(side="left", fill="x", expand=True)
+
+        labels = [("Statut du service", "spooler_status_var"),
+                  ("Travaux en attente", "spooler_jobs_var")]
+        for col, (lbl_text, var_name) in enumerate(labels):
+            tk.Label(status_frame, text=lbl_text,
+                     font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM).grid(
+                         row=0, column=col * 2, sticky="w", padx=(0, 6))
+            var = tk.StringVar(value="—")
+            setattr(self, var_name, var)
+            tk.Label(status_frame, textvariable=var,
+                     font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG).grid(
+                         row=1, column=col * 2, sticky="w")
+
+        # Boutons
+        btns = tk.Frame(row, bg=BG)
+        btns.pack(side="left", padx=(10, 0))
+
+        self.btn_spooler_refresh = tk.Button(
+            btns, text="↻  Actualiser",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=8, command=self._spooler_refresh,
+        )
+        self.btn_spooler_refresh.pack(fill="x", pady=(0, 6))
+
+        self.btn_spooler_fix = tk.Button(
+            btns, text="🗑  Vider le spooler",
+            font=("Segoe UI", 10), bg=RED, fg="#1e1e2e",
+            activebackground="#e07070", relief="flat", cursor="hand2",
+            padx=14, pady=8, command=self._spooler_fix,
+        )
+        self.btn_spooler_fix.pack(fill="x")
+
+        # Log spooler
+        self.spooler_log_var = tk.StringVar(value="")
+        log_frame = tk.Frame(section, bg=SURFACE, pady=6, padx=10)
+        log_frame.pack(fill="x", pady=(10, 0))
+        tk.Label(log_frame, textvariable=self.spooler_log_var,
+                 font=("Consolas", 9), bg=SURFACE, fg=FG_DIM,
+                 justify="left", anchor="w", wraplength=620).pack(fill="x")
+
+        self.after(200, self._spooler_refresh)
+
+    def _spooler_refresh(self):
+        if self._spooler_busy:
+            return
+        self._spooler_busy = True
+        self.btn_spooler_refresh.configure(state="disabled")
+        self.btn_spooler_fix.configure(state="disabled")
+        self.spooler_status_var.set("Chargement…")
+        self.spooler_jobs_var.set("…")
+
+        def _worker():
+            try:
+                data  = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "list"])
+                svc   = data.get("service", {})
+                queue = data.get("queue", {})
+
+                def _update():
+                    self.spooler_status_var.set(svc.get("status", "?"))
+                    jobs = queue.get("job_count", -1)
+                    self.spooler_jobs_var.set(str(jobs) if jobs != -1 else "Erreur accès")
+                    self.spooler_log_var.set("")
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_spooler_fix.configure(state="normal")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err():
+                    self.spooler_status_var.set("Erreur")
+                    self.spooler_jobs_var.set("—")
+                    self.spooler_log_var.set(f"Erreur : {exc}")
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_spooler_fix.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _spooler_fix(self):
+        if self._spooler_busy:
+            return
+        if not messagebox.askyesno(
+            "Confirmer",
+            "Vider la file d'impression ?\n\n"
+            "Tous les travaux en attente seront supprimés\n"
+            "et le service Spooler sera redémarré.",
+            icon="warning",
+        ):
+            return
+
+        self._spooler_busy = True
+        self.btn_spooler_refresh.configure(state="disabled")
+        self.btn_spooler_fix.configure(state="disabled", text="⏳  En cours…")
+        self.spooler_log_var.set("Opération en cours…")
+
+        def _worker():
+            try:
+                data    = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "fix"], timeout=90)
+                success = data.get("success", False)
+                steps   = data.get("steps", [])
+                svc     = data.get("service", {})
+                qafter  = data.get("queue_after", {})
+                log_txt = "\n".join(steps)
+
+                def _update():
+                    self.spooler_status_var.set(svc.get("status", "?"))
+                    jobs = qafter.get("job_count", -1)
+                    self.spooler_jobs_var.set(str(jobs) if jobs != -1 else "Erreur accès")
+                    self.spooler_log_var.set(log_txt)
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider le spooler")
+                    if success:
+                        messagebox.showinfo("Spooler", "Spooler vidé et redémarré avec succès.")
+                    else:
+                        messagebox.showerror("Erreur spooler", data.get("error", "Erreur inconnue"))
+                self.after(0, _update)
+            except Exception as exc:
+                logger.exception("Erreur spooler fix")
+                def _err():
+                    self.spooler_log_var.set(f"Erreur : {exc}")
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider le spooler")
+                    messagebox.showerror("Erreur", str(exc))
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── Section Réseau ────────────────────────────────────────────────────────
+    def _build_network_section(self, parent: tk.Frame):
+        section = tk.Frame(parent, bg=BG, pady=16)
+        section.pack(fill="x", padx=28)
+
+        tk.Label(section, text="🌐  Cartes réseau",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(section, text="Liste et réinitialise les adaptateurs réseau (Ethernet, Wi-Fi, VPN).",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 10))
+
+        content = tk.Frame(section, bg=BG)
+        content.pack(fill="x")
+
+        # Liste des adaptateurs
+        list_frame = tk.Frame(content, bg=SURFACE)
+        list_frame.pack(side="left", fill="both", expand=True)
+
+        self.network_listbox = tk.Listbox(
+            list_frame,
+            bg=SURFACE, fg=FG,
+            font=("Consolas", 10),
+            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            relief="flat", bd=0,
+            activestyle="none",
+            height=7,
+        )
+        lb_scroll = tk.Scrollbar(list_frame, command=self.network_listbox.yview, bg=SURFACE2)
+        self.network_listbox.configure(yscrollcommand=lb_scroll.set)
+        lb_scroll.pack(side="right", fill="y")
+        self.network_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.network_listbox.bind("<<ListboxSelect>>", self._network_on_select)
+
+        # Panneau détail
+        detail_frame = tk.Frame(content, bg=SURFACE2, padx=12, pady=10, width=220)
+        detail_frame.pack(side="left", fill="y", padx=(8, 0))
+        detail_frame.pack_propagate(False)
+
+        self.net_detail_vars = {}
+        fields = [
+            ("Statut",    "status"),
+            ("Type",      "media_type"),
+            ("Vitesse",   "link_speed"),
+            ("IPv4",      "ipv4"),
+            ("MAC",       "mac"),
+        ]
+        for label, key in fields:
+            tk.Label(detail_frame, text=label,
+                     font=("Segoe UI", 8), bg=SURFACE2, fg=FG_DIM,
+                     anchor="w").pack(fill="x")
+            var = tk.StringVar(value="—")
+            self.net_detail_vars[key] = var
+            tk.Label(detail_frame, textvariable=var,
+                     font=("Segoe UI", 9, "bold"), bg=SURFACE2, fg=FG,
+                     anchor="w").pack(fill="x", pady=(0, 6))
+
+        # Boutons
+        btns = tk.Frame(content, bg=BG)
+        btns.pack(side="left", padx=(10, 0), anchor="n")
+
+        self.btn_net_refresh = tk.Button(
+            btns, text="↻  Actualiser",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=8, command=self._network_refresh,
+        )
+        self.btn_net_refresh.pack(fill="x", pady=(0, 6))
+
+        self.btn_net_reset = tk.Button(
+            btns, text="⟳  Réinitialiser",
+            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
+            activebackground="#d4be82", relief="flat", cursor="hand2",
+            padx=14, pady=8, state="disabled", command=self._network_reset,
+        )
+        self.btn_net_reset.pack(fill="x")
+
+        # Log réseau
+        self.network_log_var = tk.StringVar(value="")
+        net_log_frame = tk.Frame(section, bg=SURFACE, pady=6, padx=10)
+        net_log_frame.pack(fill="x", pady=(10, 0))
+        tk.Label(net_log_frame, textvariable=self.network_log_var,
+                 font=("Consolas", 9), bg=SURFACE, fg=FG_DIM,
+                 justify="left", anchor="w", wraplength=620).pack(fill="x")
+
+        self.after(300, self._network_refresh)
+
+    def _network_refresh(self):
+        if self._network_busy:
+            return
+        self._network_busy = True
+        self.btn_net_refresh.configure(state="disabled")
+        self.btn_net_reset.configure(state="disabled")
+        self.network_listbox.delete(0, "end")
+        self.network_listbox.insert("end", "  Chargement…")
+        self.network_log_var.set("")
+
+        def _worker():
+            try:
+                data     = _run_ps_action("collectors/network_cards.ps1", ["-Action", "list"])
+                adapters = data.get("adapters", [])
+
+                def _update():
+                    self._network_adapters = adapters
+                    self.network_listbox.delete(0, "end")
+                    for a in adapters:
+                        icon  = "●" if a.get("status") == "Up" else "○"
+                        label = f"  {icon}  {a.get('name', '?')}  —  {a.get('status', '?')}"
+                        self.network_listbox.insert("end", label)
+                    if not adapters:
+                        self.network_listbox.insert("end", "  Aucun adaptateur trouvé")
+                    self._clear_net_detail()
+                    self._network_busy = False
+                    self.btn_net_refresh.configure(state="normal")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err():
+                    self.network_listbox.delete(0, "end")
+                    self.network_listbox.insert("end", "  Erreur de chargement")
+                    self.network_log_var.set(f"Erreur : {exc}")
+                    self._network_busy = False
+                    self.btn_net_refresh.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _network_on_select(self, event=None):
+        sel = self.network_listbox.curselection()
+        if not sel or not self._network_adapters:
+            self._clear_net_detail()
+            self.btn_net_reset.configure(state="disabled")
+            return
+        idx = sel[0]
+        if idx >= len(self._network_adapters):
+            return
+        a = self._network_adapters[idx]
+        for key, var in self.net_detail_vars.items():
+            val = a.get(key, "")
+            var.set(str(val) if val else "—")
+        self.btn_net_reset.configure(state="normal")
+
+    def _clear_net_detail(self):
+        for var in self.net_detail_vars.values():
+            var.set("—")
+
+    def _network_reset(self):
+        if self._network_busy:
+            return
+        sel = self.network_listbox.curselection()
+        if not sel or not self._network_adapters:
+            return
+        idx     = sel[0]
+        adapter = self._network_adapters[idx]
+        name    = adapter.get("name", "")
+        if not name:
+            return
+
+        if not messagebox.askyesno(
+            "Confirmer réinitialisation",
+            f"Réinitialiser l'adaptateur réseau ?\n\n"
+            f"  {name}\n\n"
+            "L'adaptateur sera désactivé puis réactivé.\n"
+            "La connexion sera coupée brièvement.",
+            icon="warning",
+        ):
+            return
+
+        self._network_busy = True
+        self.btn_net_refresh.configure(state="disabled")
+        self.btn_net_reset.configure(state="disabled", text="⏳  En cours…")
+        self.network_log_var.set("Réinitialisation en cours…")
+
+        def _worker():
+            try:
+                data    = _run_ps_action(
+                    "collectors/network_cards.ps1",
+                    ["-Action", "reset", "-AdapterName", name],
+                    timeout=60,
+                )
+                success = data.get("success", False)
+                steps   = data.get("steps", [])
+                log_txt = "\n".join(steps)
+
+                def _update():
+                    self.network_log_var.set(log_txt)
+                    self._network_busy = False
+                    self.btn_net_refresh.configure(state="normal")
+                    self.btn_net_reset.configure(state="normal", text="⟳  Réinitialiser")
+                    if success:
+                        messagebox.showinfo("Réseau", f"Adaptateur '{name}' réinitialisé avec succès.")
+                    else:
+                        messagebox.showerror("Erreur réseau", data.get("error", "Erreur inconnue"))
+                    self.after(500, self._network_refresh)
+                self.after(0, _update)
+            except Exception as exc:
+                logger.exception("Erreur network reset")
+                def _err():
+                    self.network_log_var.set(f"Erreur : {exc}")
+                    self._network_busy = False
+                    self.btn_net_refresh.configure(state="normal")
+                    self.btn_net_reset.configure(state="normal", text="⟳  Réinitialiser")
+                    messagebox.showerror("Erreur", str(exc))
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── Helpers log Analyse ───────────────────────────────────────────────────
     def _log(self, msg: str, tag: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log.configure(state="normal")
@@ -346,7 +787,7 @@ class PlanetDiagApp(tk.Tk):
         else:
             messagebox.showinfo("Fichier log", f"Aucun log trouvé dans :\n{LOG_DIR}")
 
-    # ── Actions ───────────────────────────────────────────────────────────────
+    # ── Actions Analyse ───────────────────────────────────────────────────────
     def _browse(self):
         cur = self.out_dir_var.get()
         ini = cur if Path(cur).exists() else str(Path.home())
@@ -441,8 +882,6 @@ class PlanetDiagApp(tk.Tk):
             elapsed          = data["meta"]["elapsed_sec"]
             failed           = data["meta"].get("collectors_fail", [])
 
-            # Libère la mémoire : les dicts volumineux ne sont plus utiles
-            # (tout est déjà écrit sur disque)
             del data, gen, orch
             gc.collect()
 
@@ -459,9 +898,7 @@ class PlanetDiagApp(tk.Tk):
                 )
                 self.btn_open.configure(state="normal")
                 self.btn_folder.configure(state="normal")
-                self.result_lbl.configure(
-                    text=f"✔  Rapport prêt", fg=GREEN,
-                )
+                self.result_lbl.configure(text="✔  Rapport prêt", fg=GREEN)
 
                 self._log(f"Rapport HTML : {html_path}", "ok")
                 self._log(f"Rapport JSON : {json_path}", "dim")
@@ -485,7 +922,6 @@ class PlanetDiagApp(tk.Tk):
             self.after(0, _err)
 
     def _open_html(self):
-        """Ouvre le rapport HTML avec l'application par défaut."""
         if not (self.report_path and self.report_path.exists()):
             messagebox.showerror("Erreur", "Fichier rapport introuvable.")
             return
@@ -496,12 +932,10 @@ class PlanetDiagApp(tk.Tk):
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le rapport : {e}")
 
     def _open_folder(self):
-        """Ouvre l'Explorateur avec le rapport sélectionné (args en liste — pas de shell)."""
         if not self.report_path or not self.report_path.exists():
             messagebox.showerror("Erreur", "Rapport introuvable.")
             return
         try:
-            # Liste d'arguments → pas d'interprétation shell, pas d'injection possible
             subprocess.Popen(
                 ["explorer.exe", f"/select,{self.report_path.resolve()}"],
                 shell=False,
