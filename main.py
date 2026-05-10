@@ -185,7 +185,9 @@ class PlanetDiagApp(tk.Tk):
         )
 
         # Spooler state
-        self._spooler_busy = False
+        self._spooler_busy     = False
+        self._spooler_printers = []   # [{"name":…, "jobs":[…], …}]
+        self._spooler_jobs     = []   # jobs de l'imprimante sélectionnée
 
         # Network state
         self._network_busy     = False
@@ -431,49 +433,111 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(section, text="🖨  Spooler d'impression",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
         tk.Label(section,
-                 text="Vide la file d'attente et redémarre le service pour résoudre les impressions bloquées.",
+                 text="Gérez les imprimantes installées et leurs files d'attente.",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 10))
 
-        row = tk.Frame(section, bg=BG)
-        row.pack(fill="x")
+        # ── Barre statut + boutons globaux ────────────────────────────────────
+        top_row = tk.Frame(section, bg=BG)
+        top_row.pack(fill="x", pady=(0, 10))
 
-        # Bloc statut
-        status_frame = tk.Frame(row, bg=SURFACE, padx=14, pady=10)
-        status_frame.pack(side="left", fill="x", expand=True)
+        status_frame = tk.Frame(top_row, bg=SURFACE, padx=14, pady=8)
+        status_frame.pack(side="left")
 
-        labels = [("Statut du service", "spooler_status_var"),
-                  ("Travaux en attente", "spooler_jobs_var")]
-        for col, (lbl_text, var_name) in enumerate(labels):
-            tk.Label(status_frame, text=lbl_text,
-                     font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM).grid(
-                         row=0, column=col * 2, sticky="w", padx=(0, 6))
-            var = tk.StringVar(value="—")
-            setattr(self, var_name, var)
-            tk.Label(status_frame, textvariable=var,
-                     font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG).grid(
-                         row=1, column=col * 2, sticky="w")
+        tk.Label(status_frame, text="Service Spooler",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM).grid(row=0, column=0, sticky="w")
+        self.spooler_status_var = tk.StringVar(value="—")
+        tk.Label(status_frame, textvariable=self.spooler_status_var,
+                 font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG).grid(row=1, column=0, sticky="w")
 
-        # Boutons
-        btns = tk.Frame(row, bg=BG)
-        btns.pack(side="left", padx=(10, 0))
+        btns_global = tk.Frame(top_row, bg=BG)
+        btns_global.pack(side="right")
 
         self.btn_spooler_refresh = tk.Button(
-            btns, text="↻  Actualiser",
+            btns_global, text="↻  Actualiser",
             font=("Segoe UI", 10), bg=SURFACE, fg=FG,
             activebackground=SURFACE2, relief="flat", cursor="hand2",
-            padx=14, pady=8, command=self._spooler_refresh,
+            padx=12, pady=7, command=self._spooler_refresh,
         )
-        self.btn_spooler_refresh.pack(fill="x", pady=(0, 6))
+        self.btn_spooler_refresh.pack(side="left", padx=(0, 6))
 
         self.btn_spooler_fix = tk.Button(
-            btns, text="🗑  Vider le spooler",
+            btns_global, text="🗑  Vider tout",
             font=("Segoe UI", 10), bg=RED, fg="#1e1e2e",
             activebackground="#e07070", relief="flat", cursor="hand2",
-            padx=14, pady=8, command=self._spooler_fix,
+            padx=12, pady=7, command=self._spooler_fix,
         )
-        self.btn_spooler_fix.pack(fill="x")
+        self.btn_spooler_fix.pack(side="left")
 
-        # Log spooler
+        # ── Imprimantes + Travaux ─────────────────────────────────────────────
+        lists_row = tk.Frame(section, bg=BG)
+        lists_row.pack(fill="x")
+
+        # Colonne imprimantes
+        left_col = tk.Frame(lists_row, bg=BG)
+        left_col.pack(side="left", fill="both", expand=True)
+
+        tk.Label(left_col, text="Imprimantes installées",
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 4))
+
+        printer_wrap = tk.Frame(left_col, bg=SURFACE)
+        printer_wrap.pack(fill="both", expand=True)
+
+        self.printer_listbox = tk.Listbox(
+            printer_wrap,
+            bg=SURFACE, fg=FG, font=("Segoe UI", 10),
+            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            relief="flat", bd=0, activestyle="none", height=5,
+        )
+        pr_sb = tk.Scrollbar(printer_wrap, command=self.printer_listbox.yview, bg=SURFACE2)
+        self.printer_listbox.configure(yscrollcommand=pr_sb.set)
+        pr_sb.pack(side="right", fill="y")
+        self.printer_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.printer_listbox.bind("<<ListboxSelect>>", self._spooler_on_printer_select)
+
+        # Colonne travaux
+        right_col = tk.Frame(lists_row, bg=BG)
+        right_col.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+        self._spooler_jobs_title = tk.StringVar(value="Travaux d'impression")
+        tk.Label(right_col, textvariable=self._spooler_jobs_title,
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 4))
+
+        job_wrap = tk.Frame(right_col, bg=SURFACE)
+        job_wrap.pack(fill="both", expand=True)
+
+        self.job_listbox = tk.Listbox(
+            job_wrap,
+            bg=SURFACE, fg=FG, font=("Consolas", 9),
+            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            relief="flat", bd=0, activestyle="none", height=5,
+        )
+        job_sb = tk.Scrollbar(job_wrap, command=self.job_listbox.yview, bg=SURFACE2)
+        self.job_listbox.configure(yscrollcommand=job_sb.set)
+        job_sb.pack(side="right", fill="y")
+        self.job_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.job_listbox.bind("<<ListboxSelect>>", self._spooler_on_job_select)
+
+        # ── Boutons d'action sur les travaux ──────────────────────────────────
+        job_btns = tk.Frame(section, bg=BG)
+        job_btns.pack(fill="x", pady=(8, 0))
+
+        self.btn_cancel_job = tk.Button(
+            job_btns, text="✗  Annuler ce travail",
+            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
+            activebackground="#d4be82", relief="flat", cursor="hand2",
+            padx=12, pady=6, state="disabled", command=self._spooler_cancel_job,
+        )
+        self.btn_cancel_job.pack(side="left", padx=(0, 6))
+
+        self.btn_cancel_all = tk.Button(
+            job_btns, text="✗  Annuler tous les travaux",
+            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
+            activebackground="#d4be82", relief="flat", cursor="hand2",
+            padx=12, pady=6, state="disabled", command=self._spooler_cancel_all,
+        )
+        self.btn_cancel_all.pack(side="left")
+
+        # Log
         self.spooler_log_var = tk.StringVar(value="")
         log_frame = tk.Frame(section, bg=SURFACE, pady=6, padx=10)
         log_frame.pack(fill="x", pady=(10, 0))
@@ -489,19 +553,34 @@ class PlanetDiagApp(tk.Tk):
         self._spooler_busy = True
         self.btn_spooler_refresh.configure(state="disabled")
         self.btn_spooler_fix.configure(state="disabled")
+        self.btn_cancel_job.configure(state="disabled")
+        self.btn_cancel_all.configure(state="disabled")
         self.spooler_status_var.set("Chargement…")
-        self.spooler_jobs_var.set("…")
+        self.printer_listbox.delete(0, "end")
+        self.printer_listbox.insert("end", "  Chargement…")
+        self.job_listbox.delete(0, "end")
 
         def _worker():
             try:
-                data  = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "list"])
-                svc   = data.get("service", {})
-                queue = data.get("queue", {})
+                data     = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "printers"])
+                printers = data.get("printers", [])
+                svc      = data.get("service", {})
 
                 def _update():
+                    self._spooler_printers = printers
+                    self._spooler_jobs     = []
                     self.spooler_status_var.set(svc.get("status", "?"))
-                    jobs = queue.get("job_count", -1)
-                    self.spooler_jobs_var.set(str(jobs) if jobs != -1 else "Erreur accès")
+                    self.printer_listbox.delete(0, "end")
+                    for p in printers:
+                        icon   = "●" if p.get("status") == "Normal" else "○"
+                        jobs_n = p.get("job_count", 0)
+                        suffix = f"  ({jobs_n} travail{'x' if jobs_n > 1 else ''})" if jobs_n else ""
+                        dflt   = "  ★" if p.get("is_default") else ""
+                        self.printer_listbox.insert("end", f"  {icon}  {p.get('name', '?')}{dflt}{suffix}")
+                    if not printers:
+                        self.printer_listbox.insert("end", "  Aucune imprimante trouvée")
+                    self.job_listbox.delete(0, "end")
+                    self._spooler_jobs_title.set("Travaux d'impression")
                     self.spooler_log_var.set("")
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
@@ -511,10 +590,172 @@ class PlanetDiagApp(tk.Tk):
                 _exc = exc
                 def _err(e=_exc):
                     self.spooler_status_var.set("Erreur")
-                    self.spooler_jobs_var.set("—")
+                    self.printer_listbox.delete(0, "end")
+                    self.printer_listbox.insert("end", "  Erreur de chargement")
                     self.spooler_log_var.set(f"Erreur : {e}")
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_spooler_fix.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _spooler_on_printer_select(self, event=None):
+        sel = self.printer_listbox.curselection()
+        if not sel or not self._spooler_printers:
+            self.job_listbox.delete(0, "end")
+            self.btn_cancel_job.configure(state="disabled")
+            self.btn_cancel_all.configure(state="disabled")
+            return
+        idx = sel[0]
+        if idx >= len(self._spooler_printers):
+            return
+        p = self._spooler_printers[idx]
+        self._spooler_jobs = p.get("jobs", [])
+        self._spooler_jobs_title.set(f"Travaux — {p.get('name', '?')}")
+        self.job_listbox.delete(0, "end")
+        if self._spooler_jobs:
+            # En-tête colonnes
+            self.job_listbox.insert("end", f"  {'ID':<5} {'Document':<28} {'Utilisateur':<14} {'Statut':<12} {'Pages'}")
+            self.job_listbox.insert("end", "  " + "─" * 72)
+            for j in self._spooler_jobs:
+                doc  = (j.get("document", "") or "")[:27]
+                user = (j.get("user", "") or "")[:13]
+                stat = (j.get("status", "") or "")[:11]
+                jid  = j.get("id", "?")
+                pages = j.get("pages", 0)
+                self.job_listbox.insert("end", f"  {str(jid):<5} {doc:<28} {user:<14} {stat:<12} {pages}")
+            self.btn_cancel_all.configure(state="normal")
+        else:
+            self.job_listbox.insert("end", "  (file vide)")
+            self.btn_cancel_all.configure(state="disabled")
+        self.btn_cancel_job.configure(state="disabled")
+
+    def _spooler_on_job_select(self, event=None):
+        sel = self.job_listbox.curselection()
+        if not sel:
+            self.btn_cancel_job.configure(state="disabled")
+            return
+        # Les 2 premières lignes sont l'en-tête — pas cliquables
+        job_data_idx = sel[0] - 2
+        if job_data_idx >= 0 and job_data_idx < len(self._spooler_jobs):
+            self.btn_cancel_job.configure(state="normal")
+        else:
+            self.btn_cancel_job.configure(state="disabled")
+
+    def _spooler_cancel_job(self):
+        if self._spooler_busy:
+            return
+        sel_printer = self.printer_listbox.curselection()
+        sel_job     = self.job_listbox.curselection()
+        if not sel_printer or not sel_job:
+            return
+        idx_p = sel_printer[0]
+        idx_j = sel_job[0]
+        if idx_p >= len(self._spooler_printers):
+            return
+        printer = self._spooler_printers[idx_p]
+        # Les 2 premières lignes sont l'en-tête — offset de 2
+        job_data_idx = idx_j - 2
+        if job_data_idx < 0 or job_data_idx >= len(self._spooler_jobs):
+            return
+        job      = self._spooler_jobs[job_data_idx]
+        job_id   = job.get("id", -1)
+        doc_name = job.get("document", "?")
+        p_name   = printer.get("name", "")
+
+        if not messagebox.askyesno(
+            "Confirmer annulation",
+            f"Annuler le travail ?\n\n  {doc_name}\n  (ID {job_id} — {p_name})",
+            icon="warning",
+        ):
+            return
+
+        self._spooler_busy = True
+        self.btn_spooler_refresh.configure(state="disabled")
+        self.btn_cancel_job.configure(state="disabled")
+        self.btn_cancel_all.configure(state="disabled")
+        self.spooler_log_var.set("Annulation en cours…")
+
+        def _worker():
+            try:
+                data = _run_ps_action(
+                    "collectors/spooler_fix.ps1",
+                    ["-Action", "cancel-job", "-PrinterName", p_name, "-JobId", str(job_id)],
+                )
+                success = data.get("success", False)
+                def _update():
+                    self._spooler_busy = False
+                    if success:
+                        self.spooler_log_var.set(f"Travail {job_id} annulé.")
+                    else:
+                        self.spooler_log_var.set(f"Erreur : {data.get('error', '?')}")
+                    self.after(300, self._spooler_refresh)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self.spooler_log_var.set(f"Erreur : {e}")
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_cancel_job.configure(state="normal")
+                    self.btn_cancel_all.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _spooler_cancel_all(self):
+        if self._spooler_busy:
+            return
+        sel = self.printer_listbox.curselection()
+        if not sel or not self._spooler_printers:
+            return
+        idx = sel[0]
+        if idx >= len(self._spooler_printers):
+            return
+        printer = self._spooler_printers[idx]
+        p_name  = printer.get("name", "")
+        n_jobs  = printer.get("job_count", 0)
+
+        if not messagebox.askyesno(
+            "Confirmer annulation",
+            f"Annuler tous les travaux de :\n\n  {p_name}\n\n"
+            f"  {n_jobs} travail(s) sera(ont) annulé(s).",
+            icon="warning",
+        ):
+            return
+
+        self._spooler_busy = True
+        self.btn_spooler_refresh.configure(state="disabled")
+        self.btn_cancel_job.configure(state="disabled")
+        self.btn_cancel_all.configure(state="disabled")
+        self.btn_spooler_fix.configure(state="disabled")
+        self.spooler_log_var.set("Annulation en cours…")
+
+        def _worker():
+            try:
+                data    = _run_ps_action(
+                    "collectors/spooler_fix.ps1",
+                    ["-Action", "cancel-all", "-PrinterName", p_name],
+                )
+                success  = data.get("success", False)
+                cancelled = data.get("cancelled", 0)
+                def _update():
+                    self._spooler_busy = False
+                    if success:
+                        self.spooler_log_var.set(f"{cancelled} travail(s) annulé(s) sur {p_name}.")
+                    else:
+                        self.spooler_log_var.set(f"Erreur : {data.get('error', '?')}")
+                    self.after(300, self._spooler_refresh)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self.spooler_log_var.set(f"Erreur : {e}")
+                    self._spooler_busy = False
+                    self.btn_spooler_refresh.configure(state="normal")
+                    self.btn_cancel_job.configure(state="normal")
+                    self.btn_cancel_all.configure(state="normal")
                     self.btn_spooler_fix.configure(state="normal")
                 self.after(0, _err)
 
@@ -524,9 +765,9 @@ class PlanetDiagApp(tk.Tk):
         if self._spooler_busy:
             return
         if not messagebox.askyesno(
-            "Confirmer",
-            "Vider la file d'impression ?\n\n"
-            "Tous les travaux en attente seront supprimés\n"
+            "Vider tout le spooler",
+            "Vider TOUTE la file d'impression ?\n\n"
+            "Tous les travaux de toutes les imprimantes seront supprimés\n"
             "et le service Spooler sera redémarré.",
             icon="warning",
         ):
@@ -535,6 +776,8 @@ class PlanetDiagApp(tk.Tk):
         self._spooler_busy = True
         self.btn_spooler_refresh.configure(state="disabled")
         self.btn_spooler_fix.configure(state="disabled", text="⏳  En cours…")
+        self.btn_cancel_job.configure(state="disabled")
+        self.btn_cancel_all.configure(state="disabled")
         self.spooler_log_var.set("Opération en cours…")
 
         def _worker():
@@ -543,21 +786,19 @@ class PlanetDiagApp(tk.Tk):
                 success = data.get("success", False)
                 steps   = data.get("steps", [])
                 svc     = data.get("service", {})
-                qafter  = data.get("queue_after", {})
                 log_txt = "\n".join(steps)
 
                 def _update():
                     self.spooler_status_var.set(svc.get("status", "?"))
-                    jobs = qafter.get("job_count", -1)
-                    self.spooler_jobs_var.set(str(jobs) if jobs != -1 else "Erreur accès")
                     self.spooler_log_var.set(log_txt)
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
-                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider le spooler")
+                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider tout")
                     if success:
                         messagebox.showinfo("Spooler", "Spooler vidé et redémarré avec succès.")
                     else:
                         messagebox.showerror("Erreur spooler", data.get("error", "Erreur inconnue"))
+                    self.after(300, self._spooler_refresh)
                 self.after(0, _update)
             except Exception as exc:
                 logger.exception("Erreur spooler fix")
@@ -566,7 +807,7 @@ class PlanetDiagApp(tk.Tk):
                     self.spooler_log_var.set(f"Erreur : {e}")
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
-                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider le spooler")
+                    self.btn_spooler_fix.configure(state="normal", text="🗑  Vider tout")
                     messagebox.showerror("Erreur", str(e))
                 self.after(0, _err)
 
