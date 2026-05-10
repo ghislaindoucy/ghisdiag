@@ -497,10 +497,11 @@ class PlanetDiagApp(tk.Tk):
                     self.btn_spooler_fix.configure(state="normal")
                 self.after(0, _update)
             except Exception as exc:
-                def _err():
+                _exc = exc
+                def _err(e=_exc):
                     self.spooler_status_var.set("Erreur")
                     self.spooler_jobs_var.set("—")
-                    self.spooler_log_var.set(f"Erreur : {exc}")
+                    self.spooler_log_var.set(f"Erreur : {e}")
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
                     self.btn_spooler_fix.configure(state="normal")
@@ -549,12 +550,13 @@ class PlanetDiagApp(tk.Tk):
                 self.after(0, _update)
             except Exception as exc:
                 logger.exception("Erreur spooler fix")
-                def _err():
-                    self.spooler_log_var.set(f"Erreur : {exc}")
+                _exc = exc
+                def _err(e=_exc):
+                    self.spooler_log_var.set(f"Erreur : {e}")
                     self._spooler_busy = False
                     self.btn_spooler_refresh.configure(state="normal")
                     self.btn_spooler_fix.configure(state="normal", text="🗑  Vider le spooler")
-                    messagebox.showerror("Erreur", str(exc))
+                    messagebox.showerror("Erreur", str(e))
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -673,10 +675,11 @@ class PlanetDiagApp(tk.Tk):
                     self.btn_net_refresh.configure(state="normal")
                 self.after(0, _update)
             except Exception as exc:
-                def _err():
+                _exc = exc
+                def _err(e=_exc):
                     self.network_listbox.delete(0, "end")
                     self.network_listbox.insert("end", "  Erreur de chargement")
-                    self.network_log_var.set(f"Erreur : {exc}")
+                    self.network_log_var.set(f"Erreur : {e}")
                     self._network_busy = False
                     self.btn_net_refresh.configure(state="normal")
                 self.after(0, _err)
@@ -753,12 +756,13 @@ class PlanetDiagApp(tk.Tk):
                 self.after(0, _update)
             except Exception as exc:
                 logger.exception("Erreur network reset")
-                def _err():
-                    self.network_log_var.set(f"Erreur : {exc}")
+                _exc = exc
+                def _err(e=_exc):
+                    self.network_log_var.set(f"Erreur : {e}")
                     self._network_busy = False
                     self.btn_net_refresh.configure(state="normal")
                     self.btn_net_reset.configure(state="normal", text="⟳  Réinitialiser")
-                    messagebox.showerror("Erreur", str(exc))
+                    messagebox.showerror("Erreur", str(e))
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
