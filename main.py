@@ -1497,11 +1497,27 @@ class PlanetDiagApp(tk.Tk):
             messagebox.showinfo("WiFi", "Réseau masqué — impossible de se connecter automatiquement.")
             return
 
-        is_open    = "open" in auth.lower() or "ouvert" in auth.lower() or not auth
+        is_open     = "open" in auth.lower() or "ouvert" in auth.lower() or not auth
         has_profile = any(p.get("name") == ssid for p in self._wifi_profiles)
 
         password = None
-        if not has_profile and not is_open:
+        if has_profile:
+            # Réseau déjà configuré : confirmation avant connexion
+            if not messagebox.askyesno(
+                "Réseau déjà enregistré",
+                f"Ce réseau est déjà configuré sur ce PC :\n\n  {ssid}\n\n"
+                "Se connecter avec le profil existant ?",
+            ):
+                return
+        elif is_open:
+            if not messagebox.askyesno(
+                "Réseau ouvert",
+                f"Connexion à un réseau non sécurisé :\n\n  {ssid}\n\n"
+                "Continuer sans mot de passe ?",
+                icon="warning",
+            ):
+                return
+        else:
             password = self._ask_wifi_password(ssid)
             if password is None:
                 return
@@ -1539,7 +1555,8 @@ class PlanetDiagApp(tk.Tk):
                         if data.get("created_profile"):
                             self.after(1000, self._wifi_refresh)
                     else:
-                        err = data.get("error", "Erreur inconnue")
+                        # Le PS1 retourne "message" pour les echecs de connexion, "error" pour les erreurs de validation
+                        err = data.get("error") or data.get("message", "Erreur inconnue")
                         self.wifi_log_var.set(f"Erreur : {err}")
                         messagebox.showerror("Erreur connexion", err)
                 self.after(0, _update)
