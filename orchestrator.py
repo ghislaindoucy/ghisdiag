@@ -25,7 +25,7 @@ COLLECTORS = [
     ("software",     "Logiciels & Drivers",  "collectors/software.ps1"),
 ]
 
-VERSION = "1.0.2"
+VERSION = "1.1.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 
 # Limite de taille de sortie d'un collecteur PowerShell (protection mémoire/DoS)

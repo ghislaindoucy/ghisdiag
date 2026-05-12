@@ -6,7 +6,7 @@ echo  PlanetDiag - Compilation PyInstaller
 echo ============================================================
 
 :: Vérification Python
-python --version >nul 2>&1
+py --version >nul 2>&1
 if errorlevel 1 (
     echo ERREUR: Python n'est pas installé ou pas dans le PATH.
     pause & exit /b 1
@@ -14,7 +14,7 @@ if errorlevel 1 (
 
 :: Installation des dépendances si besoin
 echo [1/4] Vérification des dépendances...
-pip install pyinstaller --quiet
+py -m pip install pyinstaller --quiet
 
 :: Nettoyage
 echo [2/4] Nettoyage des anciens fichiers...
@@ -39,7 +39,7 @@ echo ^</assembly^>
 
 :: Compilation
 echo [4/4] Compilation en cours...
-pyinstaller ^
+py -m PyInstaller ^
     --onefile ^
     --windowed ^
     --name PlanetDiag ^
