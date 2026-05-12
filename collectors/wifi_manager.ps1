@@ -1,7 +1,9 @@
 param(
     [string]$Action      = "",
     [string]$ProfileName = "",
-    [string]$FilePath    = ""
+    [string]$FilePath    = "",
+    [string]$Password    = "",
+    [string]$Auth        = ""
 )
 
 Set-StrictMode -Version Latest
@@ -13,6 +15,37 @@ function Test-ProfileName([string]$Name) {
     # Interdit les caracteres dangereux pour name="..." dans netsh
     if ($Name -match '["\r\n|<>&]') { return $false }
     return $true
+}
+
+# Genere le XML d'un profil WiFi (WPA2PSK ou open) sans recourir au here-string
+function New-WifiProfileXml([string]$Ssid, [string]$HexSsid, [string]$Pwd, [bool]$IsOpen) {
+    # Echapper les caracteres XML speciaux dans le nom et le MDP
+    $safeSsid = $Ssid.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+    $safePwd  = $Pwd.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+
+    $x  = '<?xml version="1.0"?>' + "`n"
+    $x += '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">' + "`n"
+    $x += "  <name>$safeSsid</name>`n"
+    $x += "  <SSIDConfig><SSID><hex>$HexSsid</hex><name>$safeSsid</name></SSID></SSIDConfig>`n"
+    $x += "  <connectionType>ESS</connectionType>`n"
+    $x += "  <connectionMode>manual</connectionMode>`n"
+    $x += "  <MSM><security><authEncryption>`n"
+    if ($IsOpen) {
+        $x += "    <authentication>open</authentication>`n"
+        $x += "    <encryption>none</encryption>`n"
+        $x += "    <useOneX>false</useOneX>`n"
+        $x += "  </authEncryption></security></MSM>`n"
+    } else {
+        $x += "    <authentication>WPA2PSK</authentication>`n"
+        $x += "    <encryption>AES</encryption>`n"
+        $x += "    <useOneX>false</useOneX>`n"
+        $x += "  </authEncryption>`n"
+        $x += "  <sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
+        $x += "<keyMaterial>$safePwd</keyMaterial></sharedKey>`n"
+        $x += "  </security></MSM>`n"
+    }
+    $x += "</WLANProfile>"
+    return $x
 }
 
 # Extrait les noms de profils utilisateurs depuis la sortie de "netsh wlan show profiles"
@@ -247,6 +280,61 @@ switch ($Action) {
             imported       = $imported
             errors         = $errors
         } | ConvertTo-Json -Depth 3
+        exit 0
+    }
+
+    "connect" {
+        if (-not (Test-ProfileName $ProfileName)) {
+            [PSCustomObject]@{ success = $false; error = "Nom de reseau invalide" } | ConvertTo-Json
+            exit 0
+        }
+
+        # Verifier si un profil sauvegarde existe deja pour ce SSID
+        $existing   = Get-ProfileNames
+        $hasProfile = $ProfileName -in $existing
+
+        if (-not $hasProfile) {
+            if ($Auth -ne "open" -and [string]::IsNullOrEmpty($Password)) {
+                [PSCustomObject]@{ success = $false; error = "Mot de passe requis pour ce reseau" } | ConvertTo-Json
+                exit 0
+            }
+            if ($Auth -ne "open" -and $Password.Length -lt 8) {
+                [PSCustomObject]@{ success = $false; error = "Mot de passe trop court (8 caracteres minimum)" } | ConvertTo-Json
+                exit 0
+            }
+
+            # Encoder le SSID en hex UTF-8 pour le XML
+            $bytes   = [System.Text.Encoding]::UTF8.GetBytes($ProfileName)
+            $hexSSID = ($bytes | ForEach-Object { '{0:X2}' -f $_ }) -join ''
+            $isOpen  = ($Auth -eq "open")
+
+            $xmlContent = New-WifiProfileXml -Ssid $ProfileName -HexSsid $hexSSID -Pwd $Password -IsOpen $isOpen
+
+            $tmpXml = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_conn_$([System.Guid]::NewGuid().ToString('N')).xml"
+            [System.IO.File]::WriteAllText($tmpXml, $xmlContent, [System.Text.Encoding]::UTF8)
+
+            $addResult = netsh wlan add profile filename="$tmpXml" user=all 2>&1
+            Remove-Item -Path $tmpXml -Force -ErrorAction SilentlyContinue
+
+            $addOutput = ($addResult -join " ").Trim()
+            if ($addOutput -notmatch "(?i)ajout|added|mis.+jour|updated") {
+                [PSCustomObject]@{ success = $false; error = "Impossible de creer le profil : $addOutput" } | ConvertTo-Json
+                exit 0
+            }
+        }
+
+        # Lancer la connexion (asynchrone cote Windows : netsh retourne avant connexion effective)
+        $connectResult = netsh wlan connect name="$ProfileName" 2>&1
+        $connectOutput = ($connectResult -join " ").Trim()
+        # Succes FR : "reussie" / "en cours" — EN : "success" / "progress"
+        $success = $connectOutput -match "(?i)r.ussie|success|cours|progress|envoy"
+
+        [PSCustomObject]@{
+            success         = [bool]$success
+            profile         = $ProfileName
+            message         = $connectOutput
+            created_profile = (-not $hasProfile)
+        } | ConvertTo-Json
         exit 0
     }
 

@@ -257,8 +257,12 @@ class PlanetDiagApp(tk.Tk):
         troubleshoot_frame = tk.Frame(nb, bg=BG)
         nb.add(troubleshoot_frame, text="  Dépannage  ")
 
+        wifi_frame = tk.Frame(nb, bg=BG)
+        nb.add(wifi_frame, text="  WiFi  ")
+
         self._build_analyse_tab(analyse_frame)
         self._build_troubleshoot_tab(troubleshoot_frame)
+        self._build_wifi_tab(wifi_frame)
 
     # ── Onglet Analyse ────────────────────────────────────────────────────────
     def _build_analyse_tab(self, parent: tk.Frame):
@@ -429,8 +433,6 @@ class PlanetDiagApp(tk.Tk):
         self._build_spooler_section(inner)
         ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
         self._build_network_section(inner)
-        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
-        self._build_wifi_section(inner)
 
     # ── Section Spooler ───────────────────────────────────────────────────────
     def _build_spooler_section(self, parent: tk.Frame):
@@ -1026,22 +1028,41 @@ class PlanetDiagApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # ── Section WiFi ──────────────────────────────────────────────────────────
-    def _build_wifi_section(self, parent: tk.Frame):
-        section = tk.Frame(parent, bg=BG, pady=16)
-        section.pack(fill="x", padx=28)
+    # ── Onglet WiFi ───────────────────────────────────────────────────────────
+    def _build_wifi_tab(self, parent: tk.Frame):
+        # Canvas scrollable (même pattern que _build_troubleshoot_tab)
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
 
-        tk.Label(section, text="📶  WiFi",
+        inner = tk.Frame(canvas, bg=BG)
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", _on_configure)
+
+        def _on_canvas_resize(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # ── Section Profils sauvegardés ───────────────────────────────────────
+        sec_p = tk.Frame(inner, bg=BG, pady=16)
+        sec_p.pack(fill="x", padx=28)
+
+        tk.Label(sec_p, text="Profils WiFi sauvegardés",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
-        tk.Label(section,
-                 text="Gérez les profils WiFi sauvegardés et scannez les réseaux disponibles.",
+        tk.Label(sec_p,
+                 text="Consultez, supprimez et sauvegardez les profils WiFi enregistrés sur ce PC.",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 10))
 
-        # ── Profils sauvegardés ───────────────────────────────────────────────
-        tk.Label(section, text="Profils sauvegardés",
-                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 4))
-
-        profiles_row = tk.Frame(section, bg=BG)
+        profiles_row = tk.Frame(sec_p, bg=BG)
         profiles_row.pack(fill="x")
 
         profiles_wrap = tk.Frame(profiles_row, bg=SURFACE)
@@ -1086,8 +1107,8 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_wifi_delete.pack(fill="x")
 
-        # ── Sauvegarde / Restauration ─────────────────────────────────────────
-        backup_row = tk.Frame(section, bg=BG)
+        # Sauvegarde / Restauration
+        backup_row = tk.Frame(sec_p, bg=BG)
         backup_row.pack(fill="x", pady=(12, 0))
 
         tk.Label(backup_row, text="Sauvegarde / Restauration",
@@ -1109,12 +1130,18 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_wifi_backup.pack(side="right")
 
-        # ── Scanner les réseaux ───────────────────────────────────────────────
-        scan_hdr = tk.Frame(section, bg=BG)
-        scan_hdr.pack(fill="x", pady=(14, 4))
+        # ── Séparateur ────────────────────────────────────────────────────────
+        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
+
+        # ── Section Réseaux disponibles ───────────────────────────────────────
+        sec_n = tk.Frame(inner, bg=BG, pady=16)
+        sec_n.pack(fill="x", padx=28)
+
+        scan_hdr = tk.Frame(sec_n, bg=BG)
+        scan_hdr.pack(fill="x", pady=(0, 2))
 
         tk.Label(scan_hdr, text="Réseaux disponibles",
-                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(side="left")
 
         self.btn_wifi_scan = tk.Button(
             scan_hdr, text="🔍  Scanner",
@@ -1124,23 +1151,36 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_wifi_scan.pack(side="right")
 
-        networks_wrap = tk.Frame(section, bg=SURFACE)
+        tk.Label(sec_n,
+                 text="Sélectionnez un réseau puis cliquez Connecter pour le rejoindre.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 8))
+
+        networks_wrap = tk.Frame(sec_n, bg=SURFACE)
         networks_wrap.pack(fill="x")
 
         self.wifi_networks_listbox = tk.Listbox(
             networks_wrap,
             bg=SURFACE, fg=FG, font=("Consolas", 9),
             selectbackground=ACCENT, selectforeground="#1e1e2e",
-            relief="flat", bd=0, activestyle="none", height=5,
+            relief="flat", bd=0, activestyle="none", height=6,
         )
         net_sb = tk.Scrollbar(networks_wrap, command=self.wifi_networks_listbox.yview, bg=SURFACE2)
         self.wifi_networks_listbox.configure(yscrollcommand=net_sb.set)
         net_sb.pack(side="right", fill="y")
         self.wifi_networks_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.wifi_networks_listbox.bind("<<ListboxSelect>>", self._wifi_on_network_select)
+
+        self.btn_wifi_connect = tk.Button(
+            sec_n, text="🔗  Connecter au réseau sélectionné",
+            font=("Segoe UI", 10, "bold"), bg=GREEN, fg="#1e1e2e",
+            activebackground="#80c87e", relief="flat", cursor="hand2",
+            padx=14, pady=8, state="disabled", command=self._wifi_connect,
+        )
+        self.btn_wifi_connect.pack(fill="x", pady=(8, 0))
 
         # Log WiFi
         self.wifi_log_var = tk.StringVar(value="")
-        wifi_log_frame = tk.Frame(section, bg=SURFACE, pady=6, padx=10)
+        wifi_log_frame = tk.Frame(sec_n, bg=SURFACE, pady=6, padx=10)
         wifi_log_frame.pack(fill="x", pady=(10, 0))
         tk.Label(wifi_log_frame, textvariable=self.wifi_log_var,
                  font=("Consolas", 9), bg=SURFACE, fg=FG_DIM,
@@ -1362,6 +1402,155 @@ class PlanetDiagApp(tk.Tk):
                     self.wifi_log_var.set(f"Erreur : {e}")
                     self._wifi_busy = False
                     self.btn_wifi_scan.configure(state="normal", text="🔍  Scanner")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_on_network_select(self, event=None):
+        sel = self.wifi_networks_listbox.curselection()
+        if not sel:
+            self.btn_wifi_connect.configure(state="disabled")
+            return
+        idx = sel[0] - 2  # 2 lignes d'en-tête
+        if 0 <= idx < len(self._wifi_networks):
+            ssid = self._wifi_networks[idx].get("ssid", "")
+            self.btn_wifi_connect.configure(state="normal" if ssid else "disabled")
+        else:
+            self.btn_wifi_connect.configure(state="disabled")
+
+    def _ask_wifi_password(self, ssid: str):
+        """Dialog de saisie MDP WiFi. Retourne le MDP saisi ou None si annulé."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Connexion WiFi")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        result = {"pwd": None}
+
+        tk.Label(dialog, text="Connexion au réseau :",
+                 font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(padx=24, pady=(18, 2), anchor="w")
+        tk.Label(dialog, text=f"  {ssid}",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=FG).pack(padx=24, pady=(0, 14), anchor="w")
+        tk.Label(dialog, text="Mot de passe :",
+                 font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(padx=24, pady=(0, 4), anchor="w")
+
+        entry_var = tk.StringVar()
+        entry = tk.Entry(
+            dialog, textvariable=entry_var, show="*",
+            font=("Consolas", 11), bg=SURFACE, fg=FG,
+            insertbackground=FG, relief="flat", width=28,
+        )
+        entry.pack(padx=24, pady=(0, 16), ipady=7, ipadx=8, fill="x")
+        entry.focus_set()
+
+        def _ok():
+            result["pwd"] = entry_var.get()
+            dialog.destroy()
+
+        def _cancel():
+            dialog.destroy()
+
+        entry.bind("<Return>", lambda e: _ok())
+        entry.bind("<Escape>", lambda e: _cancel())
+
+        btn_row = tk.Frame(dialog, bg=BG)
+        btn_row.pack(padx=24, pady=(0, 18), fill="x")
+
+        tk.Button(
+            btn_row, text="Annuler",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=16, pady=7, command=_cancel,
+        ).pack(side="right", padx=(6, 0))
+        tk.Button(
+            btn_row, text="Connecter",
+            font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
+            activebackground="#74a8e8", relief="flat", cursor="hand2",
+            padx=16, pady=7, command=_ok,
+        ).pack(side="right")
+
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width()  - dialog.winfo_width())  // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        self.wait_window(dialog)
+        return result["pwd"]
+
+    def _wifi_connect(self):
+        if self._wifi_busy:
+            return
+        sel = self.wifi_networks_listbox.curselection()
+        if not sel or not self._wifi_networks:
+            return
+        idx = sel[0] - 2  # 2 lignes d'en-tête
+        if idx < 0 or idx >= len(self._wifi_networks):
+            return
+
+        network = self._wifi_networks[idx]
+        ssid    = network.get("ssid", "")
+        auth    = network.get("authentication", "")
+
+        if not ssid:
+            messagebox.showinfo("WiFi", "Réseau masqué — impossible de se connecter automatiquement.")
+            return
+
+        is_open    = "open" in auth.lower() or "ouvert" in auth.lower() or not auth
+        has_profile = any(p.get("name") == ssid for p in self._wifi_profiles)
+
+        password = None
+        if not has_profile and not is_open:
+            password = self._ask_wifi_password(ssid)
+            if password is None:
+                return
+            if len(password) < 8:
+                messagebox.showerror("Mot de passe invalide",
+                                     "Le mot de passe WiFi doit comporter au moins 8 caractères.")
+                return
+
+        self._wifi_busy = True
+        self.btn_wifi_connect.configure(state="disabled", text="⏳  Connexion…")
+        self.btn_wifi_scan.configure(state="disabled")
+        self.wifi_log_var.set(f"Connexion à « {ssid} »…")
+
+        args = ["-Action", "connect", "-ProfileName", ssid]
+        if password is not None:
+            args += ["-Password", password]
+        if is_open:
+            args += ["-Auth", "open"]
+
+        def _worker():
+            try:
+                data = _run_ps_action("collectors/wifi_manager.ps1", args, timeout=30)
+                def _update():
+                    self._wifi_busy = False
+                    self.btn_wifi_connect.configure(
+                        state="normal", text="🔗  Connecter au réseau sélectionné")
+                    self.btn_wifi_scan.configure(state="normal")
+                    if data.get("success"):
+                        self.wifi_log_var.set(f"Connexion à « {ssid} » initiée.")
+                        messagebox.showinfo(
+                            "Connexion WiFi",
+                            f"Demande de connexion à « {ssid} » envoyée.\n\n"
+                            "La connexion peut prendre quelques secondes.",
+                        )
+                        if data.get("created_profile"):
+                            self.after(1000, self._wifi_refresh)
+                    else:
+                        err = data.get("error", "Erreur inconnue")
+                        self.wifi_log_var.set(f"Erreur : {err}")
+                        messagebox.showerror("Erreur connexion", err)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._wifi_busy = False
+                    self.btn_wifi_connect.configure(
+                        state="normal", text="🔗  Connecter au réseau sélectionné")
+                    self.btn_wifi_scan.configure(state="normal")
+                    self.wifi_log_var.set(f"Erreur : {e}")
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
