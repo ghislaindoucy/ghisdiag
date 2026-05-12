@@ -193,6 +193,11 @@ class PlanetDiagApp(tk.Tk):
         self._network_busy     = False
         self._network_adapters = []  # [{"name":…, "status":…, …}]
 
+        # WiFi state
+        self._wifi_busy     = False
+        self._wifi_profiles = []  # [{"name":…}]
+        self._wifi_networks = []  # [{"ssid":…, "signal":…, …}]
+
         self._build_ui()
         self._set_icon()
         self.update_idletasks()
@@ -424,6 +429,8 @@ class PlanetDiagApp(tk.Tk):
         self._build_spooler_section(inner)
         ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
         self._build_network_section(inner)
+        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
+        self._build_wifi_section(inner)
 
     # ── Section Spooler ───────────────────────────────────────────────────────
     def _build_spooler_section(self, parent: tk.Frame):
@@ -1015,6 +1022,323 @@ class PlanetDiagApp(tk.Tk):
                     self.btn_net_refresh.configure(state="normal")
                     self.btn_net_reset.configure(state="normal", text="⟳  Réinitialiser")
                     messagebox.showerror("Erreur", str(e))
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── Section WiFi ──────────────────────────────────────────────────────────
+    def _build_wifi_section(self, parent: tk.Frame):
+        section = tk.Frame(parent, bg=BG, pady=16)
+        section.pack(fill="x", padx=28)
+
+        tk.Label(section, text="📶  WiFi",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(section,
+                 text="Gérez les profils WiFi sauvegardés et scannez les réseaux disponibles.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 10))
+
+        # ── Profils sauvegardés ───────────────────────────────────────────────
+        tk.Label(section, text="Profils sauvegardés",
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(anchor="w", pady=(0, 4))
+
+        profiles_row = tk.Frame(section, bg=BG)
+        profiles_row.pack(fill="x")
+
+        profiles_wrap = tk.Frame(profiles_row, bg=SURFACE)
+        profiles_wrap.pack(side="left", fill="both", expand=True)
+
+        self.wifi_listbox = tk.Listbox(
+            profiles_wrap,
+            bg=SURFACE, fg=FG, font=("Segoe UI", 10),
+            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            relief="flat", bd=0, activestyle="none", height=6,
+        )
+        wifi_sb = tk.Scrollbar(profiles_wrap, command=self.wifi_listbox.yview, bg=SURFACE2)
+        self.wifi_listbox.configure(yscrollcommand=wifi_sb.set)
+        wifi_sb.pack(side="right", fill="y")
+        self.wifi_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.wifi_listbox.bind("<<ListboxSelect>>", self._wifi_on_select)
+
+        btns_profiles = tk.Frame(profiles_row, bg=BG)
+        btns_profiles.pack(side="left", padx=(10, 0), anchor="n")
+
+        self.btn_wifi_refresh = tk.Button(
+            btns_profiles, text="↻  Actualiser",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=8, command=self._wifi_refresh,
+        )
+        self.btn_wifi_refresh.pack(fill="x", pady=(0, 6))
+
+        self.btn_wifi_show_pwd = tk.Button(
+            btns_profiles, text="👁  Voir MDP",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=8, state="disabled", command=self._wifi_show_password,
+        )
+        self.btn_wifi_show_pwd.pack(fill="x", pady=(0, 6))
+
+        self.btn_wifi_delete = tk.Button(
+            btns_profiles, text="✗  Supprimer",
+            font=("Segoe UI", 10), bg=RED, fg="#1e1e2e",
+            activebackground="#e07070", relief="flat", cursor="hand2",
+            padx=14, pady=8, state="disabled", command=self._wifi_delete_profile,
+        )
+        self.btn_wifi_delete.pack(fill="x")
+
+        # ── Scanner les réseaux ───────────────────────────────────────────────
+        scan_hdr = tk.Frame(section, bg=BG)
+        scan_hdr.pack(fill="x", pady=(14, 4))
+
+        tk.Label(scan_hdr, text="Réseaux disponibles",
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
+
+        self.btn_wifi_scan = tk.Button(
+            scan_hdr, text="🔍  Scanner",
+            font=("Segoe UI", 10), bg=ACCENT, fg="#1e1e2e",
+            activebackground="#74a8e8", relief="flat", cursor="hand2",
+            padx=14, pady=6, command=self._wifi_scan,
+        )
+        self.btn_wifi_scan.pack(side="right")
+
+        networks_wrap = tk.Frame(section, bg=SURFACE)
+        networks_wrap.pack(fill="x")
+
+        self.wifi_networks_listbox = tk.Listbox(
+            networks_wrap,
+            bg=SURFACE, fg=FG, font=("Consolas", 9),
+            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            relief="flat", bd=0, activestyle="none", height=5,
+        )
+        net_sb = tk.Scrollbar(networks_wrap, command=self.wifi_networks_listbox.yview, bg=SURFACE2)
+        self.wifi_networks_listbox.configure(yscrollcommand=net_sb.set)
+        net_sb.pack(side="right", fill="y")
+        self.wifi_networks_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Log WiFi
+        self.wifi_log_var = tk.StringVar(value="")
+        wifi_log_frame = tk.Frame(section, bg=SURFACE, pady=6, padx=10)
+        wifi_log_frame.pack(fill="x", pady=(10, 0))
+        tk.Label(wifi_log_frame, textvariable=self.wifi_log_var,
+                 font=("Consolas", 9), bg=SURFACE, fg=FG_DIM,
+                 justify="left", anchor="w", wraplength=620).pack(fill="x")
+
+        self.after(400, self._wifi_refresh)
+
+    def _wifi_refresh(self):
+        if self._wifi_busy:
+            return
+        self._wifi_busy = True
+        self.btn_wifi_refresh.configure(state="disabled")
+        self.btn_wifi_show_pwd.configure(state="disabled")
+        self.btn_wifi_delete.configure(state="disabled")
+        self.wifi_listbox.delete(0, "end")
+        self.wifi_listbox.insert("end", "  Chargement…")
+        self.wifi_log_var.set("")
+
+        def _worker():
+            try:
+                data     = _run_ps_action("collectors/wifi_manager.ps1", ["-Action", "list-profiles"])
+                profiles = data.get("profiles", [])
+
+                def _update():
+                    self._wifi_profiles = profiles
+                    self.wifi_listbox.delete(0, "end")
+                    for p in profiles:
+                        self.wifi_listbox.insert("end", f"  {p.get('name', '?')}")
+                    if not profiles:
+                        self.wifi_listbox.insert("end", "  Aucun profil WiFi trouvé")
+                    self._wifi_busy = False
+                    self.btn_wifi_refresh.configure(state="normal")
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self.wifi_listbox.delete(0, "end")
+                    self.wifi_listbox.insert("end", "  Erreur de chargement")
+                    self.wifi_log_var.set(f"Erreur : {e}")
+                    self._wifi_busy = False
+                    self.btn_wifi_refresh.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_on_select(self, event=None):
+        sel = self.wifi_listbox.curselection()
+        if not sel or not self._wifi_profiles or sel[0] >= len(self._wifi_profiles):
+            self.btn_wifi_show_pwd.configure(state="disabled")
+            self.btn_wifi_delete.configure(state="disabled")
+            return
+        self.btn_wifi_show_pwd.configure(state="normal")
+        self.btn_wifi_delete.configure(state="normal")
+
+    def _wifi_show_password(self):
+        if self._wifi_busy:
+            return
+        sel = self.wifi_listbox.curselection()
+        if not sel or not self._wifi_profiles:
+            return
+        idx = sel[0]
+        if idx >= len(self._wifi_profiles):
+            return
+        name = self._wifi_profiles[idx].get("name", "")
+        if not name:
+            return
+
+        if not messagebox.askyesno(
+            "Afficher le mot de passe",
+            f"Révéler le mot de passe du réseau ?\n\n  {name}\n\n"
+            "Cette information est sensible. Continuez ?",
+            icon="warning",
+        ):
+            return
+
+        self._wifi_busy = True
+        self.btn_wifi_refresh.configure(state="disabled")
+        self.btn_wifi_show_pwd.configure(state="disabled", text="⏳  Chargement…")
+        self.btn_wifi_delete.configure(state="disabled")
+        self.wifi_log_var.set("Récupération du mot de passe…")
+
+        def _worker():
+            try:
+                data = _run_ps_action(
+                    "collectors/wifi_manager.ps1",
+                    ["-Action", "show-password", "-ProfileName", name],
+                    timeout=15,
+                )
+                def _update():
+                    self._wifi_busy = False
+                    self.btn_wifi_refresh.configure(state="normal")
+                    self.btn_wifi_show_pwd.configure(state="normal", text="👁  Voir MDP")
+                    self.btn_wifi_delete.configure(state="normal")
+                    self.wifi_log_var.set("")
+                    if data.get("success"):
+                        pwd  = data.get("password")
+                        auth = data.get("authentication") or "?"
+                        if pwd:
+                            msg = f"Réseau : {name}\nAuthentification : {auth}\n\nMot de passe :\n{pwd}"
+                        else:
+                            msg = f"Réseau : {name}\nAuthentification : {auth}\n\nAucun mot de passe (réseau ouvert)."
+                        messagebox.showinfo("Mot de passe WiFi", msg)
+                    else:
+                        messagebox.showerror("Erreur", data.get("error", "Erreur inconnue"))
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._wifi_busy = False
+                    self.btn_wifi_refresh.configure(state="normal")
+                    self.btn_wifi_show_pwd.configure(state="normal", text="👁  Voir MDP")
+                    self.btn_wifi_delete.configure(state="normal")
+                    self.wifi_log_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_delete_profile(self):
+        if self._wifi_busy:
+            return
+        sel = self.wifi_listbox.curselection()
+        if not sel or not self._wifi_profiles:
+            return
+        idx = sel[0]
+        if idx >= len(self._wifi_profiles):
+            return
+        name = self._wifi_profiles[idx].get("name", "")
+        if not name:
+            return
+
+        if not messagebox.askyesno(
+            "Supprimer le profil WiFi",
+            f"Supprimer définitivement le profil ?\n\n  {name}\n\n"
+            "Le PC ne pourra plus se connecter automatiquement à ce réseau.",
+            icon="warning",
+        ):
+            return
+
+        self._wifi_busy = True
+        self.btn_wifi_refresh.configure(state="disabled")
+        self.btn_wifi_show_pwd.configure(state="disabled")
+        self.btn_wifi_delete.configure(state="disabled", text="⏳  Suppression…")
+        self.wifi_log_var.set("Suppression en cours…")
+
+        def _worker():
+            try:
+                data = _run_ps_action(
+                    "collectors/wifi_manager.ps1",
+                    ["-Action", "delete-profile", "-ProfileName", name],
+                    timeout=15,
+                )
+                def _update():
+                    self._wifi_busy = False
+                    self.btn_wifi_delete.configure(text="✗  Supprimer")
+                    if data.get("success"):
+                        self.wifi_log_var.set(f"Profil « {name} » supprimé.")
+                        messagebox.showinfo("WiFi", f"Profil « {name} » supprimé avec succès.")
+                    else:
+                        self.wifi_log_var.set(f"Erreur : {data.get('message', '?')}")
+                        messagebox.showerror("Erreur", data.get("message", "Erreur inconnue"))
+                    self.after(300, self._wifi_refresh)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._wifi_busy = False
+                    self.btn_wifi_refresh.configure(state="normal")
+                    self.btn_wifi_show_pwd.configure(state="normal")
+                    self.btn_wifi_delete.configure(state="normal", text="✗  Supprimer")
+                    self.wifi_log_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_scan(self):
+        if self._wifi_busy:
+            return
+        self._wifi_busy = True
+        self.btn_wifi_scan.configure(state="disabled", text="⏳  Scan en cours…")
+        self.wifi_networks_listbox.delete(0, "end")
+        self.wifi_networks_listbox.insert("end", "  Scan en cours…")
+        self.wifi_log_var.set("Scan des réseaux WiFi…")
+
+        def _worker():
+            try:
+                data     = _run_ps_action("collectors/wifi_manager.ps1", ["-Action", "scan"], timeout=20)
+                networks = data.get("networks", [])
+
+                def _update():
+                    self._wifi_networks = networks
+                    self.wifi_networks_listbox.delete(0, "end")
+                    if networks:
+                        self.wifi_networks_listbox.insert(
+                            "end",
+                            f"  {'SSID':<32} {'Signal':>6}  {'Auth'}"
+                        )
+                        self.wifi_networks_listbox.insert("end", "  " + "─" * 58)
+                        for n in networks:
+                            ssid   = (n.get("ssid") or "(masqué)")[:31]
+                            sig    = n.get("signal", "")
+                            sig_s  = f"{sig}%" if sig else "?"
+                            auth   = (n.get("authentication") or "")[:20]
+                            self.wifi_networks_listbox.insert(
+                                "end",
+                                f"  {ssid:<32} {sig_s:>6}  {auth}"
+                            )
+                    else:
+                        self.wifi_networks_listbox.insert("end", "  Aucun réseau détecté")
+                    n_found = len(networks)
+                    self.wifi_log_var.set(f"{n_found} réseau(x) détecté(s).")
+                    self._wifi_busy = False
+                    self.btn_wifi_scan.configure(state="normal", text="🔍  Scanner")
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self.wifi_networks_listbox.delete(0, "end")
+                    self.wifi_networks_listbox.insert("end", "  Erreur lors du scan")
+                    self.wifi_log_var.set(f"Erreur : {e}")
+                    self._wifi_busy = False
+                    self.btn_wifi_scan.configure(state="normal", text="🔍  Scanner")
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
