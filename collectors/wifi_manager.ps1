@@ -1,6 +1,7 @@
 param(
     [string]$Action      = "",
-    [string]$ProfileName = ""
+    [string]$ProfileName = "",
+    [string]$FilePath    = ""
 )
 
 Set-StrictMode -Version Latest
@@ -14,40 +15,40 @@ function Test-ProfileName([string]$Name) {
     return $true
 }
 
-switch ($Action) {
-
-    "list-profiles" {
-        $raw = $null
-        try { $raw = netsh wlan show profiles 2>&1 } catch {}
-
-        $profiles = @()
-        $seen     = @{}
-
-        if ($raw) {
-            $inUserSection = $false
-            foreach ($line in $raw) {
-                $trimmed = $line.Trim()
-                # Detecter le debut de la section profils utilisateurs (FR/EN)
-                if ($trimmed -match '^Profils utilisateurs|^User Profiles|^All User Profiles') {
-                    $inUserSection = $true
-                    continue
-                }
-                # Nouvelle interface : rester dans la section pour cette interface aussi
-                if ($trimmed -match '^Profils sur l|^Profiles on interface') {
-                    $inUserSection = $false
-                    continue
-                }
-                # Dans la section utilisateur : extraire les noms apres le dernier ':'
-                if ($inUserSection -and $trimmed -match ':\s+(.+)$') {
-                    $n = $Matches[1].Trim()
-                    if ($n -and $n -ne '<Aucun>' -and $n -ne '<None>' -and -not $seen.ContainsKey($n)) {
-                        $seen[$n] = $true
-                        $profiles += @{ name = $n }
-                    }
+# Extrait les noms de profils utilisateurs depuis la sortie de "netsh wlan show profiles"
+function Get-ProfileNames {
+    $raw = $null
+    try { $raw = netsh wlan show profiles 2>&1 } catch {}
+    $names = @()
+    $seen  = @{}
+    if ($raw) {
+        $inSection = $false
+        foreach ($line in $raw) {
+            $t = $line.Trim()
+            if ($t -match '^Profils utilisateurs|^User Profiles|^All User Profiles') {
+                $inSection = $true; continue
+            }
+            if ($t -match '^Profils sur l|^Profiles on interface') {
+                $inSection = $false; continue
+            }
+            if ($inSection -and $t -match ':\s+(.+)$') {
+                $n = $Matches[1].Trim()
+                if ($n -and $n -ne '<Aucun>' -and $n -ne '<None>' -and -not $seen.ContainsKey($n)) {
+                    $seen[$n] = $true
+                    $names += $n
                 }
             }
         }
+    }
+    return $names
+}
 
+switch ($Action) {
+
+    "list-profiles" {
+        $names    = Get-ProfileNames
+        $profiles = @()
+        foreach ($n in $names) { $profiles += @{ name = $n } }
         [PSCustomObject]@{ success = $true; profiles = $profiles } | ConvertTo-Json -Depth 3
         exit 0
     }
@@ -93,7 +94,6 @@ switch ($Action) {
         try { $raw = netsh wlan delete profile name="$ProfileName" 2>&1 } catch {}
 
         $output  = ($raw -join " ").Trim()
-        # netsh indique le succes par "supprime" (FR) ou "deleted" (EN)
         $success = $output -match "(?i)supprim|deleted"
 
         [PSCustomObject]@{
@@ -113,7 +113,6 @@ switch ($Action) {
         if ($raw) {
             $cur = $null
             foreach ($line in $raw) {
-                # Nouvelle entree SSID (peut etre vide pour les reseaux masques)
                 if ($line -match '^SSID\s+\d+\s*:\s*(.*)') {
                     if ($null -ne $cur) { $networks += $cur }
                     $cur = @{
@@ -132,7 +131,6 @@ switch ($Action) {
                         $cur.encryption = $Matches[1].Trim()
                     }
                     elseif ($line -match 'Signal\s*:\s*(\d+)%') {
-                        # Garder le premier BSSID (signal le plus fort)
                         if (-not $cur.signal) { $cur.signal = $Matches[1] }
                     }
                     elseif ($line -match '(?:Canal|Channel)\s*:\s*(\d+)') {
@@ -144,6 +142,111 @@ switch ($Action) {
         }
 
         [PSCustomObject]@{ success = $true; networks = $networks } | ConvertTo-Json -Depth 3
+        exit 0
+    }
+
+    "backup-all" {
+        if ([string]::IsNullOrWhiteSpace($FilePath)) {
+            [PSCustomObject]@{ success = $false; error = "Chemin de sortie manquant" } | ConvertTo-Json
+            exit 0
+        }
+        $parentDir = Split-Path -Parent $FilePath
+        if (-not $parentDir -or -not (Test-Path $parentDir -PathType Container)) {
+            [PSCustomObject]@{ success = $false; error = "Dossier de destination introuvable" } | ConvertTo-Json
+            exit 0
+        }
+
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_wifi_$([System.Guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        $names    = Get-ProfileNames
+        $exported = @()
+        $errors   = @()
+
+        foreach ($name in $names) {
+            # @() force le tableau meme si Get-ChildItem retourne $null ou 1 objet (StrictMode .Count)
+            $before = @(Get-ChildItem -Path $tempDir -Filter "*.xml" -ErrorAction SilentlyContinue).Count
+            $null   = netsh wlan export profile name="$name" folder="$tempDir" key=clear 2>&1
+            $after  = @(Get-ChildItem -Path $tempDir -Filter "*.xml" -ErrorAction SilentlyContinue).Count
+            if ($after -gt $before) { $exported += $name }
+            else { $errors += "Echec export : $name" }
+        }
+
+        if (-not $exported) {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            [PSCustomObject]@{ success = $false; error = "Aucun profil exporte"; errors = $errors } | ConvertTo-Json -Depth 3
+            exit 0
+        }
+
+        try {
+            Compress-Archive -Path "$tempDir\*" -DestinationPath $FilePath -Force
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            [PSCustomObject]@{
+                success        = $true
+                zip_path       = $FilePath
+                profiles_count = $exported.Count
+                profiles       = $exported
+                errors         = $errors
+            } | ConvertTo-Json -Depth 3
+        } catch {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            [PSCustomObject]@{ success = $false; error = "Erreur compression ZIP : $_" } | ConvertTo-Json
+        }
+        exit 0
+    }
+
+    "restore-all" {
+        if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path $FilePath -PathType Leaf)) {
+            [PSCustomObject]@{ success = $false; error = "Fichier ZIP introuvable" } | ConvertTo-Json
+            exit 0
+        }
+        if ([System.IO.Path]::GetExtension($FilePath).ToLower() -ne '.zip') {
+            [PSCustomObject]@{ success = $false; error = "Le fichier doit etre un .zip" } | ConvertTo-Json
+            exit 0
+        }
+
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_wifi_restore_$([System.Guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+        try {
+            Expand-Archive -Path $FilePath -DestinationPath $tempDir -Force
+        } catch {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            [PSCustomObject]@{ success = $false; error = "Erreur decompression ZIP : $_" } | ConvertTo-Json
+            exit 0
+        }
+
+        # Traiter uniquement les .xml (securite : pas d'executables)
+        $xmlFiles = Get-ChildItem -Path $tempDir -Filter "*.xml" -File -Recurse -ErrorAction SilentlyContinue
+
+        if (-not $xmlFiles) {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            [PSCustomObject]@{ success = $false; error = "Aucun fichier XML trouve dans le ZIP" } | ConvertTo-Json
+            exit 0
+        }
+
+        $imported = @()
+        $errors   = @()
+
+        foreach ($xml in $xmlFiles) {
+            $result = $null
+            try { $result = netsh wlan add profile filename="$($xml.FullName)" user=all 2>&1 } catch {}
+            $output = ($result -join " ").Trim()
+            # Succes FR : "ajout" / "mis a jour" — EN : "added" / "updated"
+            if ($output -match "(?i)ajout|added|mis.+jour|updated") {
+                $imported += $xml.BaseName
+            } else {
+                $errors += "$($xml.BaseName) : $output"
+            }
+        }
+
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        [PSCustomObject]@{
+            success        = $true
+            imported_count = $imported.Count
+            imported       = $imported
+            errors         = $errors
+        } | ConvertTo-Json -Depth 3
         exit 0
     }
 

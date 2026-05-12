@@ -1086,6 +1086,29 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_wifi_delete.pack(fill="x")
 
+        # ── Sauvegarde / Restauration ─────────────────────────────────────────
+        backup_row = tk.Frame(section, bg=BG)
+        backup_row.pack(fill="x", pady=(12, 0))
+
+        tk.Label(backup_row, text="Sauvegarde / Restauration",
+                 font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(side="left", anchor="w")
+
+        self.btn_wifi_restore = tk.Button(
+            backup_row, text="📂  Restaurer",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=7, command=self._wifi_restore,
+        )
+        self.btn_wifi_restore.pack(side="right", padx=(6, 0))
+
+        self.btn_wifi_backup = tk.Button(
+            backup_row, text="💾  Sauvegarder",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=7, command=self._wifi_backup,
+        )
+        self.btn_wifi_backup.pack(side="right")
+
         # ── Scanner les réseaux ───────────────────────────────────────────────
         scan_hdr = tk.Frame(section, bg=BG)
         scan_hdr.pack(fill="x", pady=(14, 4))
@@ -1339,6 +1362,143 @@ class PlanetDiagApp(tk.Tk):
                     self.wifi_log_var.set(f"Erreur : {e}")
                     self._wifi_busy = False
                     self.btn_wifi_scan.configure(state="normal", text="🔍  Scanner")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_backup(self):
+        if self._wifi_busy:
+            return
+
+        if not messagebox.askyesno(
+            "Sauvegarder les profils WiFi",
+            "Exporter tous les profils WiFi dans un fichier ZIP ?\n\n"
+            "⚠  Le fichier contiendra les mots de passe en clair.\n"
+            "Conservez-le dans un endroit sûr.",
+            icon="warning",
+        ):
+            return
+
+        zip_path = filedialog.asksaveasfilename(
+            title="Enregistrer la sauvegarde WiFi",
+            defaultextension=".zip",
+            filetypes=[("Archive ZIP", "*.zip")],
+            initialfile="wifi_backup.zip",
+        )
+        if not zip_path:
+            return
+
+        safe, reason = _is_safe_output_dir(Path(zip_path).parent)
+        if not safe:
+            messagebox.showerror("Dossier non autorisé", reason)
+            return
+
+        self._wifi_busy = True
+        self.btn_wifi_backup.configure(state="disabled", text="⏳  Export…")
+        self.btn_wifi_restore.configure(state="disabled")
+        self.btn_wifi_refresh.configure(state="disabled")
+        self.wifi_log_var.set("Sauvegarde en cours…")
+
+        def _worker():
+            try:
+                data = _run_ps_action(
+                    "collectors/wifi_manager.ps1",
+                    ["-Action", "backup-all", "-FilePath", zip_path],
+                    timeout=120,
+                )
+                def _update():
+                    self._wifi_busy = False
+                    self.btn_wifi_backup.configure(state="normal", text="💾  Sauvegarder")
+                    self.btn_wifi_restore.configure(state="normal")
+                    self.btn_wifi_refresh.configure(state="normal")
+                    if data.get("success"):
+                        n = data.get("profiles_count", 0)
+                        errs = data.get("errors", [])
+                        self.wifi_log_var.set(f"{n} profil(s) sauvegardé(s) → {Path(zip_path).name}")
+                        msg = f"{n} profil(s) exporté(s) avec succès.\n\n{zip_path}"
+                        if errs:
+                            msg += "\n\nAvertissements :\n" + "\n".join(errs[:5])
+                            messagebox.showwarning("Sauvegarde partielle", msg)
+                        else:
+                            messagebox.showinfo("Sauvegarde WiFi", msg)
+                    else:
+                        err = data.get("error", "Erreur inconnue")
+                        self.wifi_log_var.set(f"Erreur : {err}")
+                        messagebox.showerror("Erreur sauvegarde", err)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._wifi_busy = False
+                    self.btn_wifi_backup.configure(state="normal", text="💾  Sauvegarder")
+                    self.btn_wifi_restore.configure(state="normal")
+                    self.btn_wifi_refresh.configure(state="normal")
+                    self.wifi_log_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wifi_restore(self):
+        if self._wifi_busy:
+            return
+
+        zip_path = filedialog.askopenfilename(
+            title="Choisir une sauvegarde WiFi",
+            filetypes=[("Archive ZIP", "*.zip")],
+        )
+        if not zip_path:
+            return
+
+        if not messagebox.askyesno(
+            "Restaurer les profils WiFi",
+            f"Importer les profils depuis :\n\n  {Path(zip_path).name}\n\n"
+            "Les profils existants avec le même nom seront écrasés.",
+            icon="warning",
+        ):
+            return
+
+        self._wifi_busy = True
+        self.btn_wifi_backup.configure(state="disabled")
+        self.btn_wifi_restore.configure(state="disabled", text="⏳  Import…")
+        self.btn_wifi_refresh.configure(state="disabled")
+        self.wifi_log_var.set("Restauration en cours…")
+
+        def _worker():
+            try:
+                data = _run_ps_action(
+                    "collectors/wifi_manager.ps1",
+                    ["-Action", "restore-all", "-FilePath", zip_path],
+                    timeout=120,
+                )
+                def _update():
+                    self._wifi_busy = False
+                    self.btn_wifi_backup.configure(state="normal")
+                    self.btn_wifi_restore.configure(state="normal", text="📂  Restaurer")
+                    self.btn_wifi_refresh.configure(state="normal")
+                    if data.get("success"):
+                        n    = data.get("imported_count", 0)
+                        errs = data.get("errors", [])
+                        self.wifi_log_var.set(f"{n} profil(s) restauré(s).")
+                        msg = f"{n} profil(s) importé(s) avec succès."
+                        if errs:
+                            msg += "\n\nAvertissements :\n" + "\n".join(errs[:5])
+                            messagebox.showwarning("Restauration partielle", msg)
+                        else:
+                            messagebox.showinfo("Restauration WiFi", msg)
+                        self.after(300, self._wifi_refresh)
+                    else:
+                        err = data.get("error", "Erreur inconnue")
+                        self.wifi_log_var.set(f"Erreur : {err}")
+                        messagebox.showerror("Erreur restauration", err)
+                self.after(0, _update)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._wifi_busy = False
+                    self.btn_wifi_backup.configure(state="normal")
+                    self.btn_wifi_restore.configure(state="normal", text="📂  Restaurer")
+                    self.btn_wifi_refresh.configure(state="normal")
+                    self.wifi_log_var.set(f"Erreur : {e}")
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
