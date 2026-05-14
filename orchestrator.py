@@ -9,6 +9,8 @@ import os
 import sys
 import time
 import logging
+import threading
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 from typing import Callable, Optional
@@ -138,6 +140,50 @@ def run_collector(name: str, script_path: Path, base_path: Path,
         return {"collector": name, "status": "exception", "error": str(e)}
 
 
+def run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> dict:
+    """Exécute un script PowerShell de dépannage et retourne le JSON parsé.
+    Même forçage UTF-8 que run_collector pour éviter les problèmes CP850/OEM."""
+    base     = get_base_path()
+    script_p = (base / script_rel).resolve()
+
+    if not _validate_script_path(script_p, base):
+        raise RuntimeError(f"Chemin de script invalide : {script_rel}")
+
+    escaped_path = str(script_p).replace("'", "''")
+
+    args_parts = []
+    for arg in extra_args:
+        if arg.startswith("-"):
+            args_parts.append(arg)
+        else:
+            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
+    args_str = " ".join(args_parts)
+
+    ps_cmd = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+        f"& '{escaped_path}' {args_str}"
+    )
+
+    result = subprocess.run(
+        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-Command", ps_cmd],
+        capture_output=True,
+        timeout=timeout,
+        shell=False,
+    )
+
+    stdout = result.stdout.decode("utf-8", errors="replace").strip()
+    if not stdout:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()[:500]
+        raise RuntimeError(f"Pas de sortie du script. Stderr : {stderr}")
+
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"JSON invalide : {e}\nSortie : {stdout[:300]}")
+
+
 class DiagnosticOrchestrator:
     def __init__(self, progress_callback: Optional[Callable] = None):
         self.base_path       = get_base_path()
@@ -152,53 +198,73 @@ class DiagnosticOrchestrator:
                          elapsed=elapsed, ps_errors=ps_errors or [])
 
     def run(self) -> dict:
-        """Lance tous les collecteurs et retourne les données agrégées."""
-        total          = len(COLLECTORS)
-        self.results   = {}
-        start_time     = datetime.now()
+        """Lance tous les collecteurs en parallèle et retourne les données agrégées."""
+        total      = len(COLLECTORS)
+        self.results = {}
+        start_time = datetime.now()
+        lock       = threading.Lock()
+        completed  = 0
 
-        self._notify("Initialisation…", 0, total)
+        self._notify("Lancement des collecteurs…", 0, total)
 
-        for idx, (name, label, rel_path) in enumerate(COLLECTORS, start=1):
+        # Résolution préalable des chemins (séquentielle, triviale)
+        missing = {}
+        runnable = []
+        for name, label, rel_path in COLLECTORS:
             script_path = self.base_path / rel_path
-            self._notify(f"Collecte : {label}", idx - 1, total)
-
             if not script_path.exists():
                 logger.warning("Script introuvable : %s", script_path)
-                self.results[name] = {
+                missing[name] = {
                     "collector": name,
                     "status":    "missing",
                     "error":     f"Script introuvable : {rel_path}",
                 }
-                continue
-
-            logger.info(">>> Collecteur [%s] démarrage…", name)
-            data = run_collector(name, script_path, self.base_path)
-            self.results[name] = data
-
-            elapsed  = data.get("_elapsed_sec", 0)
-            ps_errs  = data.get("collector_errors") or []
-            ps_times = data.get("collector_timings") or {}
-
-            if data.get("_status") != "ok":
-                logger.warning("<<< Collecteur [%s] ECHEC (%.1fs) — statut=%s — %s",
-                               name, elapsed, data.get("status"), data.get("error", ""))
-                self._notify(f"Échec : {label}", idx, total,
-                             status="error", elapsed=elapsed,
-                             ps_errors=[f"statut={data.get('status')} — {data.get('error','')}"])
             else:
-                logger.info("<<< Collecteur [%s] OK (%.1fs)", name, elapsed)
-                if ps_times:
-                    detail = ", ".join(f"{k}={v}s" for k, v in ps_times.items())
-                    logger.info("    Timings internes [%s] : %s", name, detail)
+                runnable.append((name, label, script_path))
 
-                ps_notes = data.get("collector_notes") or []
-                if ps_notes:
-                    logger.debug("    Notes [%s] : %s", name, "; ".join(ps_notes))
+        self.results.update(missing)
 
-                notify_status = "warn" if ps_errs else "running"
-                self._notify(f"✓ {label}  ({elapsed:.1f}s)", idx, total,
-                             status=notify_status, elapsed=elapsed, ps_errors=ps_errs)
+        max_workers = min(4, len(runnable)) if runnable else 1
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(run_collector, name, script_path, self.base_path): (name, label)
+                for name, label, script_path in runnable
+            }
+            logger.info(">>> %d collecteurs lancés en parallèle (workers=%d)",
+                        len(runnable), max_workers)
+
+            for future in concurrent.futures.as_completed(future_map):
+                name, label = future_map[future]
+                data = future.result()
+
+                with lock:
+                    self.results[name] = data
+                    completed += 1
+                    current = completed
+
+                elapsed  = data.get("_elapsed_sec", 0)
+                ps_errs  = data.get("collector_errors") or []
+                ps_times = data.get("collector_timings") or {}
+
+                if data.get("_status") != "ok":
+                    logger.warning("<<< Collecteur [%s] ECHEC (%.1fs) — statut=%s — %s",
+                                   name, elapsed, data.get("status"), data.get("error", ""))
+                    self._notify(f"Échec : {label}", current, total,
+                                 status="error", elapsed=elapsed,
+                                 ps_errors=[f"statut={data.get('status')} — {data.get('error','')}"])
+                else:
+                    logger.info("<<< Collecteur [%s] OK (%.1fs)", name, elapsed)
+                    if ps_times:
+                        detail = ", ".join(f"{k}={v}s" for k, v in ps_times.items())
+                        logger.info("    Timings internes [%s] : %s", name, detail)
+
+                    ps_notes = data.get("collector_notes") or []
+                    if ps_notes:
+                        logger.debug("    Notes [%s] : %s", name, "; ".join(ps_notes))
+
+                    notify_status = "warn" if ps_errs else "running"
+                    self._notify(f"✓ {label}  ({elapsed:.1f}s)", current, total,
+                                 status=notify_status, elapsed=elapsed, ps_errors=ps_errs)
 
         self.collection_time = datetime.now()
         elapsed_total = round((self.collection_time - start_time).total_seconds(), 1)
