@@ -2,6 +2,7 @@
 PlanetDiag - Interface graphique principale
 """
 
+import os
 import sys
 import gc
 import threading
