@@ -10,17 +10,7 @@ $ErrorActionPreference = "SilentlyContinue"
 $result = @{}
 $errors = @()
 
-function Safe-Get {
-    param([scriptblock]$Block, [string]$Name, $Default = $null)
-    try {
-        $val = & $Block
-        if ($null -eq $val) { return $Default }
-        return $val
-    } catch {
-        $script:errors += "[$Name] $($_.Exception.Message)"
-        return $Default
-    }
-}
+. "$PSScriptRoot\_common.ps1"
 
 # ── OS ──────────────────────────────────────────────────────────────────────
 $os = Safe-Get { Get-CimInstance Win32_OperatingSystem } "OS"

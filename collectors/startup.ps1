@@ -6,11 +6,7 @@ $result = @{}
 $errors = @()
 $notes  = @()
 
-function Safe-Get {
-    param([scriptblock]$Block, [string]$Name, $Default = $null)
-    try { $val = & $Block; if ($null -eq $val) { return $Default }; return $val }
-    catch { $script:errors += "[$Name] $($_.Exception.Message)"; return $Default }
-}
+. "$PSScriptRoot\_common.ps1"
 
 # ── Programmes au démarrage (registre + dossier Startup) ────────────────────
 $startupItems = @()

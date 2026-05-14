@@ -78,6 +78,72 @@ def _esc(s: Any) -> str:
     return html.escape(str(s), quote=True)
 
 
+# Règles d'alerte scalaires : (extracteur, condition, level, title, description)
+# Pour ajouter une alerte en v1.2+ : ajouter un tuple ici, sans toucher à _analyse().
+_ALERT_RULES = [
+    (
+        lambda d: _v(d, "performance", "ram", "usage_percent"),
+        lambda v: isinstance(v, (int, float)) and v >= 90,
+        "crit", "RAM critique",
+        lambda v: f"Utilisation RAM à {v}%",
+    ),
+    (
+        lambda d: _v(d, "performance", "ram", "usage_percent"),
+        lambda v: isinstance(v, (int, float)) and 75 <= v < 90,
+        "warn", "RAM élevée",
+        lambda v: f"Utilisation RAM à {v}%",
+    ),
+    (
+        lambda d: _v(d, "performance", "cpu", "load_percent"),
+        lambda v: isinstance(v, (int, float)) and v >= 80,
+        "warn", "CPU élevé",
+        lambda v: f"Charge CPU à {v}%",
+    ),
+    (
+        lambda d: _v(d, "events", "total_errors", default=0),
+        lambda v: isinstance(v, int) and v >= 50,
+        "crit", "Nombreuses erreurs système",
+        lambda v: f"{v} erreurs/critiques en 72h",
+    ),
+    (
+        lambda d: _v(d, "events", "total_errors", default=0),
+        lambda v: isinstance(v, int) and 20 <= v < 50,
+        "warn", "Erreurs système",
+        lambda v: f"{v} erreurs en 72h",
+    ),
+    (
+        lambda d: _v(d, "security", "windows_update", "pending_count", default=-1),
+        lambda v: isinstance(v, int) and v > 5,
+        "warn", "Mises à jour en attente",
+        lambda v: f"{v} mises à jour Windows disponibles",
+    ),
+    (
+        lambda d: _v(d, "network", "internet_ok", default=None),
+        lambda v: v is False,
+        "crit", "Pas de connexion Internet",
+        lambda v: "Impossible de joindre 8.8.8.8",
+    ),
+    (
+        lambda d: _v(d, "software", "drivers", "errors_count", default=0),
+        lambda v: isinstance(v, int) and v > 0,
+        "warn", "Drivers en erreur",
+        lambda v: f"{v} driver(s) en erreur détectés",
+    ),
+    (
+        lambda d: _v(d, "security", "logon_failures", default=0),
+        lambda v: isinstance(v, int) and v >= 5,
+        "warn", "Échecs d'authentification",
+        lambda v: f"{v} échecs de connexion en 7 jours",
+    ),
+    (
+        lambda d: _v(d, "security", "uac", "enabled", default=None),
+        lambda v: v is False,
+        "crit", "UAC désactivé",
+        lambda v: "Le Contrôle de Compte Utilisateur est désactivé",
+    ),
+]
+
+
 class ReportGenerator:
     def __init__(self, report_data: dict, output_dir: Path | None = None):
         self.report     = report_data
@@ -108,107 +174,71 @@ class ReportGenerator:
         """Détecte les anomalies et peuple self.alerts."""
         d = self.data
 
-        # RAM
-        ram_pct = _v(d, "performance", "ram", "usage_percent")
-        if isinstance(ram_pct, (int, float)):
-            if ram_pct >= 90:
-                self.alerts.append(("crit", "RAM critique", f"Utilisation RAM à {ram_pct}%"))
-            elif ram_pct >= 75:
-                self.alerts.append(("warn", "RAM élevée", f"Utilisation RAM à {ram_pct}%"))
+        for extract, condition, level, title, desc in _ALERT_RULES:
+            val = extract(d)
+            if condition(val):
+                self.alerts.append((level, title, desc(val)))
 
-        # CPU
-        cpu_pct = _v(d, "performance", "cpu", "load_percent")
-        if isinstance(cpu_pct, (int, float)) and cpu_pct >= 80:
-            self.alerts.append(("warn", "CPU élevé", f"Charge CPU à {cpu_pct}%"))
+        self._analyse_disks(d)
+        self._analyse_antivirus(d)
+        self._analyse_firewall(d)
+        self._analyse_events(d)
 
-        # Volumes disque
+    def _analyse_disks(self, d: dict):
         vols = _ensure_dicts(_v(d, "system_info", "disks", "volumes", default=[]))
         for vol in vols:
             if vol.get("low_space"):
-                self.alerts.append(("warn", f"Espace disque faible ({vol.get('drive_letter')})",
-                                    f"Seulement {vol.get('free_gb')} GB libres ({vol.get('used_percent')}% utilisé)"))
+                self.alerts.append((
+                    "warn",
+                    f"Espace disque faible ({vol.get('drive_letter')})",
+                    f"Seulement {vol.get('free_gb')} GB libres ({vol.get('used_percent')}% utilisé)",
+                ))
 
-        # Erreurs Windows
-        total_errors = _v(d, "events", "total_errors", default=0)
-        if isinstance(total_errors, int):
-            if total_errors >= 50:
-                self.alerts.append(("crit", "Nombreuses erreurs système", f"{total_errors} erreurs/critiques en 72h"))
-            elif total_errors >= 20:
-                self.alerts.append(("warn", "Erreurs système", f"{total_errors} erreurs en 72h"))
-
-        # Antivirus — règles :
-        # - Aucun AV détecté → avertissement
-        # - Aucun AV actif (tous désactivés) → critique
-        # - Defender désactivé + 1 tiers actif → normal (tiers gère la protection)
-        # - Plusieurs AV actifs simultanément → avertissement (conflits/perf)
+    def _analyse_antivirus(self, d: dict):
+        # Aucun AV détecté → warn
+        # Aucun AV actif (tous désactivés) → crit
+        # Defender désactivé + 1 tiers actif → OK (tiers gère la protection)
+        # Plusieurs AV actifs simultanément → warn (conflits/perf)
         avs = _ensure_dicts(_v(d, "security", "antivirus", default=[]))
         if not avs:
             self.alerts.append(("warn", "Antivirus", "Aucun antivirus détecté via Windows Security Center"))
-        else:
-            active_avs   = [av for av in avs if av.get("realtime_enabled")]
-            inactive_avs = [av for av in avs if not av.get("realtime_enabled")]
-            if not active_avs:
-                names = ", ".join(av.get("name", "?") for av in avs)
-                self.alerts.append(("crit", "Aucun antivirus actif",
-                                    f"Aucune protection temps réel active — produits détectés : {names}"))
-            elif len(active_avs) > 1:
-                names = ", ".join(av.get("name", "?") for av in active_avs)
-                self.alerts.append(("warn", "Plusieurs antivirus actifs simultanément",
-                                    f"Conflits possibles et impact sur les performances : {names}"))
-            # Si 1 seul AV actif (même si Defender est désactivé par un tiers) → OK, pas d'alerte
+            return
+        active_avs = [av for av in avs if av.get("realtime_enabled")]
+        if not active_avs:
+            names = ", ".join(av.get("name", "?") for av in avs)
+            self.alerts.append(("crit", "Aucun antivirus actif",
+                                 f"Aucune protection temps réel active — produits détectés : {names}"))
+        elif len(active_avs) > 1:
+            names = ", ".join(av.get("name", "?") for av in active_avs)
+            self.alerts.append(("warn", "Plusieurs antivirus actifs simultanément",
+                                 f"Conflits possibles et impact sur les performances : {names}"))
 
-        # Pare-feu
+    def _analyse_firewall(self, d: dict):
         fw = _ensure_dicts(_v(d, "security", "firewall", default=[]))
         for profile in fw:
             if not profile.get("enabled"):
-                self.alerts.append(("crit", f"Pare-feu désactivé ({profile.get('profile')})",
-                                    "Le profil pare-feu Windows est désactivé"))
+                self.alerts.append(("crit",
+                                     f"Pare-feu désactivé ({profile.get('profile')})",
+                                     "Le profil pare-feu Windows est désactivé"))
 
-        # Mises à jour en attente
-        pending = _v(d, "security", "windows_update", "pending_count", default=-1)
-        if isinstance(pending, int) and pending > 5:
-            self.alerts.append(("warn", "Mises à jour en attente", f"{pending} mises à jour Windows disponibles"))
-
-        # Connectivité réseau
-        internet = _v(d, "network", "internet_ok", default=None)
-        if internet is False:
-            self.alerts.append(("crit", "Pas de connexion Internet", "Impossible de joindre 8.8.8.8"))
-
-        # Drivers en erreur
-        drv_err = _v(d, "software", "drivers", "errors_count", default=0)
-        if isinstance(drv_err, int) and drv_err > 0:
-            self.alerts.append(("warn", f"Drivers en erreur", f"{drv_err} driver(s) en erreur détectés"))
-
-        # Échecs de connexion
-        logon_fail = _v(d, "security", "logon_failures", default=0)
-        if isinstance(logon_fail, int) and logon_fail >= 5:
-            self.alerts.append(("warn", "Échecs d'authentification", f"{logon_fail} échecs de connexion en 7 jours"))
-
-        # UAC désactivé
-        uac_enabled = _v(d, "security", "uac", "enabled", default=None)
-        if uac_enabled is False:
-            self.alerts.append(("crit", "UAC désactivé", "Le Contrôle de Compte Utilisateur est désactivé"))
-
-        # Ralentissements de démarrage (Diagnostics-Performance)
+    def _analyse_events(self, d: dict):
         diag_perf = _ensure_dicts(_v(d, "events", "diag_perf", default=[]))
         boot_slow = [e for e in diag_perf if e.get("category") == "boot"]
         if boot_slow:
             self.alerts.append(("warn", "Démarrage Windows lent détecté",
-                                f"{len(boot_slow)} événement(s) de ralentissement au démarrage sur 30 jours"))
+                                 f"{len(boot_slow)} événement(s) de ralentissement au démarrage sur 30 jours"))
 
-        # Erreurs GPO (cause fréquente de lenteur de session)
         gpo_events = _ensure_dicts(_v(d, "events", "gpo_events", default=[]))
         gpo_errors = [e for e in gpo_events if e.get("level") == "Error"]
         if gpo_errors:
             self.alerts.append(("warn", "Erreurs Stratégie de groupe (GPO)",
-                                f"{len(gpo_errors)} erreur(s) GPO détectée(s) — cause fréquente de session lente"))
+                                 f"{len(gpo_errors)} erreur(s) GPO détectée(s) — cause fréquente de session lente"))
 
-        # Erreurs profil utilisateur
         profile_events = _ensure_dicts(_v(d, "events", "profile_events", default=[]))
         profile_errors = [e for e in profile_events if e.get("level") == "Error"]
         if profile_errors:
             self.alerts.append(("warn", "Erreurs de chargement de profil utilisateur",
-                                f"{len(profile_errors)} erreur(s) de profil détectée(s)"))
+                                 f"{len(profile_errors)} erreur(s) de profil détectée(s)"))
 
     # ── HTML ──────────────────────────────────────────────────────────────────
     def _build_html(self) -> str:
@@ -399,9 +429,8 @@ class ReportGenerator:
         if d.get("_status") != "ok":
             return self._err_section("performance", "📊 Performance", d)
 
-        cpu   = d.get("cpu", {}) or {}
-        ram   = d.get("ram", {}) or {}
-        disks = _ensure_list(d.get("disk_activity"))
+        cpu = d.get("cpu", {}) or {}
+        ram = d.get("ram", {}) or {}
 
         cpu_pct = cpu.get("load_percent", 0) or 0
         ram_pct = ram.get("usage_percent", 0) or 0
@@ -423,15 +452,6 @@ class ReportGenerator:
             f"<td>{_esc(p.get('ram_mb',''))} MB</td><td>{_esc(p.get('cpu_sec',''))}s</td></tr>"
             for p in _ensure_list(ram.get("top_processes"))
         )
-        disk_rows = "".join(
-            f"<tr><td>{_esc(d2.get('disk',''))}</td>"
-            f"<td>{round((d2.get('read_bps') or 0)/1024/1024, 2)} MB/s</td>"
-            f"<td>{round((d2.get('write_bps') or 0)/1024/1024, 2)} MB/s</td>"
-            f"<td>{_esc(d2.get('busy_pct',''))}%</td>"
-            f"<td>{_esc(d2.get('latency_ms',''))} ms</td></tr>"
-            for d2 in disks
-        )
-
         return f"""<section id="performance" class="section">
 <h2 class="section-title">📊 Performance</h2>
 <div class="section-summary">{summary}</div>
@@ -451,11 +471,6 @@ class ReportGenerator:
 <div class="table-wrap"><table>
 <tr><th>Processus</th><th>PID</th><th>RAM utilisée</th><th>CPU cumulé</th></tr>
 {top_ram_rows or '<tr><td colspan="4" class="dim">Données indisponibles</td></tr>'}
-</table></div>
-<h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">Activité disque</h3>
-<div class="table-wrap"><table>
-<tr><th>Disque</th><th>Lecture</th><th>Écriture</th><th>Occupation</th><th>Latence</th></tr>
-{disk_rows or '<tr><td colspan="5" class="dim">Données indisponibles</td></tr>'}
 </table></div>
 </section>"""
 

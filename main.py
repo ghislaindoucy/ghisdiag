@@ -2,44 +2,23 @@
 PlanetDiag - Interface graphique principale
 """
 
-import ctypes
 import sys
-import os
 import gc
 import threading
-import json
 import logging
 import logging.handlers
-import subprocess
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-# ── UAC ───────────────────────────────────────────────────────────────────────
-def is_admin() -> bool:
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except Exception:
-        return False
-
-def request_elevation():
-    if getattr(sys, "frozen", False):
-        exe, params = sys.executable, ""
-    else:
-        exe = sys.executable
-        params = " ".join(f'"{a}"' for a in sys.argv)
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
-    sys.exit(0)
+from prefs    import LOG_DIR, load_prefs, save_prefs
+from security import is_admin, request_elevation, is_safe_output_dir
 
 # ── Logging (avec rotation pour éviter la croissance illimitée) ──────────────
-LOG_DIR    = Path(os.path.expanduser("~")) / "AppData" / "Local" / "PlanetDiag"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-PREFS_FILE = LOG_DIR / "prefs.json"
-
 _log_handler = logging.handlers.RotatingFileHandler(
     LOG_DIR / "planetdiag.log",
-    maxBytes=2 * 1024 * 1024,   # 2 Mo par fichier
+    maxBytes=2 * 1024 * 1024,
     backupCount=3,
     encoding="utf-8",
 )
@@ -50,7 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, get_base_path, _PS_EXE, _validate_script_path
+from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
 # ── Palette ───────────────────────────────────────────────────────────────────
@@ -65,104 +44,8 @@ GREEN     = "#a6e3a1"
 RED       = "#f38ba8"
 YELLOW    = "#f9e2af"
 
-TOTAL_MODULES = len(COLLECTORS)
-
-_PREFS_MAX_BYTES = 16 * 1024
-
-def _load_prefs() -> dict:
-    try:
-        if PREFS_FILE.stat().st_size > _PREFS_MAX_BYTES:
-            logger.warning("prefs.json dépasse %d octets, ignoré", _PREFS_MAX_BYTES)
-            return {}
-        raw = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        out = {}
-        val = raw.get("output_dir")
-        if isinstance(val, str) and len(val) < 4096:
-            out["output_dir"] = val
-        return out
-    except (OSError, ValueError):
-        return {}
-
-def _save_prefs(prefs: dict):
-    try:
-        tmp = PREFS_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(prefs, indent=2, ensure_ascii=False),
-                       encoding="utf-8")
-        tmp.replace(PREFS_FILE)
-    except OSError as e:
-        logger.warning("Impossible de sauvegarder prefs : %s", e)
-
-
-_FORBIDDEN_OUTPUT_ROOTS = [
-    Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve(),
-    Path(os.environ.get("ProgramFiles", r"C:\Program Files")).resolve(),
-    Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")).resolve(),
-]
-
-def _is_safe_output_dir(path: Path) -> tuple[bool, str]:
-    try:
-        resolved = path.resolve()
-    except OSError as e:
-        return False, f"Chemin invalide : {e}"
-
-    for forbidden in _FORBIDDEN_OUTPUT_ROOTS:
-        try:
-            resolved.relative_to(forbidden)
-            return False, f"Écriture interdite dans : {forbidden}"
-        except ValueError:
-            continue
-    return True, ""
-
-
-def _run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> dict:
-    """
-    Exécute un script PowerShell de l'onglet Dépannage et retourne le JSON parsé.
-    Utilise -Command + forçage UTF-8 (même pattern que l'orchestrateur) pour éviter
-    les problèmes d'encodage CP850/OEM de PS 5.1 quand stdout est capturé.
-    """
-    base     = get_base_path()
-    script_p = (base / script_rel).resolve()
-
-    if not _validate_script_path(script_p, base):
-        raise RuntimeError(f"Chemin de script invalide : {script_rel}")
-
-    escaped_path = str(script_p).replace("'", "''")
-
-    # Les flags (-Action, -AdapterName) sont passés tels quels ;
-    # les valeurs sont single-quotées avec échappement des apostrophes internes.
-    args_parts = []
-    for arg in extra_args:
-        if arg.startswith("-"):
-            args_parts.append(arg)
-        else:
-            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
-    args_str = " ".join(args_parts)
-
-    ps_cmd = (
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
-        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
-        f"& '{escaped_path}' {args_str}"
-    )
-
-    result = subprocess.run(
-        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
-         "-Command", ps_cmd],
-        capture_output=True,
-        timeout=timeout,
-        shell=False,
-    )
-
-    stdout = result.stdout.decode("utf-8", errors="replace").strip()
-    if not stdout:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()[:500]
-        raise RuntimeError(f"Pas de sortie du script. Stderr : {stderr}")
-
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"JSON invalide : {e}\nSortie : {stdout[:300]}")
+TOTAL_MODULES  = len(COLLECTORS)
+_LOG_MAX_LINES = 500
 
 
 class PlanetDiagApp(tk.Tk):
@@ -174,15 +57,20 @@ class PlanetDiagApp(tk.Tk):
         self.configure(bg=BG)
 
         self._running    = False
+        self._tick_id    = None
         self.report_path = None
         self.json_path   = None
 
-        prefs     = _load_prefs()
+        prefs     = load_prefs()
         saved_dir = prefs.get("output_dir", "")
         self.out_dir_var = tk.StringVar(
             value=saved_dir if saved_dir and Path(saved_dir).exists()
                   else str(DEFAULT_REPORTS_DIR)
         )
+        self.auto_open_var = tk.BooleanVar(
+            value=prefs.get("auto_open_browser", True)
+        )
+        self.auto_open_var.trace_add("write", self._on_auto_open_changed)
 
         # Spooler state
         self._spooler_busy     = False
@@ -400,6 +288,14 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_folder.pack(side="left", padx=(8, 0))
 
+        tk.Checkbutton(
+            foot, text="Ouvrir auto.",
+            variable=self.auto_open_var,
+            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+            activebackground=BG, activeforeground=FG,
+            selectcolor=SURFACE, relief="flat", cursor="hand2",
+        ).pack(side="left", padx=(16, 0))
+
         self.result_lbl = tk.Label(
             foot, text="",
             font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
@@ -571,7 +467,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data     = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "printers"])
+                data     = run_ps_action("collectors/spooler_fix.ps1", ["-Action", "printers"])
                 printers = data.get("printers", [])
                 svc      = data.get("service", {})
 
@@ -688,7 +584,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action(
+                data = run_ps_action(
                     "collectors/spooler_fix.ps1",
                     ["-Action", "cancel-job", "-PrinterName", p_name, "-JobId", str(job_id)],
                 )
@@ -743,7 +639,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data    = _run_ps_action(
+                data    = run_ps_action(
                     "collectors/spooler_fix.ps1",
                     ["-Action", "cancel-all", "-PrinterName", p_name],
                 )
@@ -791,7 +687,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data    = _run_ps_action("collectors/spooler_fix.ps1", ["-Action", "fix"], timeout=90)
+                data    = run_ps_action("collectors/spooler_fix.ps1", ["-Action", "fix"], timeout=90)
                 success = data.get("success", False)
                 steps   = data.get("steps", [])
                 svc     = data.get("service", {})
@@ -856,8 +752,7 @@ class PlanetDiagApp(tk.Tk):
 
         # Panneau détail
         detail_frame = tk.Frame(content, bg=SURFACE2, padx=12, pady=10, width=220)
-        detail_frame.pack(side="left", fill="y", padx=(8, 0))
-        detail_frame.pack_propagate(False)
+        detail_frame.pack(side="left", anchor="n", padx=(8, 0))
 
         self.net_detail_vars = {}
         fields = [
@@ -919,7 +814,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data     = _run_ps_action("collectors/network_cards.ps1", ["-Action", "list"])
+                data     = run_ps_action("collectors/network_cards.ps1", ["-Action", "list"])
                 adapters = data.get("adapters", [])
 
                 def _update():
@@ -995,7 +890,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data    = _run_ps_action(
+                data    = run_ps_action(
                     "collectors/network_cards.ps1",
                     ["-Action", "reset", "-AdapterName", name],
                     timeout=60,
@@ -1201,7 +1096,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data     = _run_ps_action("collectors/wifi_manager.ps1", ["-Action", "list-profiles"])
+                data     = run_ps_action("collectors/wifi_manager.ps1", ["-Action", "list-profiles"])
                 profiles = data.get("profiles", [])
 
                 def _update():
@@ -1264,7 +1159,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action(
+                data = run_ps_action(
                     "collectors/wifi_manager.ps1",
                     ["-Action", "show-password", "-ProfileName", name],
                     timeout=15,
@@ -1327,7 +1222,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action(
+                data = run_ps_action(
                     "collectors/wifi_manager.ps1",
                     ["-Action", "delete-profile", "-ProfileName", name],
                     timeout=15,
@@ -1366,7 +1261,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data     = _run_ps_action("collectors/wifi_manager.ps1", ["-Action", "scan"], timeout=20)
+                data     = run_ps_action("collectors/wifi_manager.ps1", ["-Action", "scan"], timeout=20)
                 networks = data.get("networks", [])
 
                 def _update():
@@ -1539,7 +1434,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action("collectors/wifi_manager.ps1", args, timeout=30)
+                data = run_ps_action("collectors/wifi_manager.ps1", args, timeout=30)
                 def _update():
                     self._wifi_busy = False
                     self.btn_wifi_connect.configure(
@@ -1594,7 +1489,7 @@ class PlanetDiagApp(tk.Tk):
         if not zip_path:
             return
 
-        safe, reason = _is_safe_output_dir(Path(zip_path).parent)
+        safe, reason = is_safe_output_dir(Path(zip_path).parent)
         if not safe:
             messagebox.showerror("Dossier non autorisé", reason)
             return
@@ -1607,7 +1502,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action(
+                data = run_ps_action(
                     "collectors/wifi_manager.ps1",
                     ["-Action", "backup-all", "-FilePath", zip_path],
                     timeout=120,
@@ -1671,7 +1566,7 @@ class PlanetDiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = _run_ps_action(
+                data = run_ps_action(
                     "collectors/wifi_manager.ps1",
                     ["-Action", "restore-all", "-FilePath", zip_path],
                     timeout=120,
@@ -1713,6 +1608,10 @@ class PlanetDiagApp(tk.Tk):
     def _log(self, msg: str, tag: str = ""):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log.configure(state="normal")
+        # Tronquer les lignes les plus anciennes par batch pour éviter la croissance illimitée
+        line_count = int(self.log.index("end-1c").split(".")[0])
+        if line_count > _LOG_MAX_LINES:
+            self.log.delete("1.0", f"{_LOG_MAX_LINES // 10 + 1}.0")
         self.log.insert("end", f"[{ts}] ", "time")
         self.log.insert("end", msg + "\n", tag or "")
         self.log.see("end")
@@ -1743,7 +1642,7 @@ class PlanetDiagApp(tk.Tk):
         )
         if chosen:
             self.out_dir_var.set(chosen)
-            _save_prefs({"output_dir": chosen})
+            save_prefs({"output_dir": chosen})
             self._log(f"Dossier : {chosen}", "info")
 
     def _start(self):
@@ -1756,11 +1655,12 @@ class PlanetDiagApp(tk.Tk):
             return
 
         out_dir = Path(raw)
-        safe, reason = _is_safe_output_dir(out_dir)
+        safe, reason = is_safe_output_dir(out_dir)
         if not safe:
             messagebox.showerror("Dossier non autorisé", reason)
             return
 
+        self._stop_tick()
         self._running = True
         self._out_dir = out_dir
         self._start_time = datetime.now()
@@ -1783,11 +1683,17 @@ class PlanetDiagApp(tk.Tk):
 
     def _tick_elapsed(self):
         if not self._running:
+            self._tick_id = None
             return
         elapsed = int((datetime.now() - self._start_time).total_seconds())
         m, s = divmod(elapsed, 60)
         self.elapsed_var.set(f"Durée : {m:02d}:{s:02d}")
-        self.after(1000, self._tick_elapsed)
+        self._tick_id = self.after(1000, self._tick_elapsed)
+
+    def _stop_tick(self):
+        if self._tick_id is not None:
+            self.after_cancel(self._tick_id)
+            self._tick_id = None
 
     def _on_progress(self, step: str, current: int, total: int, status: str = "running",
                      elapsed: float = 0, ps_errors: list = None):
@@ -1832,6 +1738,7 @@ class PlanetDiagApp(tk.Tk):
             gc.collect()
 
             def _done():
+                self._stop_tick()
                 self._running = False
                 self.pbar["value"] = TOTAL_MODULES
                 self.step_var.set("Diagnostic terminé")
@@ -1853,11 +1760,15 @@ class PlanetDiagApp(tk.Tk):
                 else:
                     self._log("Tous les modules ont réussi", "ok")
 
+                if self.auto_open_var.get():
+                    self.after(300, self._open_html)
+
             self.after(0, _done)
 
         except Exception as exc:
             logger.exception("Erreur fatale")
             def _err():
+                self._stop_tick()
                 self._running = False
                 self.step_var.set(f"Erreur : {exc}")
                 self.btn_start.configure(
@@ -1866,6 +1777,11 @@ class PlanetDiagApp(tk.Tk):
                 )
                 self._log(f"ERREUR : {exc}", "err")
             self.after(0, _err)
+
+    def _on_auto_open_changed(self, *_):
+        prefs = load_prefs()
+        prefs["auto_open_browser"] = self.auto_open_var.get()
+        save_prefs(prefs)
 
     def _open_html(self):
         if not (self.report_path and self.report_path.exists()):

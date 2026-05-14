@@ -6,11 +6,7 @@ $result = @{}
 $errors = @()
 $notes  = @()
 
-function Safe-Get {
-    param([scriptblock]$Block, [string]$Name, $Default = $null)
-    try { $val = & $Block; if ($null -eq $val) { return $Default }; return $val }
-    catch { $script:errors += "[$Name] $($_.Exception.Message)"; return $Default }
-}
+. "$PSScriptRoot\_common.ps1"
 
 # ── Usage CPU global ─────────────────────────────────────────────────────────
 $cpuLoad = Safe-Get {
@@ -58,35 +54,6 @@ $topRamProcs = @($allProcs | Sort-Object WorkingSet64 -Descending | Select-Objec
 # Libère la référence pour le GC
 $allProcs = $null
 
-# ── Activité disque ──────────────────────────────────────────────────────────
-$diskActivity = @()
-try {
-    $diskCounters = Get-Counter '\PhysicalDisk(*)\Disk Read Bytes/sec',
-                                '\PhysicalDisk(*)\Disk Write Bytes/sec',
-                                '\PhysicalDisk(*)\% Disk Time',
-                                '\PhysicalDisk(*)\Avg. Disk sec/Transfer' `
-                   -SampleInterval 1 -MaxSamples 2 -ErrorAction Stop
-
-    $byDisk = @{}
-    foreach ($sample in $diskCounters.CounterSamples) {
-        $disk = $sample.InstanceName
-        if (-not $byDisk[$disk]) { $byDisk[$disk] = @{} }
-        if ($sample.Path -like "*Read Bytes*")  { $byDisk[$disk]["read_bps"]    = [math]::Round($sample.CookedValue, 0) }
-        if ($sample.Path -like "*Write Bytes*") { $byDisk[$disk]["write_bps"]   = [math]::Round($sample.CookedValue, 0) }
-        if ($sample.Path -like "*Disk Time*")   { $byDisk[$disk]["busy_pct"]    = [math]::Round($sample.CookedValue, 1) }
-        if ($sample.Path -like "*sec/Transfer*"){ $byDisk[$disk]["latency_ms"]  = [math]::Round($sample.CookedValue * 1000, 2) }
-    }
-    foreach ($k in $byDisk.Keys) {
-        if ($k -ne "_total") {
-            $diskActivity += @{ disk = $k } + $byDisk[$k]
-        }
-    }
-} catch {
-    # Le compteur de performance disque peut être absent selon la configuration
-    # (ex. nom de compteur localisé, disque virtuel). Ce n'est pas une erreur critique.
-    $notes += "[DiskActivity] Compteur non disponible sur cette configuration"
-}
-
 # ── Résumé système ───────────────────────────────────────────────────────────
 $result["cpu"] = @{
     load_percent  = $cpuLoad
@@ -102,8 +69,6 @@ $result["ram"] = @{
     top_processes = $topRamProcs
     alert         = ($ramPct -gt 85)
 }
-
-$result["disk_activity"] = $diskActivity
 
 $result["collector_errors"] = $errors
 $result["collector_notes"]  = $notes
