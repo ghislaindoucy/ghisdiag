@@ -15,6 +15,7 @@ if errorlevel 1 (
 :: Installation des dépendances si besoin
 echo [1/4] Vérification des dépendances...
 py -m pip install pyinstaller --quiet
+py -m pip install psutil --quiet
 
 :: Nettoyage
 echo [2/4] Nettoyage des anciens fichiers...
@@ -47,10 +48,13 @@ py -m PyInstaller ^
     --add-data "collectors;collectors" ^
     --add-data "assets;assets" ^
     --add-data "report;report" ^
+    --add-binary "tools\smartctl.exe;tools" ^
     --hidden-import tkinter ^
     --hidden-import tkinter.ttk ^
     --hidden-import json ^
     --hidden-import threading ^
+    --hidden-import psutil ^
+    --hidden-import collectors.realtime_monitor ^
     --icon assets\icon.ico ^
     main.py
 

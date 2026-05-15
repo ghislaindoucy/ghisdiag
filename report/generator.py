@@ -183,6 +183,7 @@ class ReportGenerator:
         self._analyse_antivirus(d)
         self._analyse_firewall(d)
         self._analyse_events(d)
+        self._analyse_smart(d)
 
     def _analyse_disks(self, d: dict):
         vols = _ensure_dicts(_v(d, "system_info", "disks", "volumes", default=[]))
@@ -221,6 +222,62 @@ class ReportGenerator:
                                      f"Pare-feu désactivé ({profile.get('profile')})",
                                      "Le profil pare-feu Windows est désactivé"))
 
+    def _analyse_smart(self, d: dict):
+        sh = d.get("smart") or {}
+        if sh.get("_status") != "ok" or not sh.get("available"):
+            return
+        for disk in _ensure_dicts(sh.get("disks", [])):
+            label = disk.get("model") or disk.get("device") or "Disque"
+            if disk.get("smart_passed") is False:
+                self.alerts.append(("crit", f"SMART en échec ({label})",
+                                     "Le disque rapporte un état SMART défaillant — sauvegardez immédiatement."))
+
+            wear = disk.get("wear_percent")
+            if isinstance(wear, (int, float)):
+                if wear >= 95:
+                    self.alerts.append(("crit", f"Usure SSD critique ({label})",
+                                         f"Wear à {wear}% — fin de vie imminente."))
+                elif wear >= 80:
+                    self.alerts.append(("warn", f"Usure SSD élevée ({label})",
+                                         f"Wear à {wear}%."))
+
+            temp = disk.get("temperature_c")
+            if isinstance(temp, (int, float)):
+                if temp >= 70:
+                    self.alerts.append(("crit", f"Température disque élevée ({label})", f"{temp}°C — risque thermique."))
+                elif temp >= 60:
+                    self.alerts.append(("warn", f"Température disque chaude ({label})", f"{temp}°C."))
+
+            realloc = disk.get("reallocated_sectors")
+            if isinstance(realloc, (int, float)) and realloc > 0:
+                self.alerts.append(("crit" if realloc >= 10 else "warn",
+                                     f"Secteurs réalloués ({label})",
+                                     f"{realloc} secteur(s) réalloué(s)."))
+
+            pending = disk.get("pending_sectors")
+            if isinstance(pending, (int, float)) and pending > 0:
+                self.alerts.append(("crit" if pending >= 5 else "warn",
+                                     f"Secteurs en attente ({label})",
+                                     f"{pending} secteur(s) en attente de réallocation."))
+
+            uncorr = disk.get("uncorrectable_errors")
+            if isinstance(uncorr, (int, float)) and uncorr > 0:
+                self.alerts.append(("crit" if uncorr >= 10 else "warn",
+                                     f"Erreurs non corrigibles ({label})",
+                                     f"{uncorr} erreur(s) non corrigible(s)."))
+
+            warns = disk.get("nvme_critical_warning") or []
+            if warns:
+                self.alerts.append(("crit", f"Avertissement critique NVMe ({label})",
+                                     f"Drapeaux : {', '.join(warns)}"))
+
+            spare = disk.get("nvme_available_spare")
+            spare_thr = disk.get("nvme_spare_threshold")
+            if (isinstance(spare, (int, float)) and isinstance(spare_thr, (int, float))
+                    and spare_thr > 0 and spare <= spare_thr):
+                self.alerts.append(("crit", f"Spare NVMe épuisé ({label})",
+                                     f"Spare {spare}% sous seuil {spare_thr}%."))
+
     def _analyse_events(self, d: dict):
         diag_perf = _ensure_dicts(_v(d, "events", "diag_perf", default=[]))
         boot_slow = [e for e in diag_perf if e.get("category") == "boot"]
@@ -248,6 +305,7 @@ class ReportGenerator:
             self._section_alerts(),
             self._section_system(),
             self._section_performance(),
+            self._section_smart(),
             self._section_startup(),
             self._section_events(),
             self._section_network(),
@@ -291,6 +349,7 @@ class ReportGenerator:
   <a href="#alerts">⚠ Points d'attention</a>
   <a href="#system">🖥 Système</a>
   <a href="#performance">📊 Performance</a>
+  <a href="#smart">💾 Disques SMART</a>
   <a href="#startup">🚀 Démarrage</a>
   <a href="#events">📋 Événements</a>
   <a href="#network">🌐 Réseau</a>
@@ -422,6 +481,154 @@ class ReportGenerator:
 <tr><th>Lecteur</th><th>Nom</th><th>FS</th><th>Taille</th><th>Utilisé</th><th>Libre</th><th>Usage</th></tr>
 {vol_rows or '<tr><td colspan="7" class="dim">Données indisponibles</td></tr>'}
 </table></div>
+</section>"""
+
+    def _section_smart(self) -> str:
+        d = self.data.get("smart", {}) or {}
+        status = d.get("_status")
+
+        if status == "missing":
+            return ""
+        if status and status != "ok":
+            return self._err_section("smart", "💾 Santé disques (SMART)", d)
+
+        if not d.get("available"):
+            notes = "; ".join(d.get("collector_notes") or []) or "smartctl indisponible"
+            return f"""<section id="smart" class="section">
+<h2 class="section-title">💾 Santé disques (SMART)</h2>
+<div class="alert-box alert-info">
+  <span class="label">ℹ Données SMART non disponibles</span>
+  <p>{_esc(notes)}</p>
+</div></section>"""
+
+        disks = _ensure_dicts(d.get("disks", []))
+        version = d.get("smartctl_version") or "?"
+        coll_errs = d.get("collector_errors") or []
+
+        if not disks:
+            errs_html = ""
+            if coll_errs:
+                items = "".join(f"<li>{_esc(e)}</li>" for e in coll_errs)
+                errs_html = f"<details><summary>Erreurs smartctl ({len(coll_errs)})</summary><ul>{items}</ul></details>"
+            return f"""<section id="smart" class="section">
+<h2 class="section-title">💾 Santé disques (SMART)</h2>
+<div class="alert-box alert-warn">
+  <span class="label">⚠ Aucun disque lisible</span>
+  <p>smartctl v{_esc(version)} n'a pu lire aucun disque. Droits admin requis pour accéder aux registres SMART.</p>
+</div>{errs_html}</section>"""
+
+        disks_html_parts = []
+        for disk in disks:
+            label    = disk.get("model") or disk.get("device") or "Disque"
+            dev      = disk.get("device", "")
+            dtype    = (disk.get("type") or "").upper()
+            serial   = disk.get("serial", "")
+            firmware = disk.get("firmware", "")
+            cap_b    = disk.get("capacity_bytes")
+            cap_str  = f"{round(cap_b / (1024**3), 1)} GB" if cap_b else "N/A"
+            passed   = disk.get("smart_passed")
+
+            if passed is True:
+                badge = '<span class="badge badge-ok">SMART OK</span>'
+            elif passed is False:
+                badge = '<span class="badge badge-crit">SMART ÉCHEC</span>'
+            else:
+                badge = '<span class="badge badge-warn">SMART inconnu</span>'
+
+            wear   = disk.get("wear_percent")
+            temp   = disk.get("temperature_c")
+            hours  = disk.get("power_on_hours")
+            cycles = disk.get("power_cycles")
+            realloc = disk.get("reallocated_sectors")
+            pending = disk.get("pending_sectors")
+            uncorr  = disk.get("uncorrectable_errors")
+
+            def cls_for(val, warn, crit):
+                if not isinstance(val, (int, float)):
+                    return ""
+                return "crit" if val >= crit else ("warn" if val >= warn else "ok")
+
+            def fmt(v, suffix=""):
+                return f"{v}{suffix}" if v is not None else "N/A"
+
+            metric_cards = f"""
+<div class="cards">
+  <div class="card"><div class="card-title">Usure</div>
+    <div class="card-value {cls_for(wear, 80, 95)}">{fmt(wear, '%')}</div>
+    <div class="card-sub">{'NVMe percentage_used' if dtype == 'NVME' else 'Estimée via attribut SATA'}</div></div>
+  <div class="card"><div class="card-title">Température</div>
+    <div class="card-value {cls_for(temp, 60, 70)}">{fmt(temp, '°C')}</div></div>
+  <div class="card"><div class="card-title">Heures d'allumage</div>
+    <div class="card-value">{fmt(hours, ' h')}</div>
+    <div class="card-sub">{fmt(cycles)} cycles</div></div>
+  <div class="card"><div class="card-title">Secteurs réalloués</div>
+    <div class="card-value {cls_for(realloc, 1, 10) if realloc is not None else ''}">{fmt(realloc)}</div>
+    <div class="card-sub">Pending : {fmt(pending)} · Uncorr : {fmt(uncorr)}</div></div>
+</div>"""
+
+            nvme_extra = ""
+            warns = disk.get("nvme_critical_warning") or []
+            if dtype == "NVME":
+                spare = disk.get("nvme_available_spare")
+                spare_thr = disk.get("nvme_spare_threshold")
+                unsafe = disk.get("nvme_unsafe_shutdowns")
+                media_errs = disk.get("nvme_media_errors")
+                warns_html = ", ".join(_esc(w) for w in warns) if warns else "<span class='ok'>aucun</span>"
+                nvme_extra = f"""
+<div class="cards">
+  <div class="card"><div class="card-title">Spare NVMe</div>
+    <div class="card-value">{fmt(spare, '%')}</div>
+    <div class="card-sub">Seuil : {fmt(spare_thr, '%')}</div></div>
+  <div class="card"><div class="card-title">Arrêts brutaux</div>
+    <div class="card-value">{fmt(unsafe)}</div></div>
+  <div class="card"><div class="card-title">Erreurs média</div>
+    <div class="card-value">{fmt(media_errs)}</div></div>
+  <div class="card"><div class="card-title">Drapeaux critiques</div>
+    <div class="card-value" style="font-size:13px">{warns_html}</div></div>
+</div>"""
+
+            sata_block = ""
+            attrs = _ensure_dicts(disk.get("ata_attributes", []))
+            if attrs:
+                rows = []
+                for a in attrs:
+                    when_failed = a.get("when_failed") or ""
+                    failed_now = bool(when_failed) and when_failed.strip().lower() not in ("", "-")
+                    rows.append(
+                        f"<tr class='{'smart-fail' if failed_now else ''}'>"
+                        f"<td class='mono'>{_esc(a.get('id',''))}</td>"
+                        f"<td>{_esc(a.get('name',''))}</td>"
+                        f"<td>{_esc(a.get('value','-'))}</td>"
+                        f"<td>{_esc(a.get('worst','-'))}</td>"
+                        f"<td>{_esc(a.get('thresh') if a.get('thresh') is not None else '-')}</td>"
+                        f"<td class='mono'>{_esc(a.get('raw_str') or a.get('raw_value','-'))}</td>"
+                        f"<td>{_esc(when_failed) if when_failed else '<span class=ok>OK</span>'}</td>"
+                        f"</tr>"
+                    )
+                sata_block = f"""
+<details><summary>Attributs SMART bruts ({len(attrs)})</summary>
+<div class="table-wrap"><table class="smart-table">
+<tr><th>ID</th><th>Nom</th><th>Valeur</th><th>Pire</th><th>Seuil</th><th>Brut</th><th>Échec</th></tr>
+{''.join(rows)}
+</table></div></details>"""
+
+            disks_html_parts.append(f"""
+<div class="smart-disk">
+  <h3 class="smart-disk-title">{_esc(label)} <span class="dim">({_esc(dev)} · {_esc(dtype)})</span> {badge}</h3>
+  <div class="smart-disk-meta">S/N : <span class="mono">{_esc(serial)}</span> · Firmware : <span class="mono">{_esc(firmware)}</span> · Capacité : {_esc(cap_str)}</div>
+  {metric_cards}{nvme_extra}{sata_block}
+</div>""")
+
+        errs_html = ""
+        if coll_errs:
+            items = "".join(f"<li>{_esc(e)}</li>" for e in coll_errs)
+            errs_html = f"<details><summary>⚠ Disques non lisibles ({len(coll_errs)})</summary><ul>{items}</ul></details>"
+
+        return f"""<section id="smart" class="section">
+<h2 class="section-title">💾 Santé disques (SMART)</h2>
+<div class="section-summary">smartctl v{_esc(version)} — {len(disks)} disque(s) analysé(s).</div>
+{''.join(disks_html_parts)}
+{errs_html}
 </section>"""
 
     def _section_performance(self) -> str:

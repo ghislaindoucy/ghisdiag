@@ -102,6 +102,16 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
 
+/* ── SMART (santé disques) ── */
+.smart-disk { padding: 12px 0; border-top: 1px solid var(--surface); }
+.smart-disk:first-of-type { border-top: none; }
+.smart-disk-title { margin: 4px 0 6px; font-size: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.smart-disk-meta { color: var(--fg-muted); font-size: 12px; margin-bottom: 8px; }
+.smart-table { font-size: 12px; }
+.smart-table th { font-weight: 600; }
+.smart-table tr.smart-fail td { background: rgba(243, 139, 168, 0.18); color: #f38ba8; }
+.smart-table td.mono, .smart-table td:first-child { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+
 /* ── Footer ── */
 footer { text-align: center; padding: 32px; color: var(--fg-muted); font-size: 12px;
          border-top: 1px solid var(--surface); margin-top: 24px; }

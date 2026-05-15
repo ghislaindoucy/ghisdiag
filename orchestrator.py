@@ -18,16 +18,17 @@ from typing import Callable, Optional
 logger = logging.getLogger(__name__)
 
 COLLECTORS = [
-    ("system_info",  "Système & Matériel",  "collectors/system_info.ps1"),
-    ("performance",  "Performance",          "collectors/performance.ps1"),
-    ("startup",      "Démarrage Windows",    "collectors/startup.ps1"),
-    ("events",       "Événements Windows",   "collectors/events.ps1"),
-    ("network",      "Réseau",               "collectors/network.ps1"),
-    ("security",     "Sécurité",             "collectors/security.ps1"),
-    ("software",     "Logiciels & Drivers",  "collectors/software.ps1"),
+    ("system_info",  "Système & Matériel",   "collectors/system_info.ps1",  120),
+    ("performance",  "Performance",           "collectors/performance.ps1",  120),
+    ("startup",      "Démarrage Windows",     "collectors/startup.ps1",      120),
+    ("events",       "Événements Windows",    "collectors/events.ps1",       120),
+    ("network",      "Réseau",                "collectors/network.ps1",      120),
+    ("security",     "Sécurité",             "collectors/security.ps1",     120),
+    ("software",     "Logiciels & Drivers",   "collectors/software.ps1",     120),
+    ("smart",        "Santé disques (SMART)", "collectors/smart.ps1",         45),
 ]
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 
 # Limite de taille de sortie d'un collecteur PowerShell (protection mémoire/DoS)
@@ -95,6 +96,7 @@ def run_collector(name: str, script_path: Path, base_path: Path,
             capture_output=True,
             timeout=timeout,
             shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
         elapsed = round(time.time() - start, 2)
@@ -171,6 +173,7 @@ def run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> 
         capture_output=True,
         timeout=timeout,
         shell=False,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
 
     stdout = result.stdout.decode("utf-8", errors="replace").strip()
@@ -182,6 +185,50 @@ def run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> 
         return json.loads(stdout)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"JSON invalide : {e}\nSortie : {stdout[:300]}")
+
+
+def run_ps_stream(script_rel: str, extra_args: list[str], on_line, timeout: int = 900) -> int:
+    """Exécute un script PS1 et appelle on_line(text) pour chaque ligne stdout (streaming)."""
+    base     = get_base_path()
+    script_p = (base / script_rel).resolve()
+
+    if not _validate_script_path(script_p, base):
+        raise RuntimeError(f"Chemin de script invalide : {script_rel}")
+
+    escaped_path = str(script_p).replace("'", "''")
+
+    args_parts = []
+    for arg in extra_args:
+        if arg.startswith("-"):
+            args_parts.append(arg)
+        else:
+            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
+    args_str = " ".join(args_parts)
+
+    ps_cmd = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+        f"& '{escaped_path}' {args_str}"
+    )
+
+    proc = subprocess.Popen(
+        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-Command", ps_cmd],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        shell=False,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            if line.strip():
+                on_line(line)
+    finally:
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return proc.returncode
 
 
 class DiagnosticOrchestrator:
@@ -210,7 +257,7 @@ class DiagnosticOrchestrator:
         # Résolution préalable des chemins (séquentielle, triviale)
         missing = {}
         runnable = []
-        for name, label, rel_path in COLLECTORS:
+        for name, label, rel_path, timeout in COLLECTORS:
             script_path = self.base_path / rel_path
             if not script_path.exists():
                 logger.warning("Script introuvable : %s", script_path)
@@ -220,15 +267,15 @@ class DiagnosticOrchestrator:
                     "error":     f"Script introuvable : {rel_path}",
                 }
             else:
-                runnable.append((name, label, script_path))
+                runnable.append((name, label, script_path, timeout))
 
         self.results.update(missing)
 
         max_workers = min(4, len(runnable)) if runnable else 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {
-                executor.submit(run_collector, name, script_path, self.base_path): (name, label)
-                for name, label, script_path in runnable
+                executor.submit(run_collector, name, script_path, self.base_path, timeout): (name, label)
+                for name, label, script_path, timeout in runnable
             }
             logger.info(">>> %d collecteurs lancés en parallèle (workers=%d)",
                         len(runnable), max_workers)

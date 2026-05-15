@@ -6,7 +6,7 @@ param(
     [string]$Auth        = ""
 )
 
-Set-StrictMode -Version Latest
+$ErrorActionPreference = "SilentlyContinue"
 
 # Valide le nom de profil WiFi contre l'injection dans les arguments netsh
 function Test-ProfileName([string]$Name) {
@@ -138,44 +138,98 @@ switch ($Action) {
     }
 
     "scan" {
-        $raw = $null
-        try { $raw = netsh wlan show networks mode=bssid 2>&1 } catch {}
+        # Forcer UTF-8 pour les SSID avec caracteres speciaux
+        try { & chcp 65001 2>&1 | Out-Null } catch {}
 
-        $networks = @()
-
-        if ($raw) {
-            $cur = $null
-            foreach ($line in $raw) {
-                if ($line -match '^SSID\s+\d+\s*:\s*(.*)') {
-                    if ($null -ne $cur) { $networks += $cur }
-                    $cur = @{
-                        ssid           = $Matches[1].Trim()
-                        signal         = ""
-                        authentication = ""
-                        encryption     = ""
-                        channel        = ""
-                    }
-                }
-                elseif ($null -ne $cur) {
-                    if ($line -match '(?:Authentification|Authentication)\s*:\s*(.+)') {
-                        $cur.authentication = $Matches[1].Trim()
-                    }
-                    elseif ($line -match '(?:Chiffrement|Encryption)\s*:\s*(.+)') {
-                        $cur.encryption = $Matches[1].Trim()
-                    }
-                    elseif ($line -match 'Signal\s*:\s*(\d+)%') {
-                        if (-not $cur.signal) { $cur.signal = $Matches[1] }
-                    }
-                    elseif ($line -match '(?:Canal|Channel)\s*:\s*(\d+)') {
-                        if (-not $cur.channel) { $cur.channel = $Matches[1] }
-                    }
-                }
+        # Lister les interfaces WiFi et verifier l'etat de la radio
+        $interfaces    = @()
+        $radioDisabled = $false
+        $ifRaw = @(netsh wlan show interfaces 2>&1)
+        foreach ($line in $ifRaw) {
+            if ($line -match '^\s*(?:Nom|Name)\s*:\s*(.+)$') {
+                $iface = $Matches[1].Trim()
+                if ($iface) { $interfaces += $iface }
             }
-            if ($null -ne $cur) { $networks += $cur }
+            # Detection radio logiciellement desactivee (FR: "Logiciel Desactive" / EN: "Software Off/Disabled")
+            # Note: utiliser '.' pour eviter les problemes d'encodage PS5 avec les caracteres accentues
+            if ($line -match 'Logiciel D.sactiv|Software\s+(Off|Disabl)') {
+                $radioDisabled = $true
+            }
         }
 
-        [PSCustomObject]@{ success = $true; networks = $networks } | ConvertTo-Json -Depth 3
-        exit 0
+        if ($interfaces.Count -eq 0) {
+            @{ success = $false; networks = @()
+               error = "Aucune interface WiFi trouvee sur ce systeme" } | ConvertTo-Json -Depth 3
+            break
+        }
+
+        if ($radioDisabled) {
+            @{ success = $false; networks = @()
+               error = "Le WiFi est desactive (mode avion ou radio off). Activez le WiFi dans les parametres Windows avant de scanner." } | ConvertTo-Json -Depth 3
+            break
+        }
+
+        # Declencher un scan actif sur chaque interface
+        foreach ($iface in $interfaces) {
+            netsh wlan scan interface="$iface" 2>&1 | Out-Null
+        }
+
+        # Laisser Windows collecter les resultats (3 secondes)
+        Start-Sleep -Seconds 3
+
+        # Lire les reseaux detectes
+        $raw = @(netsh wlan show networks mode=bssid 2>&1)
+
+        $networks = @()
+        $cur      = $null
+        foreach ($line in $raw) {
+            if ($line -match '^SSID\s+\d+\s*:\s*(.*)') {
+                if ($null -ne $cur) { $networks += $cur }
+                $cur = @{
+                    ssid           = $Matches[1].Trim()
+                    signal         = ""
+                    authentication = ""
+                    encryption     = ""
+                    channel        = ""
+                }
+            }
+            elseif ($null -ne $cur) {
+                if ($line -match '(?:Authentification|Authentication)\s*:\s*(.+)') {
+                    $cur.authentication = $Matches[1].Trim()
+                }
+                elseif ($line -match '(?:Chiffrement|Encryption)\s*:\s*(.+)') {
+                    $cur.encryption = $Matches[1].Trim()
+                }
+                elseif ($line -match 'Signal\s*:\s*(\d+)%') {
+                    if (-not $cur.signal) { $cur.signal = $Matches[1].Trim() }
+                }
+                elseif ($line -match '(?:Canal|Channel)\s*:\s*(\d+)') {
+                    if (-not $cur.channel) { $cur.channel = $Matches[1].Trim() }
+                }
+            }
+        }
+        if ($null -ne $cur) { $networks += $cur }
+
+        # Dedupliquer par SSID et trier par signal decroissant
+        $seen   = @{}
+        $sorted = @(
+            $networks |
+            Where-Object { $_.ssid -ne "" } |
+            Sort-Object { if ($_.signal) { [int]$_.signal } else { 0 } } -Descending |
+            Where-Object {
+                if (-not $seen.ContainsKey($_.ssid)) { $seen[$_.ssid] = $true; $true }
+                else { $false }
+            }
+        )
+        # Ajouter les reseaux masques (SSID vide) a la fin
+        $hidden = @($networks | Where-Object { $_.ssid -eq "" })
+
+        @{
+            success    = $true
+            networks   = $sorted + $hidden
+            interfaces = $interfaces
+        } | ConvertTo-Json -Depth 3
+        break
     }
 
     "backup-all" {
@@ -285,57 +339,95 @@ switch ($Action) {
 
     "connect" {
         if (-not (Test-ProfileName $ProfileName)) {
-            [PSCustomObject]@{ success = $false; error = "Nom de reseau invalide" } | ConvertTo-Json
-            exit 0
+            @{ success = $false; error = "Nom de reseau invalide" } | ConvertTo-Json
+            break
         }
 
-        # Verifier si un profil sauvegarde existe deja pour ce SSID
         $existing   = Get-ProfileNames
         $hasProfile = $ProfileName -in $existing
 
         if (-not $hasProfile) {
             if ($Auth -ne "open" -and [string]::IsNullOrEmpty($Password)) {
-                [PSCustomObject]@{ success = $false; error = "Mot de passe requis pour ce reseau" } | ConvertTo-Json
-                exit 0
+                @{ success = $false; error = "Mot de passe requis pour ce reseau" } | ConvertTo-Json
+                break
             }
             if ($Auth -ne "open" -and $Password.Length -lt 8) {
-                [PSCustomObject]@{ success = $false; error = "Mot de passe trop court (8 caracteres minimum)" } | ConvertTo-Json
-                exit 0
+                @{ success = $false; error = "Mot de passe trop court (8 caracteres minimum)" } | ConvertTo-Json
+                break
             }
 
-            # Encoder le SSID en hex UTF-8 pour le XML
             $bytes   = [System.Text.Encoding]::UTF8.GetBytes($ProfileName)
             $hexSSID = ($bytes | ForEach-Object { '{0:X2}' -f $_ }) -join ''
             $isOpen  = ($Auth -eq "open")
-
             $xmlContent = New-WifiProfileXml -Ssid $ProfileName -HexSsid $hexSSID -Pwd $Password -IsOpen $isOpen
 
             $tmpXml = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_conn_$([System.Guid]::NewGuid().ToString('N')).xml"
             [System.IO.File]::WriteAllText($tmpXml, $xmlContent, [System.Text.Encoding]::UTF8)
 
-            $addResult = netsh wlan add profile filename="$tmpXml" user=all 2>&1
+            $addResult = @(netsh wlan add profile filename="$tmpXml" user=all 2>&1)
             Remove-Item -Path $tmpXml -Force -ErrorAction SilentlyContinue
 
             $addOutput = ($addResult -join " ").Trim()
             if ($addOutput -notmatch "(?i)ajout|added|mis.+jour|updated") {
-                [PSCustomObject]@{ success = $false; error = "Impossible de creer le profil : $addOutput" } | ConvertTo-Json
-                exit 0
+                @{ success = $false; error = "Impossible de creer le profil : $addOutput" } | ConvertTo-Json
+                break
             }
         }
 
-        # Lancer la connexion (asynchrone cote Windows : netsh retourne avant connexion effective)
-        $connectResult = netsh wlan connect name="$ProfileName" 2>&1
+        # Envoyer la demande de connexion (asynchrone Windows)
+        $connectResult = @(netsh wlan connect name="$ProfileName" 2>&1)
         $connectOutput = ($connectResult -join " ").Trim()
-        # Succes FR : "reussie" / "en cours" — EN : "success" / "progress"
-        $success = $connectOutput -match "(?i)r.ussie|success|cours|progress|envoy"
+        # "r.ussi" couvre "reussi" (masc.) et "reussie" (fem.) sans accent dans le pattern
+        $requested = $connectOutput -match "(?i)r.ussi|success|cours|progress|envoy"
 
-        [PSCustomObject]@{
-            success         = [bool]$success
-            profile         = $ProfileName
-            message         = $connectOutput
-            created_profile = (-not $hasProfile)
-        } | ConvertTo-Json
-        exit 0
+        if (-not $requested) {
+            @{
+                success         = $false
+                error           = "Commande de connexion refusee : $connectOutput"
+                created_profile = $false
+            } | ConvertTo-Json
+            break
+        }
+
+        # Verifier la connexion effective (max 10 secondes, sondage toutes les 1.5s)
+        $deadline  = (Get-Date).AddSeconds(10)
+        $connected = $false
+
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 1500
+            $statusRaw = @(netsh wlan show interfaces 2>&1)
+            $isConn  = $false
+            $curSSID = ""
+            foreach ($sline in $statusRaw) {
+                # Etat/State suivi de "connect*" (connecte, connected, connecting...)
+                if ($sline -match '(?i):\s*connect') { $isConn = $true }
+                # Ligne SSID (pas BSSID)
+                if ($sline -match '^\s*SSID\s+:\s*(.+)') { $curSSID = $Matches[1].Trim() }
+            }
+            if ($isConn -and $curSSID -eq $ProfileName) {
+                $connected = $true
+                break
+            }
+        }
+
+        if ($connected) {
+            @{
+                success         = $true
+                profile         = $ProfileName
+                created_profile = (-not $hasProfile)
+            } | ConvertTo-Json
+        } else {
+            # Supprimer le profil cree si mauvais MDP (evite les profils orphelins)
+            if (-not $hasProfile -and $Auth -ne "open") {
+                netsh wlan delete profile name="$ProfileName" 2>&1 | Out-Null
+            }
+            @{
+                success         = $false
+                error           = "Connexion echouee - verifiez le mot de passe ou la disponibilite du reseau"
+                created_profile = $false
+            } | ConvertTo-Json
+        }
+        break
     }
 
     default {
