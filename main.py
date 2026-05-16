@@ -42,17 +42,18 @@ logger = logging.getLogger(__name__)
 from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action, run_ps_stream
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-BG        = "#1e1e2e"
-SURFACE   = "#313244"
-SURFACE2  = "#45475a"
-FG        = "#cdd6f4"
-FG_DIM    = "#9399b2"
-FG_MUTED  = "#6c7086"
-ACCENT    = "#89b4fa"
-GREEN     = "#a6e3a1"
-RED       = "#f38ba8"
-YELLOW    = "#f9e2af"
+# ── Palette Ghost Protocol ────────────────────────────────────────────────────
+BG        = "#030810"
+SURFACE   = "#0a1628"
+SURFACE2  = "#122040"
+FG        = "#b8d4e8"
+FG_DIM    = "#6a9ab8"
+FG_MUTED  = "#3a5a78"
+ACCENT    = "#00d4ff"
+PURPLE    = "#9d50ff"
+GREEN     = "#00ff9d"
+RED       = "#ff2d55"
+YELLOW    = "#ffb730"
 
 TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
@@ -101,6 +102,9 @@ class PlanetDiagApp(tk.Tk):
         self._network_busy     = False
         self._network_adapters = []  # [{"name":…, "status":…, …}]
 
+        # Repair state
+        self._repair_busy = False
+
         # WiFi state
         self._wifi_busy     = False
         self._wifi_profiles = []  # [{"name":…}]
@@ -124,20 +128,55 @@ class PlanetDiagApp(tk.Tk):
 
     # ── UI principale ─────────────────────────────────────────────────────────
     def _build_ui(self):
-        # En-tête commun (hors onglets)
-        hdr = tk.Frame(self, bg=BG, pady=14)
+        # En-tête Ghost Protocol
+        hdr = tk.Frame(self, bg=BG, pady=10)
         hdr.pack(fill="x")
 
-        tk.Label(hdr, text="PlanetDiag", font=("Segoe UI", 24, "bold"),
-                 bg=BG, fg=ACCENT).pack()
-        tk.Label(hdr, text="Outil de diagnostic Windows",
-                 font=("Segoe UI", 11), bg=BG, fg=FG).pack(pady=(2, 0))
-        tk.Label(hdr, text=f"Version {VERSION}  •  Droits administrateur requis",
-                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(pady=(2, 0))
-        tk.Label(hdr, text=f"Développé par {AUTHORS}",
-                 font=("Segoe UI", 9, "italic"), bg=BG, fg=FG_MUTED).pack(pady=(1, 0))
+        hdr_inner = tk.Frame(hdr, bg=BG)
+        hdr_inner.pack()
 
-        ttk.Separator(self).pack(fill="x", padx=20, pady=(6, 0))
+        # Planète stylisée (canvas 60×60)
+        planet_c = tk.Canvas(hdr_inner, width=60, height=60, bg=BG, highlightthickness=0)
+        planet_c.pack(side="left", padx=(0, 18))
+        # Demi-orbite arrière (couverte par le corps de la planète)
+        planet_c.create_arc(1, 22, 59, 38, start=0, extent=180,
+                            style="arc", outline=ACCENT, width=1)
+        # Corps de la planète
+        planet_c.create_oval(11, 8, 49, 52, outline=ACCENT, width=2, fill=SURFACE)
+        # Atmosphère intérieure (teinte violet)
+        planet_c.create_oval(16, 13, 44, 47, outline=PURPLE, width=1)
+        # Reflet lumineux
+        planet_c.create_oval(18, 13, 27, 22, fill=ACCENT, outline="")
+        # Demi-orbite avant (par-dessus la planète)
+        planet_c.create_arc(1, 22, 59, 38, start=180, extent=180,
+                            style="arc", outline=ACCENT, width=1)
+        # Lune sur l'orbite
+        planet_c.create_oval(53, 26, 59, 32, fill=PURPLE, outline=ACCENT, width=1)
+
+        # Zone titre
+        title_zone = tk.Frame(hdr_inner, bg=BG)
+        title_zone.pack(side="left", anchor="center")
+        tk.Label(title_zone, text="PLANETDIAG",
+                 font=("Consolas", 22, "bold"), bg=BG, fg=ACCENT).pack(anchor="w")
+        tk.Label(title_zone, text="WINDOWS DIAGNOSTIC SYSTEM",
+                 font=("Consolas", 9), bg=BG, fg=FG_DIM).pack(anchor="w")
+        tk.Label(title_zone, text=f"v{VERSION}  //  {AUTHORS}",
+                 font=("Consolas", 8), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
+
+        # Ligne décorative bicolore (remplace ttk.Separator)
+        sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)
+        sep_c.pack(fill="x", pady=(6, 0))
+
+        def _refresh_sep(e=None, c=sep_c):
+            w = c.winfo_width()
+            if w < 10:
+                return
+            c.delete("all")
+            c.create_line(20, 1, w // 2 - 10, 1, fill=ACCENT, width=2)
+            c.create_line(w // 2 + 10, 1, w - 20, 1, fill=PURPLE, width=1)
+
+        sep_c.bind("<Configure>", _refresh_sep)
+        self.after(80, _refresh_sep)
 
         # Style des onglets
         style = ttk.Style()
@@ -146,11 +185,11 @@ class PlanetDiagApp(tk.Tk):
                         background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
         style.configure("PD.TNotebook.Tab",
                         background=SURFACE, foreground=FG_DIM,
-                        font=("Segoe UI", 10),
+                        font=("Consolas", 10),
                         padding=[18, 8])
         style.map("PD.TNotebook.Tab",
                   background=[("selected", SURFACE2)],
-                  foreground=[("selected", FG)])
+                  foreground=[("selected", ACCENT)])
         style.configure("PD.Horizontal.TProgressbar",
                         background=ACCENT, troughcolor=SURFACE,
                         bordercolor=SURFACE, lightcolor=ACCENT, darkcolor=ACCENT)
@@ -218,8 +257,8 @@ class PlanetDiagApp(tk.Tk):
             btn_zone,
             text="▶   Lancer le diagnostic",
             font=("Segoe UI", 14, "bold"),
-            bg=ACCENT, fg="#1e1e2e",
-            activebackground="#74a8e8", activeforeground="#1e1e2e",
+            bg=ACCENT, fg=BG,
+            activebackground="#00a8cc", activeforeground=BG,
             relief="flat", cursor="hand2",
             padx=32, pady=14,
             command=self._start,
@@ -266,7 +305,8 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(mon_hdr_row, textvariable=self._mon_status_var,
                  font=("Segoe UI", 8), bg=BG, fg=FG_MUTED).pack(side="right")
 
-        mon_box = tk.Frame(mon_outer, bg=SURFACE, pady=8, padx=4)
+        mon_box = tk.Frame(mon_outer, bg=SURFACE, pady=8, padx=4,
+                           highlightbackground=ACCENT, highlightthickness=1, bd=0)
         mon_box.pack(fill="x", pady=(4, 6))
 
         # 4 colonnes : CPU, RAM, Disque I/O, Températures
@@ -328,7 +368,8 @@ class PlanetDiagApp(tk.Tk):
             padx=8, pady=2, command=self._open_log_file,
         ).pack(side="right", padx=(0, 6))
 
-        log_wrap = tk.Frame(parent, bg=SURFACE, bd=0)
+        log_wrap = tk.Frame(parent, bg=SURFACE, bd=0,
+                            highlightbackground=PURPLE, highlightthickness=1)
         log_wrap.pack(fill="both", expand=True, padx=28, pady=(0, 6))
 
         self.log = tk.Text(
@@ -349,7 +390,7 @@ class PlanetDiagApp(tk.Tk):
         self.log.tag_config("err",  foreground=RED)
         self.log.tag_config("info", foreground=ACCENT)
         self.log.tag_config("dim",  foreground=FG_MUTED)
-        self.log.tag_config("time", foreground="#7480c2")
+        self.log.tag_config("time", foreground=PURPLE)
 
         # Boutons bas
         foot = tk.Frame(parent, bg=BG, pady=10)
@@ -389,30 +430,55 @@ class PlanetDiagApp(tk.Tk):
 
     # ── Onglet Dépannage ──────────────────────────────────────────────────────
     def _build_troubleshoot_tab(self, parent: tk.Frame):
-        # Conteneur scrollable
+        style = ttk.Style()
+        style.configure("Dep.TNotebook",
+                        background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
+        style.configure("Dep.TNotebook.Tab",
+                        background=SURFACE, foreground=FG_DIM,
+                        font=("Segoe UI", 10), padding=[16, 7])
+        style.map("Dep.TNotebook.Tab",
+                  background=[("selected", SURFACE2)],
+                  foreground=[("selected", ACCENT)])
+
+        sub_nb = ttk.Notebook(parent, style="Dep.TNotebook")
+        sub_nb.pack(fill="both", expand=True)
+
+        impression_frame  = tk.Frame(sub_nb, bg=BG)
+        reseau_frame      = tk.Frame(sub_nb, bg=BG)
+        reparation_frame  = tk.Frame(sub_nb, bg=BG)
+
+        sub_nb.add(impression_frame, text="  Impression  ")
+        sub_nb.add(reseau_frame,     text="  Réseau  ")
+        sub_nb.add(reparation_frame, text="  Réparation système  ")
+
+        self._build_impression_panel(impression_frame)
+        self._build_reseau_panel(reseau_frame)
+        self._build_reparation_panel(reparation_frame)
+
+    def _build_impression_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
+        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-
         inner = tk.Frame(canvas, bg=BG)
-        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        def _on_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        inner.bind("<Configure>", _on_configure)
-
-        def _on_canvas_resize(event):
-            canvas.itemconfig(canvas_window, width=event.width)
-        canvas.bind("<Configure>", _on_canvas_resize)
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(-1 * (event.delta // 120), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
         self._build_spooler_section(inner)
-        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
+
+    def _build_reseau_panel(self, parent: tk.Frame):
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=BG)
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
         self._build_network_section(inner)
 
     # ── Section Spooler ───────────────────────────────────────────────────────
@@ -452,8 +518,8 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_spooler_fix = tk.Button(
             btns_global, text="🗑  Vider tout",
-            font=("Segoe UI", 10), bg=RED, fg="#1e1e2e",
-            activebackground="#e07070", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=RED, fg=BG,
+            activebackground="#cc1f3f", relief="flat", cursor="hand2",
             padx=12, pady=7, command=self._spooler_fix,
         )
         self.btn_spooler_fix.pack(side="left")
@@ -475,7 +541,7 @@ class PlanetDiagApp(tk.Tk):
         self.printer_listbox = tk.Listbox(
             printer_wrap,
             bg=SURFACE, fg=FG, font=("Segoe UI", 10),
-            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=5,
         )
         pr_sb = tk.Scrollbar(printer_wrap, command=self.printer_listbox.yview, bg=SURFACE2)
@@ -498,7 +564,7 @@ class PlanetDiagApp(tk.Tk):
         self.job_listbox = tk.Listbox(
             job_wrap,
             bg=SURFACE, fg=FG, font=("Consolas", 9),
-            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=5,
         )
         job_sb = tk.Scrollbar(job_wrap, command=self.job_listbox.yview, bg=SURFACE2)
@@ -513,19 +579,31 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_cancel_job = tk.Button(
             job_btns, text="✗  Annuler ce travail",
-            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
-            activebackground="#d4be82", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=YELLOW, fg=BG,
+            activebackground="#cc9022", relief="flat", cursor="hand2",
             padx=12, pady=6, state="disabled", command=self._spooler_cancel_job,
         )
         self.btn_cancel_job.pack(side="left", padx=(0, 6))
 
         self.btn_cancel_all = tk.Button(
             job_btns, text="✗  Annuler tous les travaux",
-            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
-            activebackground="#d4be82", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=YELLOW, fg=BG,
+            activebackground="#cc9022", relief="flat", cursor="hand2",
             padx=12, pady=6, state="disabled", command=self._spooler_cancel_all,
         )
         self.btn_cancel_all.pack(side="left")
+
+        # Bouton page de test
+        test_row = tk.Frame(section, bg=BG)
+        test_row.pack(fill="x", pady=(8, 0))
+        self.btn_print_test = tk.Button(
+            test_row, text="🖨  Imprimer une page de test",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=12, pady=7, state="disabled",
+            command=self._spooler_print_test,
+        )
+        self.btn_print_test.pack(side="left")
 
         # Log
         self.spooler_log_var = tk.StringVar(value="")
@@ -545,6 +623,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_spooler_fix.configure(state="disabled")
         self.btn_cancel_job.configure(state="disabled")
         self.btn_cancel_all.configure(state="disabled")
+        self.btn_print_test.configure(state="disabled")
         self.spooler_status_var.set("Chargement…")
         self.printer_listbox.delete(0, "end")
         self.printer_listbox.insert("end", "  Chargement…")
@@ -596,6 +675,7 @@ class PlanetDiagApp(tk.Tk):
             self.job_listbox.delete(0, "end")
             self.btn_cancel_job.configure(state="disabled")
             self.btn_cancel_all.configure(state="disabled")
+            self.btn_print_test.configure(state="disabled")
             return
         idx = sel[0]
         if idx >= len(self._spooler_printers):
@@ -620,6 +700,7 @@ class PlanetDiagApp(tk.Tk):
             self.job_listbox.insert("end", "  (file vide)")
             self.btn_cancel_all.configure(state="disabled")
         self.btn_cancel_job.configure(state="disabled")
+        self.btn_print_test.configure(state="normal")
 
     def _spooler_on_job_select(self, event=None):
         sel = self.job_listbox.curselection()
@@ -803,6 +884,43 @@ class PlanetDiagApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _spooler_print_test(self):
+        sel = self.printer_listbox.curselection()
+        if not sel or not self._spooler_printers:
+            return
+        idx = sel[0]
+        if idx >= len(self._spooler_printers):
+            return
+        printer_name = self._spooler_printers[idx].get("name", "")
+        if not printer_name:
+            return
+
+        self.btn_print_test.configure(state="disabled")
+        self.spooler_log_var.set(f"Envoi de la page de test à {printer_name}…")
+
+        def _worker():
+            try:
+                data = run_ps_action(
+                    "collectors/spooler_fix.ps1",
+                    ["-Action", "print-test", "-PrinterName", printer_name],
+                )
+                def _result():
+                    if data.get("success"):
+                        self.spooler_log_var.set(f"✓ Page de test envoyée à {printer_name}")
+                    else:
+                        err = data.get("error", "Erreur inconnue")
+                        self.spooler_log_var.set(f"✗ Erreur : {err}")
+                    self.btn_print_test.configure(state="normal")
+                self.after(0, _result)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self.spooler_log_var.set(f"✗ Erreur : {e}")
+                    self.btn_print_test.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     # ── Section Réseau ────────────────────────────────────────────────────────
     def _build_network_section(self, parent: tk.Frame):
         section = tk.Frame(parent, bg=BG, pady=16)
@@ -824,7 +942,7 @@ class PlanetDiagApp(tk.Tk):
             list_frame,
             bg=SURFACE, fg=FG,
             font=("Consolas", 10),
-            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0,
             activestyle="none",
             height=7,
@@ -871,8 +989,8 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_net_reset = tk.Button(
             btns, text="⟳  Réinitialiser",
-            font=("Segoe UI", 10), bg=YELLOW, fg="#1e1e2e",
-            activebackground="#d4be82", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=YELLOW, fg=BG,
+            activebackground="#cc9022", relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._network_reset,
         )
         self.btn_net_reset.pack(fill="x")
@@ -1008,6 +1126,249 @@ class PlanetDiagApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    # ── Panneau Réparation système ────────────────────────────────────────────
+    def _build_reparation_panel(self, parent: tk.Frame):
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=BG)
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        # ── Titre
+        hdr = tk.Frame(inner, bg=BG, pady=16)
+        hdr.pack(fill="x", padx=28)
+        tk.Label(hdr, text="⚙  Réparation système",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(hdr,
+                 text="Diagnostique et répare les fichiers système Windows corrompus.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
+
+        # ── Section SFC ───────────────────────────────────────────────────────
+        sfc_sec = tk.Frame(inner, bg=BG, pady=12)
+        sfc_sec.pack(fill="x", padx=28)
+
+        tk.Label(sfc_sec, text="SFC — Vérificateur de fichiers système",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(sfc_sec,
+                 text="Analyse et répare les fichiers système protégés. Durée estimée : 5-10 min.\n"
+                      "La progression n'est pas visible en direct — un spinner indique l'activité.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 8))
+
+        sfc_ctrl = tk.Frame(sfc_sec, bg=BG)
+        sfc_ctrl.pack(fill="x")
+        self.btn_sfc = tk.Button(
+            sfc_ctrl, text="▶  Lancer SFC /scannow",
+            font=("Segoe UI", 10), bg=ACCENT, fg=BG,
+            activebackground="#00a8cc", activeforeground=BG,
+            relief="flat", cursor="hand2", padx=14, pady=7,
+            command=lambda: self._repair_run("sfc"),
+        )
+        self.btn_sfc.pack(side="left")
+        self._sfc_status_var = tk.StringVar(value="En attente")
+        tk.Label(sfc_ctrl, textvariable=self._sfc_status_var,
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(side="left", padx=(14, 0))
+
+        # Conteneur barre progression (hidden until running)
+        self._sfc_bar_frame = tk.Frame(sfc_sec, bg=BG)
+        self._sfc_bar_frame.pack(fill="x")
+        self._sfc_bar = ttk.Progressbar(
+            self._sfc_bar_frame, style="PD.Horizontal.TProgressbar", mode="indeterminate")
+        self._sfc_bar.pack(fill="x", ipady=3, pady=(4, 0))
+        self._sfc_bar_frame.pack_forget()
+
+        sfc_log_wrap = tk.Frame(sfc_sec, bg=SURFACE,
+                                highlightbackground=PURPLE, highlightthickness=1, bd=0)
+        sfc_log_wrap.pack(fill="x", pady=(8, 0))
+        self._sfc_log = tk.Text(
+            sfc_log_wrap, bg=SURFACE, fg=FG_DIM,
+            font=("Consolas", 9), bd=0, padx=8, pady=8,
+            state="disabled", wrap="word", height=6,
+        )
+        sfc_log_sb = tk.Scrollbar(sfc_log_wrap, command=self._sfc_log.yview, bg=SURFACE2)
+        self._sfc_log.configure(yscrollcommand=sfc_log_sb.set)
+        sfc_log_sb.pack(side="right", fill="y")
+        self._sfc_log.pack(fill="both", expand=True)
+
+        self.btn_sfc_log = tk.Button(
+            sfc_sec, text="📋  Voir CBS.log",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=10, pady=4, state="disabled",
+            command=lambda: self._repair_open_log("C:/Windows/Logs/CBS/CBS.log"),
+        )
+        self.btn_sfc_log.pack(anchor="w", pady=(6, 0))
+
+        ttk.Separator(inner).pack(fill="x", padx=20, pady=(12, 0))
+
+        # ── Section DISM ──────────────────────────────────────────────────────
+        dism_sec = tk.Frame(inner, bg=BG, pady=12)
+        dism_sec.pack(fill="x", padx=28)
+
+        tk.Label(dism_sec, text="DISM — Réparation de l'image Windows",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(dism_sec,
+                 text="Répare l'image Windows via Windows Update. Durée estimée : 15-30 min.\n"
+                      "Nécessite une connexion Internet active. La progression s'affiche en direct.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 8))
+
+        dism_ctrl = tk.Frame(dism_sec, bg=BG)
+        dism_ctrl.pack(fill="x")
+        self.btn_dism = tk.Button(
+            dism_ctrl, text="▶  Lancer DISM /RestoreHealth",
+            font=("Segoe UI", 10), bg=ACCENT, fg=BG,
+            activebackground="#00a8cc", activeforeground=BG,
+            relief="flat", cursor="hand2", padx=14, pady=7,
+            command=lambda: self._repair_run("dism-restore"),
+        )
+        self.btn_dism.pack(side="left")
+        self._dism_status_var = tk.StringVar(value="En attente")
+        tk.Label(dism_ctrl, textvariable=self._dism_status_var,
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(side="left", padx=(14, 0))
+
+        self._dism_bar_frame = tk.Frame(dism_sec, bg=BG)
+        self._dism_bar_frame.pack(fill="x")
+        self._dism_bar = ttk.Progressbar(
+            self._dism_bar_frame, style="PD.Horizontal.TProgressbar", mode="indeterminate")
+        self._dism_bar.pack(fill="x", ipady=3, pady=(4, 0))
+        self._dism_bar_frame.pack_forget()
+
+        dism_log_wrap = tk.Frame(dism_sec, bg=SURFACE,
+                                 highlightbackground=PURPLE, highlightthickness=1, bd=0)
+        dism_log_wrap.pack(fill="x", pady=(8, 0))
+        self._dism_log = tk.Text(
+            dism_log_wrap, bg=SURFACE, fg=FG_DIM,
+            font=("Consolas", 9), bd=0, padx=8, pady=8,
+            state="disabled", wrap="word", height=8,
+        )
+        dism_log_sb = tk.Scrollbar(dism_log_wrap, command=self._dism_log.yview, bg=SURFACE2)
+        self._dism_log.configure(yscrollcommand=dism_log_sb.set)
+        dism_log_sb.pack(side="right", fill="y")
+        self._dism_log.pack(fill="both", expand=True)
+
+        self.btn_dism_log = tk.Button(
+            dism_sec, text="📋  Voir DISM.log",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=10, pady=4, state="disabled",
+            command=lambda: self._repair_open_log("C:/Windows/Logs/DISM/dism.log"),
+        )
+        self.btn_dism_log.pack(anchor="w", pady=(6, 0))
+
+    def _repair_run(self, action: str):
+        if self._repair_busy:
+            messagebox.showwarning(
+                "Réparation en cours",
+                "Une opération de réparation est déjà en cours.\n"
+                "Attendez qu'elle se termine avant d'en lancer une autre.",
+            )
+            return
+
+        if action == "sfc":
+            btn, bar_frame, bar = self.btn_sfc, self._sfc_bar_frame, self._sfc_bar
+            status_var, log_w, log_btn = self._sfc_status_var, self._sfc_log, self.btn_sfc_log
+            log_path = Path("C:/Windows/Logs/CBS/CBS.log")
+            label = "SFC"
+        else:
+            btn, bar_frame, bar = self.btn_dism, self._dism_bar_frame, self._dism_bar
+            status_var, log_w, log_btn = self._dism_status_var, self._dism_log, self.btn_dism_log
+            log_path = Path("C:/Windows/Logs/DISM/dism.log")
+            label = "DISM"
+
+        self._repair_busy = True
+        self.btn_sfc.configure(state="disabled")
+        self.btn_dism.configure(state="disabled")
+        status_var.set("En cours…")
+        bar_frame.pack(fill="x", pady=(4, 0))
+        bar.start(12)
+
+        log_w.configure(state="normal")
+        log_w.delete("1.0", "end")
+        log_w.insert("end", f"Lancement de {label}…\n")
+        log_w.configure(state="disabled")
+
+        def _on_line(line: str):
+            def _upd():
+                log_w.configure(state="normal")
+                log_w.insert("end", line + "\n")
+                log_w.see("end")
+                log_w.configure(state="disabled")
+            self.after(0, _upd)
+
+        def _worker():
+            try:
+                exit_code = run_ps_stream(
+                    "collectors/repair.ps1",
+                    ["-Action", action],
+                    on_line=_on_line,
+                    timeout=1800,
+                )
+                ok = (exit_code == 0)
+
+                # Lire les dernières lignes du log système
+                summary = []
+                try:
+                    if log_path.exists():
+                        from collections import deque
+                        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                            summary = [l.rstrip() for l in deque(f, 40) if l.strip()]
+                except Exception:
+                    pass
+
+                def _done():
+                    bar.stop()
+                    bar_frame.pack_forget()
+                    self._repair_busy = False
+                    self.btn_sfc.configure(state="normal")
+                    self.btn_dism.configure(state="normal")
+                    status_var.set("✓ Terminé" if ok else f"✗ Erreur (code {exit_code})")
+                    log_w.configure(state="normal")
+                    if summary:
+                        log_w.insert("end", "\n── Résumé du journal ──\n")
+                        log_w.insert("end", "\n".join(summary[-20:]) + "\n")
+                    else:
+                        msg = "✓ Terminé sans erreur." if ok else f"✗ Terminé avec erreur (code {exit_code})."
+                        log_w.insert("end", "\n" + msg + "\n")
+                    log_w.see("end")
+                    log_w.configure(state="disabled")
+                    log_btn.configure(state="normal")
+                self.after(0, _done)
+
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    bar.stop()
+                    bar_frame.pack_forget()
+                    self._repair_busy = False
+                    self.btn_sfc.configure(state="normal")
+                    self.btn_dism.configure(state="normal")
+                    status_var.set("✗ Erreur")
+                    log_w.configure(state="normal")
+                    log_w.insert("end", f"\n✗ Erreur : {e}\n")
+                    log_w.see("end")
+                    log_w.configure(state="disabled")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _repair_open_log(self, log_path: str):
+        p = Path(log_path)
+        if not p.exists():
+            messagebox.showwarning(
+                "Fichier introuvable",
+                f"Le journal n'existe pas encore :\n{log_path}\n\n"
+                "Lancez d'abord l'opération de réparation.",
+            )
+            return
+        try:
+            os.startfile(str(p))
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
+
     # ── Onglet WiFi ───────────────────────────────────────────────────────────
     def _build_wifi_tab(self, parent: tk.Frame):
         # Canvas scrollable (même pattern que _build_troubleshoot_tab)
@@ -1051,7 +1412,7 @@ class PlanetDiagApp(tk.Tk):
         self.wifi_listbox = tk.Listbox(
             profiles_wrap,
             bg=SURFACE, fg=FG, font=("Segoe UI", 10),
-            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=6,
         )
         wifi_sb = tk.Scrollbar(profiles_wrap, command=self.wifi_listbox.yview, bg=SURFACE2)
@@ -1081,8 +1442,8 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_wifi_delete = tk.Button(
             btns_profiles, text="✗  Supprimer",
-            font=("Segoe UI", 10), bg=RED, fg="#1e1e2e",
-            activebackground="#e07070", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=RED, fg=BG,
+            activebackground="#cc1f3f", relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._wifi_delete_profile,
         )
         self.btn_wifi_delete.pack(fill="x")
@@ -1125,8 +1486,8 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_wifi_scan = tk.Button(
             scan_hdr, text="🔍  Scanner",
-            font=("Segoe UI", 10), bg=ACCENT, fg="#1e1e2e",
-            activebackground="#74a8e8", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10), bg=ACCENT, fg=BG,
+            activebackground="#00a8cc", relief="flat", cursor="hand2",
             padx=14, pady=6, command=self._wifi_scan,
         )
         self.btn_wifi_scan.pack(side="right")
@@ -1141,7 +1502,7 @@ class PlanetDiagApp(tk.Tk):
         self.wifi_networks_listbox = tk.Listbox(
             networks_wrap,
             bg=SURFACE, fg=FG, font=("Consolas", 9),
-            selectbackground=ACCENT, selectforeground="#1e1e2e",
+            selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=6,
         )
         net_sb = tk.Scrollbar(networks_wrap, command=self.wifi_networks_listbox.yview, bg=SURFACE2)
@@ -1152,8 +1513,8 @@ class PlanetDiagApp(tk.Tk):
 
         self.btn_wifi_connect = tk.Button(
             sec_n, text="🔗  Connecter au réseau sélectionné",
-            font=("Segoe UI", 10, "bold"), bg=GREEN, fg="#1e1e2e",
-            activebackground="#80c87e", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10, "bold"), bg=GREEN, fg=BG,
+            activebackground="#00cc7a", relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._wifi_connect,
         )
         self.btn_wifi_connect.pack(fill="x", pady=(8, 0))
@@ -1451,8 +1812,8 @@ class PlanetDiagApp(tk.Tk):
         ).pack(side="right", padx=(6, 0))
         tk.Button(
             btn_row, text="Connecter",
-            font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
-            activebackground="#74a8e8", relief="flat", cursor="hand2",
+            font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+            activebackground="#00a8cc", relief="flat", cursor="hand2",
             padx=16, pady=7, command=_ok,
         ).pack(side="right")
 
@@ -1841,7 +2202,7 @@ class PlanetDiagApp(tk.Tk):
 
                 self.btn_start.configure(
                     state="normal", text="▶   Relancer le diagnostic",
-                    bg=ACCENT, fg="#1e1e2e",
+                    bg=ACCENT, fg=BG,
                 )
                 self.btn_open.configure(state="normal")
                 self.btn_folder.configure(state="normal")
@@ -1869,7 +2230,7 @@ class PlanetDiagApp(tk.Tk):
                 self.step_var.set(f"Erreur : {exc}")
                 self.btn_start.configure(
                     state="normal", text="▶   Réessayer",
-                    bg=ACCENT, fg="#1e1e2e",
+                    bg=ACCENT, fg=BG,
                 )
                 self._log(f"ERREUR : {exc}", "err")
             self.after(0, _err)
@@ -2001,7 +2362,7 @@ class PlanetDiagApp(tk.Tk):
         admin_bar.pack(fill="x")
         tk.Label(admin_bar, text=admin_msg,
                  font=("Segoe UI", 9, "bold"),
-                 bg=admin_color, fg="#1e1e2e").pack()
+                 bg=admin_color, fg=BG).pack()
 
         # Sous-onglets
         style = ttk.Style()
@@ -2115,8 +2476,8 @@ class PlanetDiagApp(tk.Tk):
         btn_row1 = tk.Frame(form1, bg=SURFACE)
         btn_row1.pack(fill="x", pady=(4, 0))
         tk.Button(btn_row1, text="Créer le compte",
-                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
-                  activebackground="#74a8e8", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
                   padx=16, pady=8, command=self._comptes_create).pack(side="left")
 
         ttk.Separator(inner).pack(fill="x", padx=20, pady=(4, 4))
@@ -2162,8 +2523,8 @@ class PlanetDiagApp(tk.Tk):
         btn_row2 = tk.Frame(form2, bg=SURFACE)
         btn_row2.pack(fill="x", pady=(4, 0))
         tk.Button(btn_row2, text="Appliquer",
-                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
-                  activebackground="#74a8e8", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
                   padx=16, pady=8, command=self._comptes_set_policy).pack(side="left")
 
         # Log commun aux deux sections
@@ -2298,8 +2659,8 @@ class PlanetDiagApp(tk.Tk):
                   padx=14, pady=8, command=self._maj_list).pack(side="left", padx=(0, 8))
 
         tk.Button(btns, text="⬆  Tout mettre à jour",
-                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
-                  activebackground="#74a8e8", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
                   padx=14, pady=8, command=self._maj_update_all).pack(side="left")
 
         # Barre de progression (cachée par défaut, affichée pendant update-all)
@@ -2494,8 +2855,8 @@ class PlanetDiagApp(tk.Tk):
                   activebackground=SURFACE2, relief="flat", cursor="hand2",
                   padx=14, pady=8, command=self._pcneuf_check).pack(side="left", padx=(0, 8))
         tk.Button(self._pcneuf_btns, text="⬇  Installer la sélection",
-                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg="#1e1e2e",
-                  activebackground="#74a8e8", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
                   padx=14, pady=8, command=self._pcneuf_install).pack(side="left")
 
         # Barre de progression (cachée par défaut)
@@ -2682,7 +3043,7 @@ class PlanetDiagApp(tk.Tk):
             btn_row,
             text="Creer la cle de restauration",
             font=("Segoe UI", 10, "bold"),
-            bg=ACCENT, fg=BG, activebackground="#6c9fd8", activeforeground=BG,
+            bg=ACCENT, fg=BG, activebackground="#00a8cc", activeforeground=BG,
             relief="flat", cursor="hand2", padx=16, pady=8,
             command=self._recup_create,
         )
