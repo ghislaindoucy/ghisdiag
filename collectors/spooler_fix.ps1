@@ -9,7 +9,7 @@
 # Doit etre execute avec droits administrateur.
 
 param(
-    [ValidateSet("list", "printers", "cancel-job", "cancel-all", "fix")]
+    [ValidateSet("list", "printers", "cancel-job", "cancel-all", "fix", "print-test")]
     [string]$Action = "list",
 
     [Parameter(Mandatory = $false)]
@@ -260,4 +260,37 @@ if ($Action -eq "fix") {
     }
     Write-Output ($result | ConvertTo-Json -Depth 4)
     exit $(if ($success) { 0 } else { 1 })
+}
+
+# -- Action: print-test -------------------------------------------------------
+if ($Action -eq "print-test") {
+    if (-not (Test-SafeName -Name $PrinterName)) {
+        $err = @{ action = "print-test"; success = $false; error = "Nom d'imprimante invalide ou non specifie." }
+        Write-Output ($err | ConvertTo-Json -Depth 2)
+        exit 1
+    }
+    try {
+        $printer = Get-CimInstance -ClassName Win32_Printer |
+                   Where-Object { $_.Name -eq $PrinterName } |
+                   Select-Object -First 1
+        if (-not $printer) {
+            $err = @{ action = "print-test"; success = $false; error = "Imprimante introuvable : $PrinterName" }
+            Write-Output ($err | ConvertTo-Json -Depth 2)
+            exit 1
+        }
+        $cimResult = Invoke-CimMethod -InputObject $printer -MethodName "PrintTestPage"
+        $ok = ($cimResult.ReturnValue -eq 0)
+        $result = @{
+            action  = "print-test"
+            success = $ok
+            name    = $PrinterName
+            error   = if ($ok) { $null } else { "Code d'erreur WMI : $($cimResult.ReturnValue)" }
+        }
+        Write-Output ($result | ConvertTo-Json -Depth 2)
+        exit $(if ($ok) { 0 } else { 1 })
+    } catch {
+        $err = @{ action = "print-test"; success = $false; name = $PrinterName; error = $_.Exception.Message }
+        Write-Output ($err | ConvertTo-Json -Depth 2)
+        exit 1
+    }
 }

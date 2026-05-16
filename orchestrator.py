@@ -25,7 +25,7 @@ COLLECTORS = [
     ("network",      "Réseau",                "collectors/network.ps1",      120),
     ("security",     "Sécurité",             "collectors/security.ps1",     120),
     ("software",     "Logiciels & Drivers",   "collectors/software.ps1",     120),
-    ("smart",        "Santé disques (SMART)", "collectors/smart.ps1",         45),
+    ("smart",        "Santé disques (SMART)", "collectors/smart.ps1",         75),
 ]
 
 VERSION = "1.2.0"

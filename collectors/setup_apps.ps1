@@ -79,18 +79,37 @@ switch ($Action) {
         $appId   = $AppIds[$App]
         $appName = $AppNames[$App]
         try {
+            # ForEach-Object { "$_" } convertit aussi les ErrorRecord (stderr) en string,
+            # contrairement a Where-Object {$_ -is [string]} qui les filtrait.
             $raw = @(& $winget install --id $appId `
                 --silent `
                 --accept-source-agreements `
-                --accept-package-agreements `
-                --locale fr-FR 2>&1 | Where-Object { $_ -is [string] })
-            $alreadyInstalled = ($LASTEXITCODE -eq -1978335135)
-            $success = ($LASTEXITCODE -eq 0 -or $alreadyInstalled)
+                --accept-package-agreements 2>&1 | ForEach-Object { "$_" })
+            $exitCode         = $LASTEXITCODE
+            $alreadyInstalled = ($exitCode -eq -1978335135)
+            $success          = ($exitCode -eq 0 -or $alreadyInstalled)
+
+            # Extraction d'un message d'erreur lisible en cas d'echec
+            $errMsg = $null
+            if (-not $success) {
+                $patterns = '(?i)(erreur|echec|impossible|aucun|introuvable|invalide|error|failed|cannot|not found|no.*applicable|requires)'
+                $errLines = @($raw | Where-Object { $_ -match $patterns -and $_ -notmatch '^\s*$' })
+                if ($errLines.Count -gt 0) {
+                    $errMsg = ($errLines[-1]).Trim()
+                } else {
+                    $lastLine = @($raw | Where-Object { $_ -notmatch '^\s*$' }) | Select-Object -Last 1
+                    if ($lastLine) { $errMsg = "$lastLine".Trim() }
+                }
+                if (-not $errMsg) { $errMsg = "winget exit code $exitCode" }
+            }
+
             @{
                 success           = $success
                 already_installed = $alreadyInstalled
+                exit_code         = $exitCode
                 name              = $appName
                 output            = ($raw -join "`n")
+                error             = $errMsg
             } | ConvertTo-Json -Depth 2
         } catch {
             @{ success = $false; name = $appName; error = $_.Exception.Message } | ConvertTo-Json
