@@ -80,7 +80,8 @@ class PlanetDiagApp(tk.Tk):
         self._temp_tick       = 0
 
         # Setup/MAJ state
-        self._setup_busy = False
+        self._setup_busy      = False
+        self._winget_needs_update = False
 
         prefs     = load_prefs()
         saved_dir = prefs.get("output_dir", "")
@@ -2637,8 +2638,11 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(status_bar, text="winget",
                  font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
         self._winget_status_var = tk.StringVar(value="Vérification…")
-        tk.Label(status_bar, textvariable=self._winget_status_var,
-                 font=("Segoe UI", 9), bg=SURFACE, fg=FG).pack(side="left", padx=(8, 0))
+        self._winget_status_lbl = tk.Label(status_bar, textvariable=self._winget_status_var,
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG)
+        self._winget_status_lbl.pack(side="left", padx=(8, 0))
+        self._winget_badge = tk.Label(status_bar, text="⚠ Mise à jour requise",
+                 font=("Segoe UI", 8, "bold"), bg=SURFACE, fg=YELLOW)
         tk.Button(status_bar, text="↻ Vérifier",
                   font=("Segoe UI", 9), bg=SURFACE2, fg=FG,
                   activebackground=BG, relief="flat", cursor="hand2",
@@ -2699,15 +2703,27 @@ class PlanetDiagApp(tk.Tk):
 
     def _maj_check_winget(self):
         self._winget_status_var.set("Vérification…")
+        self._winget_status_lbl.configure(fg=FG)
+        self._winget_badge.pack_forget()
         def _worker():
             try:
                 data = run_ps_action("collectors/winget_manager.ps1", ["-Action", "check"])
                 def _update():
                     if data.get("available"):
-                        ver = data.get("version") or "?"
-                        self._winget_status_var.set(f"v{ver}  ✓ Disponible")
+                        ver   = data.get("version") or "?"
+                        needs = data.get("needs_update", False)
+                        self._winget_needs_update = needs
+                        if needs:
+                            self._winget_status_var.set(f"v{ver}  — version obsolète")
+                            self._winget_status_lbl.configure(fg=YELLOW)
+                            self._winget_badge.pack(side="left", padx=(10, 0))
+                        else:
+                            self._winget_status_var.set(f"v{ver}  ✓ Disponible")
+                            self._winget_status_lbl.configure(fg=GREEN)
                     else:
+                        self._winget_needs_update = True
                         self._winget_status_var.set("Non installé — Windows 10 1809+ requis")
+                        self._winget_status_lbl.configure(fg=RED)
                 self.after(0, _update)
             except Exception as exc:
                 def _err(e=exc):
@@ -2717,6 +2733,9 @@ class PlanetDiagApp(tk.Tk):
 
     def _maj_update_winget(self):
         if self._setup_busy:
+            return
+        if self._winget_needs_update:
+            self._maj_show_winget_update_dialog()
             return
         self._setup_busy = True
         self._maj_log_clear()
@@ -2735,6 +2754,96 @@ class PlanetDiagApp(tk.Tk):
             except Exception as exc:
                 def _err(e=exc):
                     self._setup_busy = False
+                    self._maj_log_append(f"Erreur : {e}", RED)
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _maj_show_winget_update_dialog(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Mettre à jour winget")
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.geometry("480x220")
+
+        tk.Label(dlg, text="winget obsolète ou absent",
+                 font=("Segoe UI", 12, "bold"), bg=BG, fg=YELLOW).pack(pady=(22, 4))
+        tk.Label(dlg,
+                 text="Votre version de winget est trop ancienne ou absente.\n"
+                      "Choisissez comment la mettre à jour :",
+                 font=("Segoe UI", 9), bg=BG, fg=FG, justify="center").pack(pady=(0, 18))
+
+        btns = tk.Frame(dlg, bg=BG)
+        btns.pack()
+
+        def _via_store():
+            dlg.destroy()
+            self._maj_update_winget_store()
+
+        def _via_github():
+            dlg.destroy()
+            self._maj_update_winget_github()
+
+        tk.Button(btns, text="🏪  Via Microsoft Store\n(recommandé)",
+                  font=("Segoe UI", 10), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  padx=16, pady=10, command=_via_store).pack(side="left", padx=8)
+
+        tk.Button(btns, text="⬇  Via GitHub\n(téléchargement direct)",
+                  font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+                  activebackground=SURFACE2, relief="flat", cursor="hand2",
+                  padx=16, pady=10, command=_via_github).pack(side="left", padx=8)
+
+        tk.Button(dlg, text="Annuler",
+                  font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+                  activebackground=SURFACE2, relief="flat", cursor="hand2",
+                  padx=8, pady=4, command=dlg.destroy).pack(pady=(14, 0))
+
+    def _maj_update_winget_store(self):
+        try:
+            run_ps_action("collectors/winget_manager.ps1", ["-Action", "open-store"])
+        except Exception:
+            pass
+        self._maj_log_clear()
+        self._maj_log_append("Microsoft Store ouvert — page App Installer.", GREEN)
+        self._maj_log_append("Cliquez sur « Mettre à jour » dans le Store,")
+        self._maj_log_append("puis fermez et relancez PlanetDiag.")
+
+    def _maj_update_winget_github(self):
+        if self._setup_busy:
+            return
+        self._setup_busy = True
+        self._maj_log_clear()
+        self._maj_log_append("Téléchargement et installation de winget depuis GitHub…")
+        self._maj_log_append("(peut prendre 1-2 minutes selon votre connexion)\n")
+        self._maj_bar.pack(fill="x", pady=(6, 0), before=self._maj_log_wrap)
+        self._maj_bar.start(10)
+
+        def _on_line(line):
+            color = GREEN if line.startswith("SUCCESS:") else (RED if line.startswith("ERREUR:") else None)
+            self.after(0, lambda l=line, c=color: self._maj_log_append(l, c))
+
+        def _worker():
+            try:
+                rc = run_ps_stream("collectors/winget_manager.ps1",
+                                   ["-Action", "install-from-github"], _on_line, timeout=300)
+                def _done():
+                    self._setup_busy = False
+                    self._maj_bar.stop()
+                    self._maj_bar.pack_forget()
+                    self._maj_log_append("─" * 50)
+                    if rc == 0:
+                        self._maj_log_append("✓ Relancez PlanetDiag pour utiliser la nouvelle version.", GREEN)
+                        self._maj_check_winget()
+                    else:
+                        self._maj_log_append(f"⚠ Terminé avec code {rc}.", YELLOW)
+                self.after(0, _done)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._maj_bar.stop()
+                    self._maj_bar.pack_forget()
                     self._maj_log_append(f"Erreur : {e}", RED)
                 self.after(0, _err)
         threading.Thread(target=_worker, daemon=True).start()
@@ -2896,8 +3005,16 @@ class PlanetDiagApp(tk.Tk):
         def _worker():
             try:
                 data = run_ps_action("collectors/setup_apps.ps1", ["-Action", "check"])
+                winget_ok = data.get("winget_available", True)
                 apps = data.get("apps") or {}
                 def _update():
+                    if not winget_ok:
+                        for var in self._pcneuf_status.values():
+                            var.set("")
+                        self._pcneuf_log_append(
+                            "⚠ winget est absent ou obsolète sur ce PC.\n"
+                            "  → Allez dans l'onglet « Mises à Jour » pour mettre à jour winget.", YELLOW)
+                        return
                     for key, info in apps.items():
                         if key in self._pcneuf_status:
                             installed = info.get("installed", False)
@@ -2912,6 +3029,12 @@ class PlanetDiagApp(tk.Tk):
 
     def _pcneuf_install(self):
         if self._setup_busy:
+            return
+        if self._winget_needs_update:
+            messagebox.showwarning(
+                "winget requis",
+                "winget est absent ou obsolète sur ce PC.\n\n"
+                "Allez dans l'onglet « Mises à Jour » pour installer / mettre à jour winget d'abord.")
             return
         selected = [key for key, var in self._pcneuf_vars.items() if var.get()]
         if not selected:
