@@ -49,7 +49,8 @@ switch ($Action) {
                     disk_number = [int]$d.Number
                     size_gb     = [math]::Round($d.Size / 1GB, 1)
                     model       = $d.FriendlyName
-                    enough      = ($d.Size -ge 8GB)
+                    # RecoveryDrive.exe exige 16 Go (WinRE + outils de recuperation)
+                    enough      = ($d.Size -ge 16GB)
                 }
             }
         } catch {}
@@ -57,99 +58,40 @@ switch ($Action) {
         exit 0
     }
 
-    "create" {
-        if ($DiskNumber -notmatch '^\d+$') {
-            Write-Output "ERREUR: Numero de disque invalide."
-            exit 1
-        }
-        $diskNum = [int]$DiskNumber
-
+    "check-winre" {
+        $wim     = Find-WinRE
+        $recExe  = "$env:SystemRoot\System32\RecoveryDrive.exe"
+        $enabled = $wim -ne $null
         try {
-            $disk = Get-Disk -Number $diskNum -ErrorAction Stop
-        } catch {
-            Write-Output "ERREUR: Disque $diskNum introuvable."
-            exit 1
-        }
-        if ($disk.BusType -ne "USB") {
-            Write-Output "ERREUR: Le disque selectionne n'est pas un disque USB."
-            exit 1
-        }
-        if ($disk.Size -lt 8GB) {
-            Write-Output "ERREUR: Capacite insuffisante - 8 Go minimum requis (disque : $([math]::Round($disk.Size/1GB,1)) Go)."
-            exit 1
-        }
+            $reagentOut = (& "$env:SystemRoot\System32\reagentc.exe" /info 2>&1) -join "`n"
+            if ($reagentOut -match 'Enabled|Active') { $enabled = $true }
+        } catch {}
+        [PSCustomObject]@{
+            success          = $true
+            winre_enabled    = $enabled
+            winre_path       = if ($wim) { $wim } else { $null }
+            recovery_exe_ok  = (Test-Path $recExe)
+        } | ConvertTo-Json -Depth 2
+        exit 0
+    }
 
-        # Empêcher la mise en veille pour toute la duree de l'operation
-        [WakeGuard]::Prevent()
-
-        $tmpDp = $null
-
-        try {
-            # ── Etape 1 : Localiser WinRE ────────────────────────────────────────
-            Write-Output "[1/5] Localisation de l'environnement de recuperation Windows..."
-            $wimSrc = Find-WinRE
-            if (-not $wimSrc) {
-                throw "winre.wim introuvable. Verifiez que Windows RE est active (reagentc /enable)."
-            }
-            $wimSizeMb = [math]::Round((Get-Item $wimSrc).Length / 1MB, 0)
-            Write-Output "      Trouve : $wimSrc (${wimSizeMb} Mo)"
-
-            # ── Etape 2 : Formater la cle USB ────────────────────────────────────
-            Write-Output "[2/5] Formatage de la cle USB (disque $diskNum)..."
-            $tmpDp = [System.IO.Path]::GetTempFileName()
-            $dpScript = "select disk $diskNum`nclean`ncreate partition primary`nformat fs=fat32 quick label=`"Recovery`"`nactive`nassign`nexit"
-            [System.IO.File]::WriteAllText($tmpDp, $dpScript, [System.Text.Encoding]::ASCII)
-            $dpOut = diskpart /s $tmpDp 2>&1
-            Remove-Item $tmpDp -Force -ErrorAction SilentlyContinue
-            $tmpDp = $null
-            if ($LASTEXITCODE -ne 0) {
-                $dpErr = ($dpOut | Where-Object { $_ -match 'error|erreur|ERREUR' }) -join ' '
-                throw "Erreur diskpart : $dpErr"
-            }
-            Write-Output "      Formatage termine."
-
-            # Attendre que Windows assigne la lettre de lecteur
-            Start-Sleep -Seconds 4
-            $partition = Get-Partition -DiskNumber $diskNum -ErrorAction SilentlyContinue |
-                         Where-Object { $_.DriveLetter } | Select-Object -First 1
-            if (-not $partition -or -not $partition.DriveLetter) {
-                throw "Impossible d'obtenir la lettre de lecteur de la cle USB."
-            }
-            $drive = "$($partition.DriveLetter):"
-            Write-Output "      Lecteur assigne : $drive"
-
-            # ── Etape 3 : Copier les fichiers de demarrage ───────────────────────
-            Write-Output "[3/5] Copie des fichiers de demarrage Windows..."
-            $bcdOut = bcdboot "$env:SystemRoot" /s $drive /f ALL 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "Erreur bcdboot : $($bcdOut -join ' ')"
-            }
-            Write-Output "      Fichiers de demarrage copies."
-
-            # ── Etape 4 : Copier WinRE ───────────────────────────────────────────
-            Write-Output "[4/5] Copie de l'environnement de recuperation (${wimSizeMb} Mo)..."
-            $destDir = "$drive\Recovery\WindowsRE"
-            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-            Copy-Item -Path $wimSrc -Destination "$destDir\winre.wim" -Force
-            Write-Output "      WinRE copie."
-
-            # ── Etape 5 : Finalisation ───────────────────────────────────────────
-            Write-Output "[5/5] Finalisation..."
-            Write-Output ""
-            Write-Output "SUCCESS: Cle de restauration creee avec succes sur $drive"
+    "launch-native" {
+        $recExe = "$env:SystemRoot\System32\RecoveryDrive.exe"
+        if (-not (Test-Path $recExe)) {
+            [PSCustomObject]@{
+                success = $false
+                error   = "RecoveryDrive.exe introuvable sur ce systeme (Windows LTSC ou Server non supporte)."
+            } | ConvertTo-Json
             exit 0
-
-        } catch {
-            Write-Output ""
-            Write-Output "ERREUR: $($_.Exception.Message)"
-            exit 1
-        } finally {
-            # La veille est toujours restauree, meme en cas d'erreur
-            [WakeGuard]::Allow()
-            if ($tmpDp -and (Test-Path $tmpDp -ErrorAction SilentlyContinue)) {
-                Remove-Item $tmpDp -Force -ErrorAction SilentlyContinue
-            }
         }
+        try {
+            # Deja admin (PlanetDiag demande l'elevation au demarrage)
+            Start-Process -FilePath $recExe
+            [PSCustomObject]@{ success = $true } | ConvertTo-Json
+        } catch {
+            [PSCustomObject]@{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
+        }
+        exit 0
     }
 
     default {

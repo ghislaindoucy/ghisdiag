@@ -3115,26 +3115,36 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(sec, text="Cle de restauration Windows",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
         tk.Label(sec,
-                 text="Cree une cle USB bootable permettant de reparer ou reinstaller Windows.",
+                 text="Cree une cle USB bootable permettant de reparer ou reinstaller Windows,",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
         tk.Label(sec,
-                 text="La cle sera utilisable meme si Windows ne demarre plus.",
+                 text="meme si Windows ne demarre plus. Utilise l'outil officiel Microsoft.",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w")
+
+        # ── Statut WinRE ──────────────────────────────────────────────────────
+        winre_bar = tk.Frame(inner, bg=SURFACE, padx=14, pady=10)
+        winre_bar.pack(fill="x", padx=28, pady=(0, 8))
+        tk.Label(winre_bar, text="WinRE",
+                 font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
+        self._winre_status_var = tk.StringVar(value="Vérification…")
+        self._winre_status_lbl = tk.Label(winre_bar, textvariable=self._winre_status_var,
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG)
+        self._winre_status_lbl.pack(side="left", padx=(8, 0))
 
         # ── Avertissement ─────────────────────────────────────────────────────
         warn = tk.Frame(inner, bg="#3d2e00", padx=16, pady=10)
         warn.pack(fill="x", padx=28, pady=(0, 8))
         tk.Label(warn,
-                 text="Toutes les donnees de la cle selectionnee seront definitivement effacees.",
+                 text="Toutes les donnees de la cle USB selectionnee dans l'assistant seront effacees.",
                  font=("Segoe UI", 9, "bold"), bg="#3d2e00", fg=YELLOW).pack(anchor="w")
         tk.Label(warn,
-                 text="La mise en veille sera desactivee pendant toute la duree de l'operation.",
+                 text="Preparez une cle USB vierge d'au moins 16 Go avant de continuer.",
                  font=("Segoe UI", 9), bg="#3d2e00", fg=YELLOW).pack(anchor="w", pady=(2, 0))
 
-        # ── Sélection de la clé USB ───────────────────────────────────────────
+        # ── Clés USB disponibles (info) ───────────────────────────────────────
         sec2 = tk.Frame(inner, bg=BG)
         sec2.pack(fill="x", padx=28, pady=(0, 8))
-        tk.Label(sec2, text="Selectionner la cle USB cible",
+        tk.Label(sec2, text="Cles USB disponibles  (a titre indicatif)",
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(0, 6))
 
         usb_row = tk.Frame(sec2, bg=BG)
@@ -3159,18 +3169,21 @@ class PlanetDiagApp(tk.Tk):
 
         self._recup_disks = []
 
-        # ── Bouton créer ──────────────────────────────────────────────────────
+        # ── Bouton lancer l'assistant ─────────────────────────────────────────
         btn_row = tk.Frame(inner, bg=BG)
         btn_row.pack(fill="x", padx=28, pady=(4, 0))
         self._recup_btn = tk.Button(
             btn_row,
-            text="Creer la cle de restauration",
+            text="Lancer l'assistant de creation",
             font=("Segoe UI", 10, "bold"),
             bg=ACCENT, fg=BG, activebackground="#00a8cc", activeforeground=BG,
             relief="flat", cursor="hand2", padx=16, pady=8,
-            command=self._recup_create,
+            command=self._recup_launch,
         )
         self._recup_btn.pack(side="left")
+        tk.Label(btn_row,
+                 text="  L'assistant Windows s'ouvrira — branchez d'abord votre cle USB.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(side="left")
 
         # ── Barre de progression ──────────────────────────────────────────────
         self._recup_bar = ttk.Progressbar(inner, mode="indeterminate", length=200)
@@ -3190,6 +3203,7 @@ class PlanetDiagApp(tk.Tk):
 
         self._recup_busy = False
         self._recup_refresh()
+        self.after(400, self._recup_check_winre)
 
         # ── Section BitLocker ─────────────────────────────────────────────────
         tk.Frame(inner, bg=SURFACE2, height=1).pack(fill="x", padx=28, pady=20)
@@ -3370,7 +3384,7 @@ class PlanetDiagApp(tk.Tk):
                     for d in disks:
                         label = f"  Disque {d.get('disk_number')}  --  {d.get('size_gb')} Go  --  {d.get('model', 'Inconnu')}"
                         if not d.get("enough"):
-                            label += "  (< 8 Go)"
+                            label += "  (< 16 Go — insuffisant)"
                         self._recup_listbox.insert("end", label)
                 self.after(0, _update)
             except Exception as exc:
@@ -3381,74 +3395,63 @@ class PlanetDiagApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _recup_create(self):
+    def _recup_check_winre(self):
+        self._winre_status_var.set("Vérification…")
+        self._winre_status_lbl.configure(fg=FG)
+        def _worker():
+            try:
+                data = run_ps_action("collectors/recovery_drive.ps1", ["-Action", "check-winre"])
+                def _update():
+                    if not data.get("recovery_exe_ok"):
+                        self._winre_status_var.set("RecoveryDrive.exe absent (Windows LTSC/Server non supporté)")
+                        self._winre_status_lbl.configure(fg=RED)
+                        self._recup_btn.configure(state="disabled")
+                        return
+                    if data.get("winre_enabled"):
+                        path = data.get("winre_path") or "actif"
+                        self._winre_status_var.set(f"✓ Actif — {path}")
+                        self._winre_status_lbl.configure(fg=GREEN)
+                    else:
+                        self._winre_status_var.set("⚠ WinRE désactivé — exécutez : reagentc /enable")
+                        self._winre_status_lbl.configure(fg=YELLOW)
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._winre_status_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _recup_launch(self):
         if self._recup_busy:
             return
-        sel = self._recup_listbox.curselection()
-        if not sel:
-            messagebox.showwarning("Selection requise", "Selectionnez une cle USB dans la liste.")
-            return
-        idx  = sel[0]
-        disk = self._recup_disks[idx] if idx < len(self._recup_disks) else None
-        if not disk:
-            return
-        if not disk.get("enough"):
-            messagebox.showerror(
-                "Capacite insuffisante",
-                f"La cle selectionnee ({disk.get('size_gb')} Go) est trop petite.\n"
-                "8 Go minimum sont necessaires.",
-            )
-            return
-
-        model    = disk.get("model", "Inconnu")
-        size_gb  = disk.get("size_gb")
-        disk_num = str(disk.get("disk_number"))
-
-        if not messagebox.askyesno(
-            "Confirmer la creation",
-            f"Creer une cle de restauration sur :\n\n"
-            f"  Disque {disk_num}  --  {size_gb} Go  --  {model}\n\n"
-            "TOUTES LES DONNEES DE CETTE CLE SERONT EFFACEES.\n\n"
-            "La mise en veille sera desactivee pendant l'operation.\n"
-            "Continuer ?",
-        ):
-            return
-
         self._recup_busy = True
         self._recup_btn.configure(state="disabled")
         self._recup_log_clear()
-        self._recup_log_append(f"Creation de la cle de restauration -- Disque {disk_num} ({size_gb} Go)")
-        self._recup_log_append("-" * 55)
+        self._recup_log_append("Lancement de l'assistant de création de clé de restauration Windows…")
         self._recup_bar.pack(fill="x", padx=28, pady=(6, 0),
                              before=self._recup_log.master)
         self._recup_bar.start(10)
 
-        def _on_line(line: str):
-            if line.startswith("SUCCESS:"):
-                self.after(0, lambda l=line[8:].strip(): self._recup_log_append(l, GREEN))
-            elif line.startswith("ERREUR:"):
-                self.after(0, lambda l=line[7:].strip(): self._recup_log_append(l, RED))
-            else:
-                self.after(0, lambda l=line: self._recup_log_append(l))
-
         def _worker():
             try:
-                rc = run_ps_stream(
-                    "collectors/recovery_drive.ps1",
-                    ["-Action", "create", "-DiskNumber", disk_num],
-                    _on_line, timeout=600,
-                )
+                data = run_ps_action("collectors/recovery_drive.ps1",
+                                     ["-Action", "launch-native"], timeout=15)
                 def _done():
                     self._recup_busy = False
                     self._recup_btn.configure(state="normal")
                     self._recup_bar.stop()
                     self._recup_bar.pack_forget()
-                    self._recup_log_append("-" * 55)
-                    if rc == 0:
-                        self._recup_log_append("Operation terminee avec succes.", GREEN)
+                    if data.get("success"):
+                        self._recup_log_append("✓ Assistant ouvert.", GREEN)
+                        self._recup_log_append("")
+                        self._recup_log_append("Suivez les étapes dans l'assistant Windows :")
+                        self._recup_log_append("  1. Cochez « Sauvegarder les fichiers système » si vous souhaitez")
+                        self._recup_log_append("     une restauration complète (nécessite ~32 Go).")
+                        self._recup_log_append("  2. Sélectionnez votre clé USB (≥ 16 Go) dans la liste.")
+                        self._recup_log_append("  3. Confirmez — TOUTES les données de la clé seront effacées.")
+                        self._recup_log_append("  4. Attendez la fin de la création (peut prendre 15-30 min).")
                     else:
-                        self._recup_log_append(
-                            f"Operation echouee (code {rc}). Verifiez le log ci-dessus.", RED)
+                        self._recup_log_append(f"Erreur : {data.get('error', '?')}", RED)
                 self.after(0, _done)
             except Exception as exc:
                 def _err(e=exc):
