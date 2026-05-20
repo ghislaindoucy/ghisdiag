@@ -80,7 +80,8 @@ class PlanetDiagApp(tk.Tk):
         self._temp_tick       = 0
 
         # Setup/MAJ state
-        self._setup_busy = False
+        self._setup_busy      = False
+        self._winget_needs_update = False
 
         prefs     = load_prefs()
         saved_dir = prefs.get("output_dir", "")
@@ -2637,8 +2638,11 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(status_bar, text="winget",
                  font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
         self._winget_status_var = tk.StringVar(value="Vérification…")
-        tk.Label(status_bar, textvariable=self._winget_status_var,
-                 font=("Segoe UI", 9), bg=SURFACE, fg=FG).pack(side="left", padx=(8, 0))
+        self._winget_status_lbl = tk.Label(status_bar, textvariable=self._winget_status_var,
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG)
+        self._winget_status_lbl.pack(side="left", padx=(8, 0))
+        self._winget_badge = tk.Label(status_bar, text="⚠ Mise à jour requise",
+                 font=("Segoe UI", 8, "bold"), bg=SURFACE, fg=YELLOW)
         tk.Button(status_bar, text="↻ Vérifier",
                   font=("Segoe UI", 9), bg=SURFACE2, fg=FG,
                   activebackground=BG, relief="flat", cursor="hand2",
@@ -2699,15 +2703,27 @@ class PlanetDiagApp(tk.Tk):
 
     def _maj_check_winget(self):
         self._winget_status_var.set("Vérification…")
+        self._winget_status_lbl.configure(fg=FG)
+        self._winget_badge.pack_forget()
         def _worker():
             try:
                 data = run_ps_action("collectors/winget_manager.ps1", ["-Action", "check"])
                 def _update():
                     if data.get("available"):
-                        ver = data.get("version") or "?"
-                        self._winget_status_var.set(f"v{ver}  ✓ Disponible")
+                        ver   = data.get("version") or "?"
+                        needs = data.get("needs_update", False)
+                        self._winget_needs_update = needs
+                        if needs:
+                            self._winget_status_var.set(f"v{ver}  — version obsolète")
+                            self._winget_status_lbl.configure(fg=YELLOW)
+                            self._winget_badge.pack(side="left", padx=(10, 0))
+                        else:
+                            self._winget_status_var.set(f"v{ver}  ✓ Disponible")
+                            self._winget_status_lbl.configure(fg=GREEN)
                     else:
+                        self._winget_needs_update = True
                         self._winget_status_var.set("Non installé — Windows 10 1809+ requis")
+                        self._winget_status_lbl.configure(fg=RED)
                 self.after(0, _update)
             except Exception as exc:
                 def _err(e=exc):
@@ -2717,6 +2733,9 @@ class PlanetDiagApp(tk.Tk):
 
     def _maj_update_winget(self):
         if self._setup_busy:
+            return
+        if self._winget_needs_update:
+            self._maj_show_winget_update_dialog()
             return
         self._setup_busy = True
         self._maj_log_clear()
@@ -2735,6 +2754,96 @@ class PlanetDiagApp(tk.Tk):
             except Exception as exc:
                 def _err(e=exc):
                     self._setup_busy = False
+                    self._maj_log_append(f"Erreur : {e}", RED)
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _maj_show_winget_update_dialog(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Mettre à jour winget")
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.geometry("480x220")
+
+        tk.Label(dlg, text="winget obsolète ou absent",
+                 font=("Segoe UI", 12, "bold"), bg=BG, fg=YELLOW).pack(pady=(22, 4))
+        tk.Label(dlg,
+                 text="Votre version de winget est trop ancienne ou absente.\n"
+                      "Choisissez comment la mettre à jour :",
+                 font=("Segoe UI", 9), bg=BG, fg=FG, justify="center").pack(pady=(0, 18))
+
+        btns = tk.Frame(dlg, bg=BG)
+        btns.pack()
+
+        def _via_store():
+            dlg.destroy()
+            self._maj_update_winget_store()
+
+        def _via_github():
+            dlg.destroy()
+            self._maj_update_winget_github()
+
+        tk.Button(btns, text="🏪  Via Microsoft Store\n(recommandé)",
+                  font=("Segoe UI", 10), bg=ACCENT, fg=BG,
+                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  padx=16, pady=10, command=_via_store).pack(side="left", padx=8)
+
+        tk.Button(btns, text="⬇  Via GitHub\n(téléchargement direct)",
+                  font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+                  activebackground=SURFACE2, relief="flat", cursor="hand2",
+                  padx=16, pady=10, command=_via_github).pack(side="left", padx=8)
+
+        tk.Button(dlg, text="Annuler",
+                  font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+                  activebackground=SURFACE2, relief="flat", cursor="hand2",
+                  padx=8, pady=4, command=dlg.destroy).pack(pady=(14, 0))
+
+    def _maj_update_winget_store(self):
+        try:
+            run_ps_action("collectors/winget_manager.ps1", ["-Action", "open-store"])
+        except Exception:
+            pass
+        self._maj_log_clear()
+        self._maj_log_append("Microsoft Store ouvert — page App Installer.", GREEN)
+        self._maj_log_append("Cliquez sur « Mettre à jour » dans le Store,")
+        self._maj_log_append("puis fermez et relancez PlanetDiag.")
+
+    def _maj_update_winget_github(self):
+        if self._setup_busy:
+            return
+        self._setup_busy = True
+        self._maj_log_clear()
+        self._maj_log_append("Téléchargement et installation de winget depuis GitHub…")
+        self._maj_log_append("(peut prendre 1-2 minutes selon votre connexion)\n")
+        self._maj_bar.pack(fill="x", pady=(6, 0), before=self._maj_log_wrap)
+        self._maj_bar.start(10)
+
+        def _on_line(line):
+            color = GREEN if line.startswith("SUCCESS:") else (RED if line.startswith("ERREUR:") else None)
+            self.after(0, lambda l=line, c=color: self._maj_log_append(l, c))
+
+        def _worker():
+            try:
+                rc = run_ps_stream("collectors/winget_manager.ps1",
+                                   ["-Action", "install-from-github"], _on_line, timeout=300)
+                def _done():
+                    self._setup_busy = False
+                    self._maj_bar.stop()
+                    self._maj_bar.pack_forget()
+                    self._maj_log_append("─" * 50)
+                    if rc == 0:
+                        self._maj_log_append("✓ Relancez PlanetDiag pour utiliser la nouvelle version.", GREEN)
+                        self._maj_check_winget()
+                    else:
+                        self._maj_log_append(f"⚠ Terminé avec code {rc}.", YELLOW)
+                self.after(0, _done)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._maj_bar.stop()
+                    self._maj_bar.pack_forget()
                     self._maj_log_append(f"Erreur : {e}", RED)
                 self.after(0, _err)
         threading.Thread(target=_worker, daemon=True).start()
@@ -2896,8 +3005,16 @@ class PlanetDiagApp(tk.Tk):
         def _worker():
             try:
                 data = run_ps_action("collectors/setup_apps.ps1", ["-Action", "check"])
+                winget_ok = data.get("winget_available", True)
                 apps = data.get("apps") or {}
                 def _update():
+                    if not winget_ok:
+                        for var in self._pcneuf_status.values():
+                            var.set("")
+                        self._pcneuf_log_append(
+                            "⚠ winget est absent ou obsolète sur ce PC.\n"
+                            "  → Allez dans l'onglet « Mises à Jour » pour mettre à jour winget.", YELLOW)
+                        return
                     for key, info in apps.items():
                         if key in self._pcneuf_status:
                             installed = info.get("installed", False)
@@ -2912,6 +3029,12 @@ class PlanetDiagApp(tk.Tk):
 
     def _pcneuf_install(self):
         if self._setup_busy:
+            return
+        if self._winget_needs_update:
+            messagebox.showwarning(
+                "winget requis",
+                "winget est absent ou obsolète sur ce PC.\n\n"
+                "Allez dans l'onglet « Mises à Jour » pour installer / mettre à jour winget d'abord.")
             return
         selected = [key for key, var in self._pcneuf_vars.items() if var.get()]
         if not selected:
@@ -2992,26 +3115,36 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(sec, text="Cle de restauration Windows",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
         tk.Label(sec,
-                 text="Cree une cle USB bootable permettant de reparer ou reinstaller Windows.",
+                 text="Cree une cle USB bootable permettant de reparer ou reinstaller Windows,",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
         tk.Label(sec,
-                 text="La cle sera utilisable meme si Windows ne demarre plus.",
+                 text="meme si Windows ne demarre plus. Utilise l'outil officiel Microsoft.",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w")
+
+        # ── Statut WinRE ──────────────────────────────────────────────────────
+        winre_bar = tk.Frame(inner, bg=SURFACE, padx=14, pady=10)
+        winre_bar.pack(fill="x", padx=28, pady=(0, 8))
+        tk.Label(winre_bar, text="WinRE",
+                 font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
+        self._winre_status_var = tk.StringVar(value="Vérification…")
+        self._winre_status_lbl = tk.Label(winre_bar, textvariable=self._winre_status_var,
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG)
+        self._winre_status_lbl.pack(side="left", padx=(8, 0))
 
         # ── Avertissement ─────────────────────────────────────────────────────
         warn = tk.Frame(inner, bg="#3d2e00", padx=16, pady=10)
         warn.pack(fill="x", padx=28, pady=(0, 8))
         tk.Label(warn,
-                 text="Toutes les donnees de la cle selectionnee seront definitivement effacees.",
+                 text="Toutes les donnees de la cle USB selectionnee dans l'assistant seront effacees.",
                  font=("Segoe UI", 9, "bold"), bg="#3d2e00", fg=YELLOW).pack(anchor="w")
         tk.Label(warn,
-                 text="La mise en veille sera desactivee pendant toute la duree de l'operation.",
+                 text="Preparez une cle USB vierge d'au moins 16 Go avant de continuer.",
                  font=("Segoe UI", 9), bg="#3d2e00", fg=YELLOW).pack(anchor="w", pady=(2, 0))
 
-        # ── Sélection de la clé USB ───────────────────────────────────────────
+        # ── Clés USB disponibles (info) ───────────────────────────────────────
         sec2 = tk.Frame(inner, bg=BG)
         sec2.pack(fill="x", padx=28, pady=(0, 8))
-        tk.Label(sec2, text="Selectionner la cle USB cible",
+        tk.Label(sec2, text="Cles USB disponibles  (a titre indicatif)",
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(0, 6))
 
         usb_row = tk.Frame(sec2, bg=BG)
@@ -3036,18 +3169,21 @@ class PlanetDiagApp(tk.Tk):
 
         self._recup_disks = []
 
-        # ── Bouton créer ──────────────────────────────────────────────────────
+        # ── Bouton lancer l'assistant ─────────────────────────────────────────
         btn_row = tk.Frame(inner, bg=BG)
         btn_row.pack(fill="x", padx=28, pady=(4, 0))
         self._recup_btn = tk.Button(
             btn_row,
-            text="Creer la cle de restauration",
+            text="Lancer l'assistant de creation",
             font=("Segoe UI", 10, "bold"),
             bg=ACCENT, fg=BG, activebackground="#00a8cc", activeforeground=BG,
             relief="flat", cursor="hand2", padx=16, pady=8,
-            command=self._recup_create,
+            command=self._recup_launch,
         )
         self._recup_btn.pack(side="left")
+        tk.Label(btn_row,
+                 text="  L'assistant Windows s'ouvrira — branchez d'abord votre cle USB.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(side="left")
 
         # ── Barre de progression ──────────────────────────────────────────────
         self._recup_bar = ttk.Progressbar(inner, mode="indeterminate", length=200)
@@ -3067,6 +3203,7 @@ class PlanetDiagApp(tk.Tk):
 
         self._recup_busy = False
         self._recup_refresh()
+        self.after(400, self._recup_check_winre)
 
         # ── Section BitLocker ─────────────────────────────────────────────────
         tk.Frame(inner, bg=SURFACE2, height=1).pack(fill="x", padx=28, pady=20)
@@ -3247,7 +3384,7 @@ class PlanetDiagApp(tk.Tk):
                     for d in disks:
                         label = f"  Disque {d.get('disk_number')}  --  {d.get('size_gb')} Go  --  {d.get('model', 'Inconnu')}"
                         if not d.get("enough"):
-                            label += "  (< 8 Go)"
+                            label += "  (< 16 Go — insuffisant)"
                         self._recup_listbox.insert("end", label)
                 self.after(0, _update)
             except Exception as exc:
@@ -3258,74 +3395,63 @@ class PlanetDiagApp(tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _recup_create(self):
+    def _recup_check_winre(self):
+        self._winre_status_var.set("Vérification…")
+        self._winre_status_lbl.configure(fg=FG)
+        def _worker():
+            try:
+                data = run_ps_action("collectors/recovery_drive.ps1", ["-Action", "check-winre"])
+                def _update():
+                    if not data.get("recovery_exe_ok"):
+                        self._winre_status_var.set("RecoveryDrive.exe absent (Windows LTSC/Server non supporté)")
+                        self._winre_status_lbl.configure(fg=RED)
+                        self._recup_btn.configure(state="disabled")
+                        return
+                    if data.get("winre_enabled"):
+                        path = data.get("winre_path") or "actif"
+                        self._winre_status_var.set(f"✓ Actif — {path}")
+                        self._winre_status_lbl.configure(fg=GREEN)
+                    else:
+                        self._winre_status_var.set("⚠ WinRE désactivé — exécutez : reagentc /enable")
+                        self._winre_status_lbl.configure(fg=YELLOW)
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._winre_status_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _recup_launch(self):
         if self._recup_busy:
             return
-        sel = self._recup_listbox.curselection()
-        if not sel:
-            messagebox.showwarning("Selection requise", "Selectionnez une cle USB dans la liste.")
-            return
-        idx  = sel[0]
-        disk = self._recup_disks[idx] if idx < len(self._recup_disks) else None
-        if not disk:
-            return
-        if not disk.get("enough"):
-            messagebox.showerror(
-                "Capacite insuffisante",
-                f"La cle selectionnee ({disk.get('size_gb')} Go) est trop petite.\n"
-                "8 Go minimum sont necessaires.",
-            )
-            return
-
-        model    = disk.get("model", "Inconnu")
-        size_gb  = disk.get("size_gb")
-        disk_num = str(disk.get("disk_number"))
-
-        if not messagebox.askyesno(
-            "Confirmer la creation",
-            f"Creer une cle de restauration sur :\n\n"
-            f"  Disque {disk_num}  --  {size_gb} Go  --  {model}\n\n"
-            "TOUTES LES DONNEES DE CETTE CLE SERONT EFFACEES.\n\n"
-            "La mise en veille sera desactivee pendant l'operation.\n"
-            "Continuer ?",
-        ):
-            return
-
         self._recup_busy = True
         self._recup_btn.configure(state="disabled")
         self._recup_log_clear()
-        self._recup_log_append(f"Creation de la cle de restauration -- Disque {disk_num} ({size_gb} Go)")
-        self._recup_log_append("-" * 55)
+        self._recup_log_append("Lancement de l'assistant de création de clé de restauration Windows…")
         self._recup_bar.pack(fill="x", padx=28, pady=(6, 0),
                              before=self._recup_log.master)
         self._recup_bar.start(10)
 
-        def _on_line(line: str):
-            if line.startswith("SUCCESS:"):
-                self.after(0, lambda l=line[8:].strip(): self._recup_log_append(l, GREEN))
-            elif line.startswith("ERREUR:"):
-                self.after(0, lambda l=line[7:].strip(): self._recup_log_append(l, RED))
-            else:
-                self.after(0, lambda l=line: self._recup_log_append(l))
-
         def _worker():
             try:
-                rc = run_ps_stream(
-                    "collectors/recovery_drive.ps1",
-                    ["-Action", "create", "-DiskNumber", disk_num],
-                    _on_line, timeout=600,
-                )
+                data = run_ps_action("collectors/recovery_drive.ps1",
+                                     ["-Action", "launch-native"], timeout=15)
                 def _done():
                     self._recup_busy = False
                     self._recup_btn.configure(state="normal")
                     self._recup_bar.stop()
                     self._recup_bar.pack_forget()
-                    self._recup_log_append("-" * 55)
-                    if rc == 0:
-                        self._recup_log_append("Operation terminee avec succes.", GREEN)
+                    if data.get("success"):
+                        self._recup_log_append("✓ Assistant ouvert.", GREEN)
+                        self._recup_log_append("")
+                        self._recup_log_append("Suivez les étapes dans l'assistant Windows :")
+                        self._recup_log_append("  1. Cochez « Sauvegarder les fichiers système » si vous souhaitez")
+                        self._recup_log_append("     une restauration complète (nécessite ~32 Go).")
+                        self._recup_log_append("  2. Sélectionnez votre clé USB (≥ 16 Go) dans la liste.")
+                        self._recup_log_append("  3. Confirmez — TOUTES les données de la clé seront effacées.")
+                        self._recup_log_append("  4. Attendez la fin de la création (peut prendre 15-30 min).")
                     else:
-                        self._recup_log_append(
-                            f"Operation echouee (code {rc}). Verifiez le log ci-dessus.", RED)
+                        self._recup_log_append(f"Erreur : {data.get('error', '?')}", RED)
                 self.after(0, _done)
             except Exception as exc:
                 def _err(e=exc):

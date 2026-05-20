@@ -32,13 +32,21 @@ switch ($Action) {
 
     "check" {
         if (-not $winget) {
-            @{ available = $false; version = $null; path = $null } | ConvertTo-Json
+            @{ available = $false; version = $null; path = $null; needs_update = $false } | ConvertTo-Json
         } else {
             try {
                 $ver = (& $winget --version 2>&1) -replace '^v', ''
-                @{ available = $true; version = "$ver".Trim(); path = $winget } | ConvertTo-Json
+                $verClean = "$ver".Trim()
+                $needsUpdate = $false
+                $parts = $verClean.Split('.')
+                if ($parts.Count -ge 2) {
+                    $maj = [int]$parts[0]; $min = [int]$parts[1]
+                    # Minimum viable : 1.6 (--include-unknown, sources stables)
+                    $needsUpdate = ($maj -lt 1) -or ($maj -eq 1 -and $min -lt 6)
+                }
+                @{ available = $true; version = $verClean; path = $winget; needs_update = $needsUpdate } | ConvertTo-Json
             } catch {
-                @{ available = $true; version = $null; path = $winget; error = $_.Exception.Message } | ConvertTo-Json
+                @{ available = $true; version = $null; path = $winget; needs_update = $false; error = $_.Exception.Message } | ConvertTo-Json
             }
         }
         break
@@ -98,6 +106,72 @@ switch ($Action) {
     "stream-update-all" {
         & $winget upgrade --all --silent --accept-source-agreements --accept-package-agreements --include-unknown 2>&1 |
             ForEach-Object { if ($_ -ne $null) { Write-Output "$_" } }
+        break
+    }
+
+    "open-store" {
+        try {
+            Start-Process "ms-windows-store://pdp/?productid=9NBLGGH4NNS1"
+            @{ success = $true; message = "Page Microsoft Store ouverte." } | ConvertTo-Json
+        } catch {
+            @{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
+        }
+        break
+    }
+
+    "install-from-github" {
+        # Streaming pur — pas de JSON, Write-Output ligne par ligne
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $ErrorActionPreference = "Stop"
+
+        Write-Output "Recuperation de la derniere version depuis GitHub..."
+        try {
+            $headers = @{ "User-Agent" = "PlanetDiag-WingetUpdater" }
+            $release = Invoke-RestMethod "https://api.github.com/repos/microsoft/winget-cli/releases/latest" `
+                       -Headers $headers -UseBasicParsing
+            Write-Output "Version disponible : $($release.tag_name)"
+        } catch {
+            Write-Output "ERREUR: Impossible de contacter GitHub - $($_.Exception.Message)"
+            exit 1
+        }
+
+        $msixBundle = $release.assets | Where-Object { $_.name -match '\.msixbundle$' } | Select-Object -First 1
+        if (-not $msixBundle) {
+            Write-Output "ERREUR: Fichier d'installation introuvable dans la release GitHub."
+            exit 1
+        }
+
+        $sizeMb  = [math]::Round($msixBundle.size / 1MB, 1)
+        $tmpMsix = "$env:TEMP\winget_installer.msixbundle"
+        $tmpVc   = "$env:TEMP\vclibs_x64.appx"
+
+        try {
+            Write-Output "Telechargement : $($msixBundle.name) (${sizeMb} Mo)..."
+            Invoke-WebRequest -Uri $msixBundle.browser_download_url -OutFile $tmpMsix -UseBasicParsing
+            Write-Output "Telechargement termine."
+
+            Write-Output "Verification des dependances (VCLibs)..."
+            try {
+                $vcUrl = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
+                Invoke-WebRequest -Uri $vcUrl -OutFile $tmpVc -UseBasicParsing -EA Stop
+                Add-AppxPackage -Path $tmpVc -EA SilentlyContinue
+                Write-Output "  VCLibs : OK"
+            } catch {
+                Write-Output "  VCLibs : deja presentes ou non disponibles (on continue)"
+            }
+
+            Write-Output "Installation de winget $($release.tag_name)..."
+            Add-AppxPackage -Path $tmpMsix
+            Write-Output ""
+            Write-Output "SUCCESS: winget mis a jour. Relancez PlanetDiag pour utiliser la nouvelle version."
+            exit 0
+        } catch {
+            Write-Output ""
+            Write-Output "ERREUR: $($_.Exception.Message)"
+            exit 1
+        } finally {
+            Remove-Item $tmpMsix, $tmpVc -Force -EA SilentlyContinue
+        }
         break
     }
 
