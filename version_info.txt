@@ -1,0 +1,37 @@
+# PlanetDiag - Version resource embedded in the PE header
+# PyInstaller reads this file via --version-file
+# Language: 040C = French, 04B0 = Unicode (codepage 1200)
+#
+# For a new release: update filevers, prodvers, FileVersion, ProductVersion
+# Format: (major, minor, patch, build)
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 2, 0, 0),
+    prodvers=(1, 2, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'040C04B0',
+        [
+          StringStruct(u'CompanyName',      u'Ghislain DOUCY'),
+          StringStruct(u'FileDescription',  u'PlanetDiag - Outil de diagnostic Windows'),
+          StringStruct(u'FileVersion',      u'1.2.0.0'),
+          StringStruct(u'InternalName',     u'PlanetDiag'),
+          StringStruct(u'LegalCopyright',   u'© 2024-2025 Ghislain DOUCY. Tous droits reserves.'),
+          StringStruct(u'OriginalFilename', u'PlanetDiag.exe'),
+          StringStruct(u'ProductName',      u'PlanetDiag'),
+          StringStruct(u'ProductVersion',   u'1.2.0.0'),
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [0x040C, 1200])])
+  ]
+)
