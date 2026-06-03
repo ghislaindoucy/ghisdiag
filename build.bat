@@ -16,6 +16,9 @@ if errorlevel 1 (
 echo [1/5] Vérification des dépendances...
 py -m pip install pyinstaller --quiet
 py -m pip install psutil --quiet
+:: Dépendances de la fonctionnalité Analyse IA Mistral (sinon désactivée à l'exécution)
+py -m pip install requests --quiet
+py -m pip install cryptography --quiet
 
 :: Nettoyage
 echo [2/5] Nettoyage des anciens fichiers...
@@ -55,6 +58,11 @@ py -m PyInstaller ^
     --hidden-import json ^
     --hidden-import threading ^
     --hidden-import psutil ^
+    --hidden-import requests ^
+    --hidden-import cryptography ^
+    --hidden-import mistral_analyzer ^
+    --hidden-import mistral_report ^
+    --collect-submodules cryptography ^
     --hidden-import collectors.realtime_monitor ^
     --icon assets\icon.ico ^
     main.py

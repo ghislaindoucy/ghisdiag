@@ -82,7 +82,12 @@ def _decrypt_string(ciphertext: str) -> str:
         f = Fernet(key)
         decrypted = f.decrypt(ciphertext.encode("utf-8"))
         return decrypted.decode("utf-8")
-    except (InvalidToken, Exception) as e:
+    except InvalidToken:
+        # Valeur non déchiffrable : soit en clair (ancienne version / crypto absente
+        # à la sauvegarde), soit chiffrée sur une autre machine. On la rend telle quelle.
+        logger.warning("Clé non déchiffrable (texte clair ou autre machine), valeur ignorée")
+        return ciphertext
+    except Exception as e:
         logger.warning(f"Erreur déchiffrement: {e}")
         return ciphertext
 

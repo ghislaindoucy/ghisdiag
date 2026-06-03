@@ -141,6 +141,11 @@ Fournis un audit complet et structuré avec:
         logger.error(f"Erreur parsing JSON Mistral: {e}")
         raise RuntimeError(f"Erreur parsing réponse Mistral: {e}")
 
+    except (ValueError, RuntimeError):
+        # Erreurs déjà typées et formatées (clé invalide, rate limit, etc.) :
+        # on les laisse remonter telles quelles pour que l'appelant les distingue.
+        raise
+
     except Exception as e:
         logger.exception("Erreur inattendue lors de l'analyse Mistral")
         raise RuntimeError(f"Erreur analyse Mistral: {e}")

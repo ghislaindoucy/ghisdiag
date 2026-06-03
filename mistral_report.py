@@ -26,66 +26,110 @@ RED       = "#ff2d55"
 YELLOW    = "#ffb730"
 
 
+# Inline : appliqué APRÈS échappement HTML, uniquement sur du texte (jamais sur du code fence).
+# On ne touche pas aux underscores : ils sont trop fréquents dans les noms de services,
+# clés JSON, chemins… et provoqueraient des faux positifs d'italique.
+_RE_INLINE_CODE = re.compile(r'`([^`]+)`')
+_RE_BOLD        = re.compile(r'\*\*([^*]+)\*\*')
+_RE_ITALIC      = re.compile(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])')
+_RE_HEADING     = re.compile(r'^(#{1,6})\s+(.*)$')
+_RE_ULITEM      = re.compile(r'^[-*+]\s+(.*)$')
+_RE_OLITEM      = re.compile(r'^\d+\.\s+(.*)$')
+
+
+def _inline(escaped_text: str) -> str:
+    """Applique le formatage inline (code, gras, italique) sur du texte DÉJÀ échappé."""
+    escaped_text = _RE_INLINE_CODE.sub(r'<code>\1</code>', escaped_text)
+    escaped_text = _RE_BOLD.sub(r'<strong>\1</strong>', escaped_text)
+    escaped_text = _RE_ITALIC.sub(r'<em>\1</em>', escaped_text)
+    return escaped_text
+
+
 def _markdown_to_html(markdown_text: str) -> str:
     """
-    Convertit le texte markdown en HTML de manière basique.
-    (pas de dépendance externe requise)
+    Convertit le markdown en HTML via un parseur ligne par ligne.
+    Gère : blocs de code ```fences```, titres #..######, listes ordonnées et
+    non ordonnées, paragraphes et inline (code/gras/italique).
+    Pas de dépendance externe. Tout le texte est échappé HTML (anti-XSS).
     """
-    html_text = html.escape(markdown_text)
+    lines = markdown_text.replace('\r\n', '\n').split('\n')
+    out: list[str] = []
+    list_type: Optional[str] = None   # 'ul' | 'ol' | None
+    in_code = False
+    code_buf: list[str] = []
+    para_buf: list[str] = []
 
-    # Titres H1-H6
-    html_text = re.sub(r'^### (.*?)$', r'<h3>\1</h3>', html_text, flags=re.MULTILINE)
-    html_text = re.sub(r'^## (.*?)$', r'<h2>\1</h2>', html_text, flags=re.MULTILINE)
-    html_text = re.sub(r'^# (.*?)$', r'<h1>\1</h1>', html_text, flags=re.MULTILINE)
+    def flush_para():
+        if para_buf:
+            joined = '<br>'.join(_inline(html.escape(l)) for l in para_buf)
+            out.append(f'<p>{joined}</p>')
+            para_buf.clear()
 
-    # Listes
-    html_text = re.sub(r'^\* (.*?)$', r'<li>\1</li>', html_text, flags=re.MULTILINE)
-    html_text = re.sub(r'^- (.*?)$', r'<li>\1</li>', html_text, flags=re.MULTILINE)
-    html_text = re.sub(r'^(\d+)\. (.*?)$', r'<li>\2</li>', html_text, flags=re.MULTILINE)
+    def close_list():
+        nonlocal list_type
+        if list_type:
+            out.append(f'</{list_type}>')
+            list_type = None
 
-    # Wrapper les listes
-    html_text = re.sub(r'(<li>.*?</li>)', lambda m: m.group(1).replace('<li>', '').replace('</li>', ''),
-                       html_text, flags=re.DOTALL)
-    html_text = re.sub(r'((?:<li>.*?</li>\n?)+)', r'<ul>\1</ul>', html_text, flags=re.MULTILINE)
+    for raw in lines:
+        stripped = raw.strip()
 
-    # Code inline et blocks
-    html_text = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_text)
-    html_text = re.sub(r'```(.*?)```', r'<pre><code>\1</code></pre>', html_text, flags=re.DOTALL)
+        # Bascule de bloc de code ```
+        if stripped.startswith('```'):
+            if in_code:
+                out.append('<pre><code>' + html.escape('\n'.join(code_buf)) + '</code></pre>')
+                code_buf.clear()
+                in_code = False
+            else:
+                flush_para(); close_list()
+                in_code = True
+            continue
+        if in_code:
+            code_buf.append(raw)
+            continue
 
-    # Gras et italique
-    html_text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_text)
-    html_text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html_text)
-    html_text = re.sub(r'__(.*?)__', r'<strong>\1</strong>', html_text)
-    html_text = re.sub(r'_(.*?)_', r'<em>\1</em>', html_text)
+        # Ligne vide → ferme le paragraphe / la liste courante
+        if not stripped:
+            flush_para(); close_list()
+            continue
 
-    # Paragraphes
-    lines = html_text.split('\n')
-    formatted_lines = []
-    in_block = False
+        # Titres
+        m = _RE_HEADING.match(stripped)
+        if m:
+            flush_para(); close_list()
+            level = len(m.group(1))
+            out.append(f'<h{level}>{_inline(html.escape(m.group(2)))}</h{level}>')
+            continue
 
-    for line in lines:
-        if line.startswith('<h') or line.startswith('<ul') or line.startswith('<pre') or \
-           line.startswith('<table'):
-            formatted_lines.append(line)
-            in_block = True
-        elif line.strip() == '':
-            formatted_lines.append('</p>' if in_block and not line.startswith('<') else '')
-            in_block = False
-        elif not line.startswith('<'):
-            if not in_block:
-                formatted_lines.append('<p>')
-                in_block = True
-            formatted_lines.append(line)
-        else:
-            formatted_lines.append(line)
+        # Liste non ordonnée
+        m = _RE_ULITEM.match(stripped)
+        if m:
+            flush_para()
+            if list_type != 'ul':
+                close_list(); out.append('<ul>'); list_type = 'ul'
+            out.append(f'<li>{_inline(html.escape(m.group(1)))}</li>')
+            continue
 
-    html_text = '\n'.join(formatted_lines)
+        # Liste ordonnée
+        m = _RE_OLITEM.match(stripped)
+        if m:
+            flush_para()
+            if list_type != 'ol':
+                close_list(); out.append('<ol>'); list_type = 'ol'
+            out.append(f'<li>{_inline(html.escape(m.group(1)))}</li>')
+            continue
 
-    # Remplacer les balises structurelles
-    html_text = html_text.replace('<li>', '<li>')
-    html_text = html_text.replace('</li>', '</li>')
+        # Ligne de paragraphe ordinaire
+        close_list()
+        para_buf.append(stripped)
 
-    return html_text
+    # Vidange finale (fichier se terminant sans ligne vide)
+    if in_code:
+        out.append('<pre><code>' + html.escape('\n'.join(code_buf)) + '</code></pre>')
+    flush_para()
+    close_list()
+
+    return '\n'.join(out)
 
 
 def _get_css() -> str:
@@ -208,32 +252,6 @@ def _get_css() -> str:
     .meta p {{
         margin-bottom: 0.5rem;
         color: {FG_DIM};
-    }}
-
-    .status {{
-        display: inline-block;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
-        font-weight: 600;
-        margin: 0.5rem 0;
-    }}
-
-    .status.ok {{
-        background-color: rgba({GREEN}, 0.2);
-        color: {GREEN};
-        border: 1px solid {GREEN};
-    }}
-
-    .status.warning {{
-        background-color: rgba({YELLOW}, 0.2);
-        color: {YELLOW};
-        border: 1px solid {YELLOW};
-    }}
-
-    .status.critical {{
-        background-color: rgba({RED}, 0.2);
-        color: {RED};
-        border: 1px solid {RED};
     }}
 
     .section {{
@@ -362,7 +380,7 @@ def generate_mistral_report(
 
     <footer>
         <p>Rapport généré par <strong>PlanetDiag</strong> v1.2.1</p>
-        <p>Analyse effectuée par Mistral IA | <a href="#">Voir le rapport technique complet</a></p>
+        <p>Analyse effectuée par Mistral IA — à recouper avec le rapport technique complet</p>
     </footer>
 </body>
 </html>"""

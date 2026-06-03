@@ -1,0 +1,12 @@
+# PlanetDiag - Dépendances Python
+# Installation : py -m pip install -r requirements.txt
+
+# Moniteur temps réel (CPU/RAM/IO/températures)
+psutil>=5.9
+
+# Analyse IA Mistral (optionnelle) — sans ces libs, l'onglet IA se désactive proprement
+requests>=2.25          # appels HTTP à l'API Mistral
+cryptography>=3.4       # offuscation de la clé API dans prefs.json
+
+# Build uniquement
+pyinstaller>=6.0

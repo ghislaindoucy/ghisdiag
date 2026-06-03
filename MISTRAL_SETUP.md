@@ -40,11 +40,19 @@ pip install requests cryptography
 
 ### Chiffrement de la clé API
 
-La clé API Mistral est **chiffrée** avant d'être sauvegardée:
-- Utilise `cryptography.Fernet` (chiffrement symétrique AES-128)
-- Clé de chiffrement dérivée du hostname + username (stable entre sessions)
-- Jamais stockée en clair dans `%APPDATA%\Local\PlanetDiag\prefs.json`
-- Déchiffrée en mémoire uniquement quand utilisée
+La clé API Mistral est **offusquée** avant d'être sauvegardée (elle n'apparaît jamais
+en clair dans `prefs.json`) :
+- Utilise `cryptography.Fernet` (AES-128 en CBC + HMAC)
+- La clé de chiffrement est **dérivée du hostname + username** de la machine
+
+> ⚠️ **Niveau de protection — à ne pas surestimer.** Comme la clé de chiffrement est
+> dérivée d'informations publiques de la machine (nom de poste, nom d'utilisateur),
+> ce mécanisme protège surtout contre une lecture *accidentelle* du fichier ou sa
+> copie vers une *autre* machine. Il **ne protège pas** contre un attaquant qui
+> exécute du code sous votre session ou connaît ces deux valeurs. Pour une protection
+> liée au compte Windows, l'évolution recommandée est **DPAPI**
+> (`win32crypt.CryptProtectData`) ; non implémentée ici pour éviter une dépendance
+> supplémentaire (`pywin32`).
 
 ### Bonnes pratiques
 

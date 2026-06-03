@@ -79,6 +79,7 @@ class PlanetDiagApp(tk.Tk):
         self._tick_id    = None
         self.report_path = None
         self.json_path   = None
+        self.mistral_report_path = None
 
         # Moniteur temps réel
         self._monitor_paused  = False
@@ -465,13 +466,14 @@ class PlanetDiagApp(tk.Tk):
         )
         self.mistral_key_entry.pack(side="left", padx=(0, 8))
 
-        tk.Button(
+        self.btn_mistral_test = tk.Button(
             mistral_panel, text="Tester la clé",
             font=("Segoe UI", 9), bg=ACCENT, fg=BG,
             activebackground=PURPLE, relief="flat", cursor="hand2",
             padx=12, pady=4,
             command=self._test_mistral_key,
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.btn_mistral_test.pack(side="left", padx=(0, 6))
 
         tk.Label(
             mistral_panel, text="(Les analyses IA seront exécutées après chaque diagnostic)",
@@ -2242,7 +2244,10 @@ class PlanetDiagApp(tk.Tk):
             # Vérifier si une clé API Mistral est fournie pour l'analyse IA
             mistral_api_key = self.mistral_api_key_var.get().strip()
             if mistral_api_key and _HAS_MISTRAL:
-                # Lancer l'analyse Mistral en thread séparé
+                # Lancer l'analyse Mistral en thread séparé.
+                # Copie superficielle suffisante : le worker ne fait que LIRE les dicts
+                # imbriqués, et le thread principal ne les mute pas après ce point
+                # (le `del data` plus bas ne retire que la liaison locale).
                 diagnostic_data_copy = data.copy()
                 machine_name = data["meta"].get("machine", "UNKNOWN")
                 thread = threading.Thread(
@@ -2309,7 +2314,7 @@ class PlanetDiagApp(tk.Tk):
         save_prefs(prefs)
 
     def _test_mistral_key(self):
-        """Teste la validité de la clé API Mistral."""
+        """Teste la validité de la clé API Mistral (appel réseau déporté hors du thread UI)."""
         if not _HAS_MISTRAL:
             messagebox.showerror("Erreur", "Modules Mistral non disponibles.\nInstallation requise: pip install requests cryptography")
             return
@@ -2319,38 +2324,55 @@ class PlanetDiagApp(tk.Tk):
             messagebox.showwarning("Attention", "Veuillez entrer une clé API Mistral")
             return
 
-        # Test simple: appel minimaliste à l'API
+        # On désactive le bouton pendant le test pour éviter les double-clics.
+        self.btn_mistral_test.configure(state="disabled", text="Test en cours…")
+        threading.Thread(
+            target=self._test_mistral_key_worker, args=(api_key,), daemon=True
+        ).start()
+
+    def _test_mistral_key_worker(self, api_key: str):
+        """Effectue l'appel de test dans un thread ; restitue le résultat via self.after."""
         import requests
+
+        def _finish(kind: str, message: str):
+            def _show():
+                self.btn_mistral_test.configure(state="normal", text="Tester la clé")
+                if kind == "info":
+                    messagebox.showinfo("Succès", message)
+                elif kind == "warn":
+                    messagebox.showwarning("Attention", message)
+                else:
+                    messagebox.showerror("Erreur", message)
+            self.after(0, _show)
+
         try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": "mistral-large-latest",
-                "messages": [{"role": "user", "content": "Bonjour"}],
-                "max_tokens": 10,
-            }
             response = requests.post(
                 "https://api.mistral.ai/v1/chat/completions",
-                json=payload,
-                headers=headers,
+                json={
+                    "model": "mistral-large-latest",
+                    "messages": [{"role": "user", "content": "Bonjour"}],
+                    "max_tokens": 10,
+                },
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
                 timeout=10,
             )
 
-            if response.status_code == 401:
-                messagebox.showerror("Erreur", "❌  Clé API invalide")
-            elif response.status_code == 200:
-                messagebox.showinfo("Succès", "✅  Clé API Mistral valide!")
+            if response.status_code == 200:
+                _finish("info", "✅  Clé API Mistral valide!")
+            elif response.status_code == 401:
+                _finish("error", "❌  Clé API invalide")
             else:
-                messagebox.showerror("Erreur", f"Erreur {response.status_code}: {response.text[:200]}")
+                _finish("error", f"Erreur {response.status_code}: {response.text[:200]}")
 
         except requests.exceptions.Timeout:
-            messagebox.showerror("Erreur", "Timeout - Impossible de contacter Mistral")
+            _finish("error", "Timeout - Impossible de contacter Mistral")
         except requests.exceptions.ConnectionError:
-            messagebox.showerror("Erreur", "Erreur de connexion")
+            _finish("error", "Erreur de connexion")
         except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur: {e}")
+            _finish("error", f"Erreur: {e}")
 
     def _run_mistral_analysis(self, diagnostic_data: dict, api_key: str, machine_name: str):
         """Lance l'analyse Mistral en thread séparé (ne bloque pas l'UI)."""
