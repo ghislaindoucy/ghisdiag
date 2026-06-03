@@ -82,6 +82,14 @@ class PlanetDiagApp(tk.Tk):
         self.minsize(700, 580)
         self.configure(bg=BG)
 
+        # Taille de restauration (utilisée quand l'utilisateur rétrécit depuis le mode maximisé)
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h   = min(1280, int(sw * 0.85)), min(900, int(sh * 0.85))
+        self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        # Démarre maximisé : tout le contenu visible dès l'ouverture
+        self.state("zoomed")
+
         self._running    = False
         self._tick_id    = None
         self.report_path = None
