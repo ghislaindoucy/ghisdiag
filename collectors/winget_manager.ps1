@@ -128,7 +128,11 @@ switch ($Action) {
         try {
             $headers = @{ "User-Agent" = "PlanetDiag-WingetUpdater" }
             $release = Invoke-RestMethod "https://api.github.com/repos/microsoft/winget-cli/releases/latest" `
-                       -Headers $headers -UseBasicParsing
+                       -Headers $headers -UseBasicParsing -TimeoutSec 30
+            if (-not $release.tag_name) {
+                Write-Output "ERREUR: Reponse GitHub invalide (tag_name absent). Reessayez plus tard."
+                exit 1
+            }
             Write-Output "Version disponible : $($release.tag_name)"
         } catch {
             Write-Output "ERREUR: Impossible de contacter GitHub - $($_.Exception.Message)"

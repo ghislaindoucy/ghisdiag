@@ -42,6 +42,14 @@ logger = logging.getLogger(__name__)
 from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action, run_ps_stream
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
+try:
+    from mistral_analyzer import analyze_diagnostic
+    from mistral_report import generate_mistral_report
+    _HAS_MISTRAL = True
+except ImportError:
+    _HAS_MISTRAL = False
+    logger.warning("Modules Mistral non disponibles (requests/cryptography manquants)")
+
 # ── Palette Ghost Protocol ────────────────────────────────────────────────────
 BG        = "#030810"
 SURFACE   = "#0a1628"
@@ -93,6 +101,12 @@ class PlanetDiagApp(tk.Tk):
             value=prefs.get("auto_open_browser", True)
         )
         self.auto_open_var.trace_add("write", self._on_auto_open_changed)
+
+        # Clé API Mistral
+        self.mistral_api_key_var = tk.StringVar(
+            value=prefs.get("mistral_api_key", "")
+        )
+        self.mistral_api_key_var.trace_add("write", self._on_mistral_key_changed)
 
         # Spooler state
         self._spooler_busy     = False
@@ -428,6 +442,41 @@ class PlanetDiagApp(tk.Tk):
             font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
         )
         self.result_lbl.pack(side="right")
+
+        # ── Mistral IA Settings ────────────────────────────────────────────────
+        mistral_panel = tk.Frame(parent, bg=SURFACE, pady=8)
+        mistral_panel.pack(fill="x", padx=28, pady=(6, 0))
+
+        lbl_mistral = tk.Label(
+            mistral_panel, text="🤖  Analyse IA Mistral (optionnel)",
+            font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
+        )
+        lbl_mistral.pack(side="left", padx=(0, 12))
+
+        tk.Label(
+            mistral_panel, text="Clé API Mistral:",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+        ).pack(side="left", padx=(0, 6))
+
+        self.mistral_key_entry = tk.Entry(
+            mistral_panel, textvariable=self.mistral_api_key_var,
+            show="•", font=("Consolas", 10), bg=SURFACE2, fg=ACCENT,
+            insertbackground=FG, relief="flat", width=40,
+        )
+        self.mistral_key_entry.pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            mistral_panel, text="Tester la clé",
+            font=("Segoe UI", 9), bg=ACCENT, fg=BG,
+            activebackground=PURPLE, relief="flat", cursor="hand2",
+            padx=12, pady=4,
+            command=self._test_mistral_key,
+        ).pack(side="left", padx=(0, 6))
+
+        tk.Label(
+            mistral_panel, text="(Les analyses IA seront exécutées après chaque diagnostic)",
+            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+        ).pack(side="left", padx=(0, 0))
 
     # ── Onglet Dépannage ──────────────────────────────────────────────────────
     def _build_troubleshoot_tab(self, parent: tk.Frame):
@@ -2190,6 +2239,19 @@ class PlanetDiagApp(tk.Tk):
             elapsed          = data["meta"]["elapsed_sec"]
             failed           = data["meta"].get("collectors_fail", [])
 
+            # Vérifier si une clé API Mistral est fournie pour l'analyse IA
+            mistral_api_key = self.mistral_api_key_var.get().strip()
+            if mistral_api_key and _HAS_MISTRAL:
+                # Lancer l'analyse Mistral en thread séparé
+                diagnostic_data_copy = data.copy()
+                machine_name = data["meta"].get("machine", "UNKNOWN")
+                thread = threading.Thread(
+                    target=self._run_mistral_analysis,
+                    args=(diagnostic_data_copy, mistral_api_key, machine_name),
+                    daemon=True,
+                )
+                thread.start()
+
             del data, gen, orch
             gc.collect()
 
@@ -2240,6 +2302,105 @@ class PlanetDiagApp(tk.Tk):
         prefs = load_prefs()
         prefs["auto_open_browser"] = self.auto_open_var.get()
         save_prefs(prefs)
+
+    def _on_mistral_key_changed(self, *_):
+        prefs = load_prefs()
+        prefs["mistral_api_key"] = self.mistral_api_key_var.get()
+        save_prefs(prefs)
+
+    def _test_mistral_key(self):
+        """Teste la validité de la clé API Mistral."""
+        if not _HAS_MISTRAL:
+            messagebox.showerror("Erreur", "Modules Mistral non disponibles.\nInstallation requise: pip install requests cryptography")
+            return
+
+        api_key = self.mistral_api_key_var.get().strip()
+        if not api_key:
+            messagebox.showwarning("Attention", "Veuillez entrer une clé API Mistral")
+            return
+
+        # Test simple: appel minimaliste à l'API
+        import requests
+        try:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": "mistral-large-latest",
+                "messages": [{"role": "user", "content": "Bonjour"}],
+                "max_tokens": 10,
+            }
+            response = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=10,
+            )
+
+            if response.status_code == 401:
+                messagebox.showerror("Erreur", "❌  Clé API invalide")
+            elif response.status_code == 200:
+                messagebox.showinfo("Succès", "✅  Clé API Mistral valide!")
+            else:
+                messagebox.showerror("Erreur", f"Erreur {response.status_code}: {response.text[:200]}")
+
+        except requests.exceptions.Timeout:
+            messagebox.showerror("Erreur", "Timeout - Impossible de contacter Mistral")
+        except requests.exceptions.ConnectionError:
+            messagebox.showerror("Erreur", "Erreur de connexion")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur: {e}")
+
+    def _run_mistral_analysis(self, diagnostic_data: dict, api_key: str, machine_name: str):
+        """Lance l'analyse Mistral en thread séparé (ne bloque pas l'UI)."""
+        try:
+            self.after(0, lambda: self._log("🤖  Analyse Mistral IA en cours…", "info"))
+
+            # Appeler Mistral
+            progress_msg = lambda m: self.after(0, lambda msg=m: self._log(f"   {msg}", "dim"))
+            analysis_text = analyze_diagnostic(diagnostic_data, api_key, progress_callback=progress_msg)
+
+            if not analysis_text:
+                self.after(0, lambda: self._log("⚠ Analyse Mistral vide", "warn"))
+                return
+
+            # Générer le rapport HTML Mistral
+            mistral_html_path = generate_mistral_report(
+                analysis_text,
+                machine_name,
+                self._out_dir,
+            )
+
+            self.mistral_report_path = mistral_html_path
+
+            # Afficher le message de succès dans le log
+            self.after(0, lambda: self._log(f"✅  Rapport Mistral : {mistral_html_path}", "ok"))
+
+            # Ouvrir automatiquement le rapport Mistral
+            if self.auto_open_var.get():
+                self.after(500, lambda: self._open_mistral_html(mistral_html_path))
+
+        except ValueError as e:
+            # Clé API invalide
+            self.after(0, lambda: self._log(f"❌  Mistral: {str(e)}", "err"))
+            self.after(0, lambda: messagebox.showerror("Erreur Mistral", str(e)))
+
+        except RuntimeError as e:
+            # Erreur réseau ou timeout
+            self.after(0, lambda: self._log(f"⚠ Mistral: {str(e)}", "warn"))
+            self.after(0, lambda: messagebox.showwarning("Avertissement", f"Analyse Mistral non disponible:\n{str(e)}"))
+
+        except Exception as e:
+            logger.exception("Erreur lors de l'analyse Mistral")
+            self.after(0, lambda: self._log(f"❌  Erreur Mistral: {str(e)}", "err"))
+
+    def _open_mistral_html(self, path: Path):
+        """Ouvre le rapport Mistral dans le navigateur."""
+        try:
+            os.startfile(str(path.resolve()))
+        except OSError as e:
+            logger.warning(f"Impossible d'ouvrir {path}: {e}")
 
     def _open_html(self):
         if not (self.report_path and self.report_path.exists()):
