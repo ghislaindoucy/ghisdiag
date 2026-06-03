@@ -379,7 +379,7 @@ def generate_mistral_report(
     </main>
 
     <footer>
-        <p>Rapport généré par <strong>PlanetDiag</strong> v1.2.1</p>
+        <p>Rapport généré par <strong>PlanetDiag</strong> v1.2.2</p>
         <p>Analyse effectuée par Mistral IA — à recouper avec le rapport technique complet</p>
     </footer>
 </body>
