@@ -2384,8 +2384,52 @@ class PlanetDiagApp(tk.Tk):
         except Exception as e:
             _finish("error", f"Erreur: {e}")
 
+    # ── Popup d'attente Mistral ───────────────────────────────────────────────
+    def _open_mistral_waiting_popup(self):
+        """Ouvre une fenêtre non bloquante indiquant que l'analyse Mistral est en cours."""
+        popup = tk.Toplevel(self)
+        popup.title("Analyse Mistral IA")
+        popup.configure(bg=SURFACE)
+        popup.resizable(False, False)
+        popup.grab_set()   # garde le focus mais ne bloque pas le thread principal
+
+        # Centrer sur la fenêtre principale
+        self.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - 460) // 2
+        py = self.winfo_y() + (self.winfo_height() - 180) // 2
+        popup.geometry(f"460x180+{px}+{py}")
+
+        # Empêcher la fermeture manuelle pendant l'analyse
+        popup.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        tk.Label(
+            popup, text="🤖  Analyse Mistral IA en cours…",
+            font=("Segoe UI", 13, "bold"), bg=SURFACE, fg=ACCENT,
+        ).pack(pady=(24, 8))
+
+        tk.Label(
+            popup,
+            text="Les données sont transmises à Mistral pour un audit complet.\n"
+                 "La génération du rapport peut prendre plusieurs minutes.\n"
+                 "Merci de patienter, la fenêtre se fermera automatiquement.",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+            justify="center",
+        ).pack(pady=(0, 20))
+
+        self._mistral_popup = popup
+
+    def _close_mistral_waiting_popup(self):
+        """Ferme la popup d'attente si elle est ouverte."""
+        popup = getattr(self, "_mistral_popup", None)
+        if popup and popup.winfo_exists():
+            popup.grab_release()
+            popup.destroy()
+        self._mistral_popup = None
+
     def _run_mistral_analysis(self, diagnostic_data: dict, api_key: str, machine_name: str):
         """Lance l'analyse Mistral en thread séparé (ne bloque pas l'UI)."""
+        # Ouvrir la popup d'attente depuis le thread UI
+        self.after(0, self._open_mistral_waiting_popup)
         try:
             self.after(0, lambda: self._log("🤖  Analyse Mistral IA en cours…", "info"))
 
@@ -2394,6 +2438,7 @@ class PlanetDiagApp(tk.Tk):
             analysis_text = analyze_diagnostic(diagnostic_data, api_key, progress_callback=progress_msg)
 
             if not analysis_text:
+                self.after(0, self._close_mistral_waiting_popup)
                 self.after(0, lambda: self._log("⚠ Analyse Mistral vide", "warn"))
                 return
 
@@ -2406,25 +2451,29 @@ class PlanetDiagApp(tk.Tk):
 
             self.mistral_report_path = mistral_html_path
 
-            # Afficher le message de succès dans le log
+            # Fermer la popup puis afficher le succès
+            self.after(0, self._close_mistral_waiting_popup)
             self.after(0, lambda: self._log(f"✅  Rapport Mistral : {mistral_html_path}", "ok"))
 
             # Ouvrir automatiquement le rapport Mistral
             if self.auto_open_var.get():
-                self.after(500, lambda: self._open_mistral_html(mistral_html_path))
+                self.after(600, lambda: self._open_mistral_html(mistral_html_path))
 
         except ValueError as e:
             # Clé API invalide
+            self.after(0, self._close_mistral_waiting_popup)
             self.after(0, lambda: self._log(f"❌  Mistral: {str(e)}", "err"))
             self.after(0, lambda: messagebox.showerror("Erreur Mistral", str(e)))
 
         except RuntimeError as e:
             # Erreur réseau ou timeout
+            self.after(0, self._close_mistral_waiting_popup)
             self.after(0, lambda: self._log(f"⚠ Mistral: {str(e)}", "warn"))
             self.after(0, lambda: messagebox.showwarning("Avertissement", f"Analyse Mistral non disponible:\n{str(e)}"))
 
         except Exception as e:
             logger.exception("Erreur lors de l'analyse Mistral")
+            self.after(0, self._close_mistral_waiting_popup)
             self.after(0, lambda: self._log(f"❌  Erreur Mistral: {str(e)}", "err"))
 
     def _open_mistral_html(self, path: Path):
