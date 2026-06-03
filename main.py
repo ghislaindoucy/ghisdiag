@@ -366,9 +366,81 @@ class PlanetDiagApp(tk.Tk):
 
         ttk.Separator(parent).pack(fill="x", padx=20, pady=(0, 0))
 
-        # Journal d'activité
+        # ── Boutons bas + Mistral (packés AVANT le log pour rester visibles) ───
+        foot = tk.Frame(parent, bg=BG, pady=10)
+        foot.pack(fill="x", padx=28)
+
+        self.btn_open = tk.Button(
+            foot, text="Ouvrir le rapport HTML",
+            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, activeforeground=FG,
+            relief="flat", cursor="hand2", padx=20, pady=10,
+            state="disabled", command=self._open_html,
+        )
+        self.btn_open.pack(side="left")
+
+        self.btn_folder = tk.Button(
+            foot, text="Ouvrir le dossier",
+            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, activeforeground=FG,
+            relief="flat", cursor="hand2", padx=20, pady=10,
+            state="disabled", command=self._open_folder,
+        )
+        self.btn_folder.pack(side="left", padx=(8, 0))
+
+        tk.Checkbutton(
+            foot, text="Ouvrir auto.",
+            variable=self.auto_open_var,
+            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+            activebackground=BG, activeforeground=FG,
+            selectcolor=SURFACE, relief="flat", cursor="hand2",
+        ).pack(side="left", padx=(16, 0))
+
+        self.result_lbl = tk.Label(
+            foot, text="",
+            font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
+        )
+        self.result_lbl.pack(side="right")
+
+        # ── Mistral IA Settings ────────────────────────────────────────────────
+        mistral_panel = tk.Frame(parent, bg=SURFACE, pady=8)
+        mistral_panel.pack(fill="x", padx=28, pady=(0, 6))
+
+        tk.Label(
+            mistral_panel, text="🤖  Analyse IA Mistral (optionnel)",
+            font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
+        ).pack(side="left", padx=(8, 12))
+
+        tk.Label(
+            mistral_panel, text="Clé API :",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+        ).pack(side="left", padx=(0, 6))
+
+        self.mistral_key_entry = tk.Entry(
+            mistral_panel, textvariable=self.mistral_api_key_var,
+            show="•", font=("Consolas", 10), bg=SURFACE2, fg=ACCENT,
+            insertbackground=FG, relief="flat", width=38,
+        )
+        self.mistral_key_entry.pack(side="left", padx=(0, 8))
+
+        self.btn_mistral_test = tk.Button(
+            mistral_panel, text="Tester la clé",
+            font=("Segoe UI", 9), bg=ACCENT, fg=BG,
+            activebackground=PURPLE, relief="flat", cursor="hand2",
+            padx=12, pady=4,
+            command=self._test_mistral_key,
+        )
+        self.btn_mistral_test.pack(side="left", padx=(0, 12))
+
+        tk.Label(
+            mistral_panel,
+            text="Si renseignée, un audit IA sera généré après chaque diagnostic",
+            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+        ).pack(side="left")
+
+        # Journal d'activité (expand=True → prend tout l'espace restant, DOIT être en dernier)
         log_hdr = tk.Frame(parent, bg=BG)
-        log_hdr.pack(fill="x", padx=28, pady=(8, 4))
+        log_hdr.pack(fill="x", padx=28, pady=(4, 4))
         tk.Label(log_hdr, text="Journal d'activité",
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
         tk.Button(
@@ -407,78 +479,6 @@ class PlanetDiagApp(tk.Tk):
         self.log.tag_config("info", foreground=ACCENT)
         self.log.tag_config("dim",  foreground=FG_MUTED)
         self.log.tag_config("time", foreground=PURPLE)
-
-        # Boutons bas
-        foot = tk.Frame(parent, bg=BG, pady=10)
-        foot.pack(fill="x", padx=28)
-
-        self.btn_open = tk.Button(
-            foot, text="Ouvrir le rapport HTML",
-            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
-            activebackground=SURFACE2, activeforeground=FG,
-            relief="flat", cursor="hand2", padx=20, pady=10,
-            state="disabled", command=self._open_html,
-        )
-        self.btn_open.pack(side="left")
-
-        self.btn_folder = tk.Button(
-            foot, text="Ouvrir le dossier",
-            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
-            activebackground=SURFACE2, activeforeground=FG,
-            relief="flat", cursor="hand2", padx=20, pady=10,
-            state="disabled", command=self._open_folder,
-        )
-        self.btn_folder.pack(side="left", padx=(8, 0))
-
-        tk.Checkbutton(
-            foot, text="Ouvrir auto.",
-            variable=self.auto_open_var,
-            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
-            activebackground=BG, activeforeground=FG,
-            selectcolor=SURFACE, relief="flat", cursor="hand2",
-        ).pack(side="left", padx=(16, 0))
-
-        self.result_lbl = tk.Label(
-            foot, text="",
-            font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
-        )
-        self.result_lbl.pack(side="right")
-
-        # ── Mistral IA Settings ────────────────────────────────────────────────
-        mistral_panel = tk.Frame(parent, bg=SURFACE, pady=8)
-        mistral_panel.pack(fill="x", padx=28, pady=(6, 0))
-
-        lbl_mistral = tk.Label(
-            mistral_panel, text="🤖  Analyse IA Mistral (optionnel)",
-            font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
-        )
-        lbl_mistral.pack(side="left", padx=(0, 12))
-
-        tk.Label(
-            mistral_panel, text="Clé API Mistral:",
-            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
-        ).pack(side="left", padx=(0, 6))
-
-        self.mistral_key_entry = tk.Entry(
-            mistral_panel, textvariable=self.mistral_api_key_var,
-            show="•", font=("Consolas", 10), bg=SURFACE2, fg=ACCENT,
-            insertbackground=FG, relief="flat", width=40,
-        )
-        self.mistral_key_entry.pack(side="left", padx=(0, 8))
-
-        self.btn_mistral_test = tk.Button(
-            mistral_panel, text="Tester la clé",
-            font=("Segoe UI", 9), bg=ACCENT, fg=BG,
-            activebackground=PURPLE, relief="flat", cursor="hand2",
-            padx=12, pady=4,
-            command=self._test_mistral_key,
-        )
-        self.btn_mistral_test.pack(side="left", padx=(0, 6))
-
-        tk.Label(
-            mistral_panel, text="(Les analyses IA seront exécutées après chaque diagnostic)",
-            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
-        ).pack(side="left", padx=(0, 0))
 
     # ── Onglet Dépannage ──────────────────────────────────────────────────────
     def _build_troubleshoot_tab(self, parent: tk.Frame):
