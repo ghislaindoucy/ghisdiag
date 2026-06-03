@@ -131,10 +131,7 @@ af96230 docs: Guide de configuration Mistral AI pour PlanetDiag
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag_v1.2.2.exe`
-- **Sha256** : [à remplir après compilation]
-- **Taille** : [à remplir après compilation]
-
+- **Exe** : `PlanetDiag.exe`
+- **Sha256** : 0A600601FE35798708D520054884077E06361B0BB96184BEABDEF30017C46B18
+- **Taille** : 19,1 mo
 ---
-
-**Prêt pour la production.** 🎉
