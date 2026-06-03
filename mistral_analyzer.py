@@ -12,7 +12,10 @@ logger = logging.getLogger(__name__)
 
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "mistral-large-latest"
-MISTRAL_TIMEOUT = 90  # secondes
+MAX_OUTPUT_TOKENS = 15000  # marge confortable pour un audit détaillé (fenêtre modèle 128k)
+# Un audit de 15k tokens peut prendre plusieurs minutes à générer. L'appel tournant
+# dans un thread de fond (UI non bloquée), on laisse une marge large.
+MISTRAL_TIMEOUT = 240  # secondes
 
 
 SYSTEM_PROMPT = """Tu es un expert en systèmes Windows, spécialisé dans le support technique (SAV) et l'analyse de données informatiques.
@@ -90,7 +93,7 @@ Fournis un audit complet et structuré avec:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.7,
-            "max_tokens": 4096,
+            "max_tokens": MAX_OUTPUT_TOKENS,
             "top_p": 0.95,
         }
 
@@ -130,7 +133,7 @@ Fournis un audit complet et structuré avec:
         return analysis_text
 
     except requests.exceptions.Timeout:
-        logger.error("Timeout lors de l'appel Mistral (>90s)")
+        logger.error(f"Timeout lors de l'appel Mistral (>{MISTRAL_TIMEOUT}s)")
         raise RuntimeError("Timeout Mistral - L'analyse a pris trop de temps. Réessayez plus tard.")
 
     except requests.exceptions.ConnectionError as e:
