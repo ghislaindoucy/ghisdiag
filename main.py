@@ -50,6 +50,13 @@ except ImportError:
     _HAS_MISTRAL = False
     logger.warning("Modules Mistral non disponibles (requests/cryptography manquants)")
 
+# requests seul suffit pour tester la clé — indépendant de cryptography
+try:
+    import requests as _requests
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
+
 # ── Palette Ghost Protocol ────────────────────────────────────────────────────
 BG        = "#030810"
 SURFACE   = "#0a1628"
@@ -2315,8 +2322,13 @@ class PlanetDiagApp(tk.Tk):
 
     def _test_mistral_key(self):
         """Teste la validité de la clé API Mistral (appel réseau déporté hors du thread UI)."""
-        if not _HAS_MISTRAL:
-            messagebox.showerror("Erreur", "Modules Mistral non disponibles.\nInstallation requise: pip install requests cryptography")
+        if not _HAS_REQUESTS:
+            messagebox.showerror(
+                "Dépendance manquante",
+                "La librairie 'requests' est requise pour tester la clé.\n\n"
+                "Exécutez dans un terminal :\n"
+                "  py -m pip install requests cryptography",
+            )
             return
 
         api_key = self.mistral_api_key_var.get().strip()
@@ -2332,8 +2344,6 @@ class PlanetDiagApp(tk.Tk):
 
     def _test_mistral_key_worker(self, api_key: str):
         """Effectue l'appel de test dans un thread ; restitue le résultat via self.after."""
-        import requests
-
         def _finish(kind: str, message: str):
             def _show():
                 self.btn_mistral_test.configure(state="normal", text="Tester la clé")
@@ -2346,7 +2356,7 @@ class PlanetDiagApp(tk.Tk):
             self.after(0, _show)
 
         try:
-            response = requests.post(
+            response = _requests.post(
                 "https://api.mistral.ai/v1/chat/completions",
                 json={
                     "model": "mistral-large-latest",
@@ -2367,9 +2377,9 @@ class PlanetDiagApp(tk.Tk):
             else:
                 _finish("error", f"Erreur {response.status_code}: {response.text[:200]}")
 
-        except requests.exceptions.Timeout:
+        except _requests.exceptions.Timeout:
             _finish("error", "Timeout - Impossible de contacter Mistral")
-        except requests.exceptions.ConnectionError:
+        except _requests.exceptions.ConnectionError:
             _finish("error", "Erreur de connexion")
         except Exception as e:
             _finish("error", f"Erreur: {e}")
