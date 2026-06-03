@@ -12,26 +12,25 @@ logger = logging.getLogger(__name__)
 
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "mistral-large-latest"
-MAX_OUTPUT_TOKENS = 15000  # marge confortable pour un audit détaillé (fenêtre modèle 128k)
-# Un audit de 15k tokens peut prendre plusieurs minutes à générer. L'appel tournant
-# dans un thread de fond (UI non bloquée), on laisse une marge large.
-MISTRAL_TIMEOUT = 240  # secondes
+MAX_OUTPUT_TOKENS = 20000  # audit complet et détaillé (fenêtre modèle 128k)
+# À 20k tokens de sortie la génération peut dépasser 5 min sur Mistral Large.
+# L'appel tourne en thread de fond (UI non bloquée), marge large.
+MISTRAL_TIMEOUT = 300  # secondes
 
 
-SYSTEM_PROMPT = """Tu es un expert en systèmes Windows, spécialisé dans le support technique (SAV) et l'analyse de données informatiques.
+SYSTEM_PROMPT = """Tu es un technicien expert Windows de niveau 3, spécialisé en SAV, réparation système et optimisation de postes de travail.
 
-Tu vas analyser les données de diagnostic transmises et générer un audit complet détaillé.
-
-Pour chaque problème identifié, tu dois:
-1. Expliquer clairement le problème
-2. Évaluer son impact (Critique/Grave/Moyen/Faible)
-3. Donner des conseils de réparation détaillés avec étapes précises
-4. Proposer des optimisations du système
-5. Fournir les démarches step-by-step pour chaque action
-6. Identifier les services à désactiver ou mettre à jour
-7. Recommander du matériel si nécessaire
-
-Formate ta réponse de manière lisible avec des titres, listes et sections claires."""
+RÈGLES ABSOLUES — respecte-les sans exception :
+- Chaque problème identifié doit aboutir à UNE SOLUTION CONCRÈTE ET APPLICABLE.
+- Interdiction de répondre "consultez un professionnel" ou "il est recommandé de...".
+- Chaque solution doit inclure les COMMANDES EXACTES à exécuter (cmd, PowerShell, regedit, etc.).
+- Si plusieurs solutions existent, donne-les par ordre de priorité avec la commande précise pour chacune.
+- Pour les services : donne le nom exact du service ET la commande pour le désactiver/arrêter.
+- Pour les drivers : donne la source exacte de téléchargement ou la commande de mise à jour.
+- Pour les erreurs événements : donne la cause probable ET la démarche de résolution commande par commande.
+- Pour les optimisations : donne les commandes PowerShell/cmd exactes, pas des clics dans l'interface.
+- Utilise des blocs de code pour toutes les commandes.
+- Sois exhaustif : mieux vaut trop de détails que des instructions vagues."""
 
 
 def analyze_diagnostic(
@@ -58,25 +57,54 @@ def analyze_diagnostic(
         diag_json = json.dumps(diagnostic_data, indent=2, ensure_ascii=False, default=str)
 
         # Limiter la taille pour ne pas dépasser le context window
-        max_len = 60000  # ~15k tokens
+        # On monte à 80k chars pour donner le plus de contexte possible à Mistral
+        max_len = 80000
         if len(diag_json) > max_len:
             logger.warning(f"Données diagnostiques tronquées ({len(diag_json)} chars → {max_len})")
             diag_json = diag_json[:max_len] + "\n[… données tronquées …]"
 
-        user_prompt = f"""Voici les données de diagnostic de ce système Windows:
+        user_prompt = f"""Voici le rapport de diagnostic complet d'un poste Windows. Analyse chaque section et génère un audit technique actionnable.
 
 ```json
 {diag_json}
 ```
 
-Fournis un audit complet et structuré avec:
-1. **Résumé Exécutif** - Vue d'ensemble du système en 2-3 lignes
-2. **État du système** - OK / Attention / Critique
-3. **Problèmes détectés** - Les 5 principaux problèmes avec impact
-4. **Conseils de réparation** - Démarches détaillées pour chaque problème
-5. **Optimisations recommandées** - Actions pour améliorer les performances
-6. **Services à gérer** - Services à désactiver/mettre à jour
-7. **Recommandations matériel** - Si applicable"""
+---
+
+Génère l'audit selon ce plan OBLIGATOIRE. Pour chaque section, sois exhaustif et précis.
+
+## 1. RÉSUMÉ EXÉCUTIF
+État global : **[SAIN / DÉGRADÉ / CRITIQUE]**
+Synthèse en 3-4 lignes des points les plus importants.
+
+## 2. PROBLÈMES IDENTIFIÉS
+Pour CHAQUE problème trouvé dans les données, structure-le ainsi :
+### [Nom du problème] — Sévérité : [Critique/Grave/Moyen/Faible]
+- **Cause** : explication précise de ce qui se passe
+- **Impact** : conséquence concrète pour l'utilisateur
+- **Solution immédiate** : commandes exactes à exécuter maintenant
+- **Vérification** : commande pour confirmer que le problème est résolu
+
+## 3. RÉPARATIONS SYSTÈME
+Pour chaque réparation nécessaire, donne les commandes EXACTES dans l'ordre :
+- Commandes cmd/PowerShell avec les paramètres complets
+- Chemins de registre si applicable avec les valeurs à modifier
+- Redémarrages nécessaires indiqués explicitement
+
+## 4. OPTIMISATIONS PERFORMANCES
+Actions concrètes pour améliorer les performances, avec pour chacune :
+- La commande PowerShell ou cmd exacte
+- L'effet attendu (gain estimé)
+- Les services/tâches à désactiver avec leur nom exact de service Windows
+
+## 5. SÉCURITÉ
+Points de sécurité à corriger basés sur les données, avec les commandes de correction.
+
+## 6. MAINTENANCE PRÉVENTIVE
+Séquence de commandes de maintenance à exécuter immédiatement (copier-coller prêt à l'emploi).
+
+## 7. RECOMMANDATIONS MATÉRIEL
+Uniquement si les données indiquent un composant défaillant ou insuffisant — sois spécifique (type/capacité recommandée)."""
 
         if progress_callback:
             progress_callback("Envoi des données à Mistral…")
@@ -92,9 +120,9 @@ Fournis un audit complet et structuré avec:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.7,
+            "temperature": 0.2,   # faible = réponses factuelles et précises (moins de "créativité")
             "max_tokens": MAX_OUTPUT_TOKENS,
-            "top_p": 0.95,
+            "top_p": 0.9,
         }
 
         response = requests.post(
