@@ -1,2 +1,228 @@
-# planetdiag
-Outil diagnostic Windows
+# 🔍 PlanetDiag
+
+> **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
+
+[![Version](https://img.shields.io/badge/version-1.2.2-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.2)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
+![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
+
+---
+
+## ✨ Ce que tu peux faire avec PlanetDiag
+
+### 🚀 Diagnostic complet en moins de 5 minutes
+
+- **Système & Matériel** — CPU, RAM, disques, température, BIOS
+- **Performance** — Charge système, processus lourds, fragmentation
+- **Démarrage Windows** — Services auto, programmes de démarrage (lents!)
+- **Événements système** — Erreurs, avertissements (dernières 72h)
+- **Réseau** — Connexion, DNS, pare-feu, VPN
+- **Sécurité** — Mises à jour, antivirus, UAC, historique login
+- **Logiciels & Drivers** — Drivers cassés, applications obsolètes
+- **Santé disques** — SMART monitoring (SSD/HDD)
+
+### 🤖 **NOUVEAU : Analyse IA Mistral**
+
+Après ton diagnostic, active l'analyse IA pour obtenir :
+- ✅ **Audit complet** — ce qui va pas, ce qui peut s'améliorer
+- ✅ **Commandes exactes** — copie-colle direct dans PowerShell/CMD
+- ✅ **Plan de réparation** — étapes détaillées pour chaque problème
+- ✅ **Optimisations** — gagner en vitesse et stabilité
+- ✅ **Priorités claires** — critique → grave → moyen → faible
+
+**Tarif ?** ~€0.004 par diagnostic (grâce à Mistral Large)
+
+---
+
+## 🎯 Commencer en 30 secondes
+
+### 1️⃣ Télécharge et lance
+```bash
+# Récupère PlanetDiag.exe depuis les releases
+# Double-clique et c'est parti!
+```
+
+### 2️⃣ Clique sur "Lancer le diagnostic"
+- Attends ~3-5 minutes
+- Reçois un rapport HTML complet
+
+### 3️⃣ (Optionnel) Active l'IA Mistral
+- Génère une clé API gratuite : https://console.mistral.ai
+- Colle-la dans le panneau "🤖 Analyse IA Mistral"
+- Relance un diagnostic → rapport IA automatique
+
+**C'est tout!** 🎉
+
+---
+
+## 📦 Installation
+
+### Windows (Exe seul)
+1. Télécharge `PlanetDiag.exe` depuis les [releases](https://github.com/ghislaindoucy/planetdiag/releases)
+2. Double-clique
+3. Accepte les droits administrateur
+4. C'est parti!
+
+**Prérequis :** Windows 10/11, rien d'autre (tout est embarqué dans l'exe)
+
+### Développement (depuis le code source)
+```bash
+git clone https://github.com/ghislaindoucy/planetdiag.git
+cd planetdiag
+
+# Installe les dépendances
+pip install -r requirements.txt
+
+# Lance l'app
+python main.py
+```
+
+---
+
+## 🔌 Configuration Mistral IA (optionnel)
+
+Veux tu que PlanetDiag génère des audits IA ?
+
+1. **Crée un compte** : https://console.mistral.ai (gratuit)
+2. **Génère une clé API** dans les paramètres
+3. **Colle-la dans PlanetDiag** → onglet Analyse → panneau IA
+4. **Teste** → clic sur "Tester la clé"
+5. **C'est bon!** Le prochain diagnostic lancera auto l'IA
+
+👉 **Lire [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) pour plus de détails.**
+
+---
+
+## 📊 Exemple de sortie
+
+### Rapport Technique (automatique)
+```
+PlanetDiag_LAPTOP-ABC_20250603_143056.html
+├── Alertes détectées (RAM à 92%, driver obsolète)
+├── Statistiques système (graphiques)
+├── Historique des erreurs
+└── Recommandations
+```
+
+### Rapport IA Mistral (optionnel)
+```
+PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
+├── Résumé exécutif
+├── Problèmes rangés par priorité
+├── **Commandes exactes à exécuter**
+├── Étapes de réparation détaillées
+├── Optimisations + gains estimés
+└── Recommandations matériel
+```
+
+---
+
+## 🎨 Interface
+
+- **Ghost Protocol theme** — UI sombre, moderne, agréable à l'œil
+- **Mode maximisé au démarrage** — tout le contenu visible
+- **Moniteur temps réel** — CPU/RAM/Disque/Température en direct
+- **Journal d'activité live** — suivi de chaque opération
+- **Rapport HTML interactif** — à partager, à archiver
+
+---
+
+## 📝 Changelog
+
+### v1.2.2 (Juin 2025)
+✨ **Analyse IA Mistral intégrée**
+- Popup d'attente non-bloquant
+- Conversion Markdown → HTML
+- Commandes exactes, pas de conseils vagues
+- Chiffrement clé API (AES-128)
+
+🎨 **UI améliorations**
+- Démarrage en mode maximisé
+- Taille de restauration intelligente
+- Layout corrigé (boutons maintenant visibles!)
+
+🔧 **Corrections**
+- Bugs Mistral fixes
+- Markdown converter réécrit
+- Dépendances correctement déclarées
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.2.2.md)
+
+---
+
+## 🔒 Sécurité
+
+- ✅ **Admin requis** — pas d'accès aux données sensibles sans droits
+- ✅ **Clé API chiffrée** — jamais stockée en clair (AES-128 Fernet)
+- ✅ **Pas de tracking** — tout reste local, aucun envoi de données
+- ✅ **Exe signable** — prêt pour signature de code (optionnel)
+
+---
+
+## 🛠️ Build l'exe toi-même
+
+```batch
+cd D:\Projets\PlanetDIag
+build.bat
+```
+
+L'exe généré : `dist/PlanetDiag.exe`
+- Toutes les dépendances embarquées
+- Aucun Python requis chez l'utilisateur
+- ~80-100 MB
+
+---
+
+## 🤝 Contributeurs
+
+- **Ghislain DOUCY** — Créateur principal
+- **Claude AI** — Intégration IA Mistral, refactoring qualité
+
+---
+
+## 📚 Documentation
+
+| Doc | Contenu |
+|-----|---------|
+| [RELEASE_NOTES_v1.2.2.md](./RELEASE_NOTES_v1.2.2.md) | Notes détaillées release |
+| [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration Mistral (setup, tarif, dépannage) |
+| [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
+| [RELEASE_CHECKLIST_v1.2.2.md](./RELEASE_CHECKLIST_v1.2.2.md) | Checklist build/release |
+
+---
+
+## ❓ FAQ
+
+**Q: L'exe est sûr?**  
+A: Oui. Télécharge depuis les [releases GitHub officielles](https://github.com/ghislaindoucy/planetdiag/releases). Code source open source.
+
+**Q: Ça fonctionne sur Linux/Mac?**  
+A: Non, Windows uniquement. C'est spécifique à Windows (WMI, PowerShell, services Windows).
+
+**Q: J'ai besoin de Internet?**  
+A: Non, sauf si tu veux l'analyse IA Mistral. Le diagnostic seul est 100% offline.
+
+**Q: Où va l'exe en écrivant les rapports?**  
+A: `%USERPROFILE%\Documents\PlanetDiag_Reports` (modifiable dans l'interface).
+
+**Q: Ça mange beaucoup?**  
+A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <200 MB.
+
+---
+
+## 📞 Support
+
+- 🐛 **Bug trouvé?** → [Ouvre une issue GitHub](https://github.com/ghislaindoucy/planetdiag/issues)
+- 💡 **Suggestion?** → [Ouvre une discussion](https://github.com/ghislaindoucy/planetdiag/discussions)
+- 📖 **Question?** → Lis les docs d'abord 😉
+
+---
+
+<div align="center">
+
+**Fait avec ❤️ pour les PC qui souffrent.**
+
+[⬇️ Télécharge v1.2.2](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.2) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
+
+</div>
