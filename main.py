@@ -42,6 +42,21 @@ logger = logging.getLogger(__name__)
 from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action, run_ps_stream
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
+try:
+    from mistral_analyzer import analyze_diagnostic
+    from mistral_report import generate_mistral_report
+    _HAS_MISTRAL = True
+except ImportError:
+    _HAS_MISTRAL = False
+    logger.warning("Modules Mistral non disponibles (requests/cryptography manquants)")
+
+# requests seul suffit pour tester la clé — indépendant de cryptography
+try:
+    import requests as _requests
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
+
 # ── Palette Ghost Protocol ────────────────────────────────────────────────────
 BG        = "#030810"
 SURFACE   = "#0a1628"
@@ -67,10 +82,19 @@ class PlanetDiagApp(tk.Tk):
         self.minsize(700, 580)
         self.configure(bg=BG)
 
+        # Taille de restauration (utilisée quand l'utilisateur rétrécit depuis le mode maximisé)
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h   = min(1280, int(sw * 0.85)), min(900, int(sh * 0.85))
+        self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        # Démarre maximisé : tout le contenu visible dès l'ouverture
+        self.state("zoomed")
+
         self._running    = False
         self._tick_id    = None
         self.report_path = None
         self.json_path   = None
+        self.mistral_report_path = None
 
         # Moniteur temps réel
         self._monitor_paused  = False
@@ -93,6 +117,12 @@ class PlanetDiagApp(tk.Tk):
             value=prefs.get("auto_open_browser", True)
         )
         self.auto_open_var.trace_add("write", self._on_auto_open_changed)
+
+        # Clé API Mistral
+        self.mistral_api_key_var = tk.StringVar(
+            value=prefs.get("mistral_api_key", "")
+        )
+        self.mistral_api_key_var.trace_add("write", self._on_mistral_key_changed)
 
         # Spooler state
         self._spooler_busy     = False
@@ -351,9 +381,81 @@ class PlanetDiagApp(tk.Tk):
 
         ttk.Separator(parent).pack(fill="x", padx=20, pady=(0, 0))
 
-        # Journal d'activité
+        # ── Boutons bas + Mistral (packés AVANT le log pour rester visibles) ───
+        foot = tk.Frame(parent, bg=BG, pady=10)
+        foot.pack(fill="x", padx=28)
+
+        self.btn_open = tk.Button(
+            foot, text="Ouvrir le rapport HTML",
+            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, activeforeground=FG,
+            relief="flat", cursor="hand2", padx=20, pady=10,
+            state="disabled", command=self._open_html,
+        )
+        self.btn_open.pack(side="left")
+
+        self.btn_folder = tk.Button(
+            foot, text="Ouvrir le dossier",
+            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, activeforeground=FG,
+            relief="flat", cursor="hand2", padx=20, pady=10,
+            state="disabled", command=self._open_folder,
+        )
+        self.btn_folder.pack(side="left", padx=(8, 0))
+
+        tk.Checkbutton(
+            foot, text="Ouvrir auto.",
+            variable=self.auto_open_var,
+            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+            activebackground=BG, activeforeground=FG,
+            selectcolor=SURFACE, relief="flat", cursor="hand2",
+        ).pack(side="left", padx=(16, 0))
+
+        self.result_lbl = tk.Label(
+            foot, text="",
+            font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
+        )
+        self.result_lbl.pack(side="right")
+
+        # ── Mistral IA Settings ────────────────────────────────────────────────
+        mistral_panel = tk.Frame(parent, bg=SURFACE, pady=8)
+        mistral_panel.pack(fill="x", padx=28, pady=(0, 6))
+
+        tk.Label(
+            mistral_panel, text="🤖  Analyse IA Mistral (optionnel)",
+            font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
+        ).pack(side="left", padx=(8, 12))
+
+        tk.Label(
+            mistral_panel, text="Clé API :",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+        ).pack(side="left", padx=(0, 6))
+
+        self.mistral_key_entry = tk.Entry(
+            mistral_panel, textvariable=self.mistral_api_key_var,
+            show="•", font=("Consolas", 10), bg=SURFACE2, fg=ACCENT,
+            insertbackground=FG, relief="flat", width=38,
+        )
+        self.mistral_key_entry.pack(side="left", padx=(0, 8))
+
+        self.btn_mistral_test = tk.Button(
+            mistral_panel, text="Tester la clé",
+            font=("Segoe UI", 9), bg=ACCENT, fg=BG,
+            activebackground=PURPLE, relief="flat", cursor="hand2",
+            padx=12, pady=4,
+            command=self._test_mistral_key,
+        )
+        self.btn_mistral_test.pack(side="left", padx=(0, 12))
+
+        tk.Label(
+            mistral_panel,
+            text="Si renseignée, un audit IA sera généré après chaque diagnostic",
+            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+        ).pack(side="left")
+
+        # Journal d'activité (expand=True → prend tout l'espace restant, DOIT être en dernier)
         log_hdr = tk.Frame(parent, bg=BG)
-        log_hdr.pack(fill="x", padx=28, pady=(8, 4))
+        log_hdr.pack(fill="x", padx=28, pady=(4, 4))
         tk.Label(log_hdr, text="Journal d'activité",
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
         tk.Button(
@@ -392,42 +494,6 @@ class PlanetDiagApp(tk.Tk):
         self.log.tag_config("info", foreground=ACCENT)
         self.log.tag_config("dim",  foreground=FG_MUTED)
         self.log.tag_config("time", foreground=PURPLE)
-
-        # Boutons bas
-        foot = tk.Frame(parent, bg=BG, pady=10)
-        foot.pack(fill="x", padx=28)
-
-        self.btn_open = tk.Button(
-            foot, text="Ouvrir le rapport HTML",
-            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
-            activebackground=SURFACE2, activeforeground=FG,
-            relief="flat", cursor="hand2", padx=20, pady=10,
-            state="disabled", command=self._open_html,
-        )
-        self.btn_open.pack(side="left")
-
-        self.btn_folder = tk.Button(
-            foot, text="Ouvrir le dossier",
-            font=("Segoe UI", 11), bg=SURFACE, fg=FG,
-            activebackground=SURFACE2, activeforeground=FG,
-            relief="flat", cursor="hand2", padx=20, pady=10,
-            state="disabled", command=self._open_folder,
-        )
-        self.btn_folder.pack(side="left", padx=(8, 0))
-
-        tk.Checkbutton(
-            foot, text="Ouvrir auto.",
-            variable=self.auto_open_var,
-            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
-            activebackground=BG, activeforeground=FG,
-            selectcolor=SURFACE, relief="flat", cursor="hand2",
-        ).pack(side="left", padx=(16, 0))
-
-        self.result_lbl = tk.Label(
-            foot, text="",
-            font=("Segoe UI", 10), bg=BG, fg=GREEN, anchor="e",
-        )
-        self.result_lbl.pack(side="right")
 
     # ── Onglet Dépannage ──────────────────────────────────────────────────────
     def _build_troubleshoot_tab(self, parent: tk.Frame):
@@ -2190,6 +2256,22 @@ class PlanetDiagApp(tk.Tk):
             elapsed          = data["meta"]["elapsed_sec"]
             failed           = data["meta"].get("collectors_fail", [])
 
+            # Vérifier si une clé API Mistral est fournie pour l'analyse IA
+            mistral_api_key = self.mistral_api_key_var.get().strip()
+            if mistral_api_key and _HAS_MISTRAL:
+                # Lancer l'analyse Mistral en thread séparé.
+                # Copie superficielle suffisante : le worker ne fait que LIRE les dicts
+                # imbriqués, et le thread principal ne les mute pas après ce point
+                # (le `del data` plus bas ne retire que la liaison locale).
+                diagnostic_data_copy = data.copy()
+                machine_name = data["meta"].get("machine", "UNKNOWN")
+                thread = threading.Thread(
+                    target=self._run_mistral_analysis,
+                    args=(diagnostic_data_copy, mistral_api_key, machine_name),
+                    daemon=True,
+                )
+                thread.start()
+
             del data, gen, orch
             gc.collect()
 
@@ -2240,6 +2322,174 @@ class PlanetDiagApp(tk.Tk):
         prefs = load_prefs()
         prefs["auto_open_browser"] = self.auto_open_var.get()
         save_prefs(prefs)
+
+    def _on_mistral_key_changed(self, *_):
+        prefs = load_prefs()
+        prefs["mistral_api_key"] = self.mistral_api_key_var.get()
+        save_prefs(prefs)
+
+    def _test_mistral_key(self):
+        """Teste la validité de la clé API Mistral (appel réseau déporté hors du thread UI)."""
+        if not _HAS_REQUESTS:
+            messagebox.showerror(
+                "Dépendance manquante",
+                "La librairie 'requests' est requise pour tester la clé.\n\n"
+                "Exécutez dans un terminal :\n"
+                "  py -m pip install requests cryptography",
+            )
+            return
+
+        api_key = self.mistral_api_key_var.get().strip()
+        if not api_key:
+            messagebox.showwarning("Attention", "Veuillez entrer une clé API Mistral")
+            return
+
+        # On désactive le bouton pendant le test pour éviter les double-clics.
+        self.btn_mistral_test.configure(state="disabled", text="Test en cours…")
+        threading.Thread(
+            target=self._test_mistral_key_worker, args=(api_key,), daemon=True
+        ).start()
+
+    def _test_mistral_key_worker(self, api_key: str):
+        """Effectue l'appel de test dans un thread ; restitue le résultat via self.after."""
+        def _finish(kind: str, message: str):
+            def _show():
+                self.btn_mistral_test.configure(state="normal", text="Tester la clé")
+                if kind == "info":
+                    messagebox.showinfo("Succès", message)
+                elif kind == "warn":
+                    messagebox.showwarning("Attention", message)
+                else:
+                    messagebox.showerror("Erreur", message)
+            self.after(0, _show)
+
+        try:
+            response = _requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                json={
+                    "model": "mistral-large-latest",
+                    "messages": [{"role": "user", "content": "Bonjour"}],
+                    "max_tokens": 10,
+                },
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10,
+            )
+
+            if response.status_code == 200:
+                _finish("info", "✅  Clé API Mistral valide!")
+            elif response.status_code == 401:
+                _finish("error", "❌  Clé API invalide")
+            else:
+                _finish("error", f"Erreur {response.status_code}: {response.text[:200]}")
+
+        except _requests.exceptions.Timeout:
+            _finish("error", "Timeout - Impossible de contacter Mistral")
+        except _requests.exceptions.ConnectionError:
+            _finish("error", "Erreur de connexion")
+        except Exception as e:
+            _finish("error", f"Erreur: {e}")
+
+    # ── Popup d'attente Mistral ───────────────────────────────────────────────
+    def _open_mistral_waiting_popup(self):
+        """Ouvre une fenêtre non bloquante indiquant que l'analyse Mistral est en cours."""
+        popup = tk.Toplevel(self)
+        popup.title("Analyse Mistral IA")
+        popup.configure(bg=SURFACE)
+        popup.resizable(False, False)
+        popup.grab_set()   # garde le focus mais ne bloque pas le thread principal
+
+        # Centrer sur la fenêtre principale
+        self.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - 460) // 2
+        py = self.winfo_y() + (self.winfo_height() - 180) // 2
+        popup.geometry(f"460x180+{px}+{py}")
+
+        # Empêcher la fermeture manuelle pendant l'analyse
+        popup.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        tk.Label(
+            popup, text="🤖  Analyse Mistral IA en cours…",
+            font=("Segoe UI", 13, "bold"), bg=SURFACE, fg=ACCENT,
+        ).pack(pady=(24, 8))
+
+        tk.Label(
+            popup,
+            text="Les données sont transmises à Mistral pour un audit complet.\n"
+                 "La génération du rapport peut prendre plusieurs minutes.\n"
+                 "Merci de patienter, la fenêtre se fermera automatiquement.",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+            justify="center",
+        ).pack(pady=(0, 20))
+
+        self._mistral_popup = popup
+
+    def _close_mistral_waiting_popup(self):
+        """Ferme la popup d'attente si elle est ouverte."""
+        popup = getattr(self, "_mistral_popup", None)
+        if popup and popup.winfo_exists():
+            popup.grab_release()
+            popup.destroy()
+        self._mistral_popup = None
+
+    def _run_mistral_analysis(self, diagnostic_data: dict, api_key: str, machine_name: str):
+        """Lance l'analyse Mistral en thread séparé (ne bloque pas l'UI)."""
+        # Ouvrir la popup d'attente depuis le thread UI
+        self.after(0, self._open_mistral_waiting_popup)
+        try:
+            self.after(0, lambda: self._log("🤖  Analyse Mistral IA en cours…", "info"))
+
+            # Appeler Mistral
+            progress_msg = lambda m: self.after(0, lambda msg=m: self._log(f"   {msg}", "dim"))
+            analysis_text = analyze_diagnostic(diagnostic_data, api_key, progress_callback=progress_msg)
+
+            if not analysis_text:
+                self.after(0, self._close_mistral_waiting_popup)
+                self.after(0, lambda: self._log("⚠ Analyse Mistral vide", "warn"))
+                return
+
+            # Générer le rapport HTML Mistral
+            mistral_html_path = generate_mistral_report(
+                analysis_text,
+                machine_name,
+                self._out_dir,
+            )
+
+            self.mistral_report_path = mistral_html_path
+
+            # Fermer la popup puis afficher le succès
+            self.after(0, self._close_mistral_waiting_popup)
+            self.after(0, lambda: self._log(f"✅  Rapport Mistral : {mistral_html_path}", "ok"))
+
+            # Ouvrir automatiquement le rapport Mistral
+            if self.auto_open_var.get():
+                self.after(600, lambda: self._open_mistral_html(mistral_html_path))
+
+        except ValueError as e:
+            # Clé API invalide
+            self.after(0, self._close_mistral_waiting_popup)
+            self.after(0, lambda: self._log(f"❌  Mistral: {str(e)}", "err"))
+            self.after(0, lambda: messagebox.showerror("Erreur Mistral", str(e)))
+
+        except RuntimeError as e:
+            # Erreur réseau ou timeout
+            self.after(0, self._close_mistral_waiting_popup)
+            self.after(0, lambda: self._log(f"⚠ Mistral: {str(e)}", "warn"))
+            self.after(0, lambda: messagebox.showwarning("Avertissement", f"Analyse Mistral non disponible:\n{str(e)}"))
+
+        except Exception as e:
+            logger.exception("Erreur lors de l'analyse Mistral")
+            self.after(0, self._close_mistral_waiting_popup)
+            self.after(0, lambda: self._log(f"❌  Erreur Mistral: {str(e)}", "err"))
+
+    def _open_mistral_html(self, path: Path):
+        """Ouvre le rapport Mistral dans le navigateur."""
+        try:
+            os.startfile(str(path.resolve()))
+        except OSError as e:
+            logger.warning(f"Impossible d'ouvrir {path}: {e}")
 
     def _open_html(self):
         if not (self.report_path and self.report_path.exists()):

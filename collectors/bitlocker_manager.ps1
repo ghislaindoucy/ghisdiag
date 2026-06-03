@@ -33,7 +33,7 @@ function Get-BitLockerInfo {
                 encryption_method = $v.EncryptionMethod.ToString()
                 encryption_pct    = [int]$v.EncryptionPercentage
                 lock_status       = $v.LockStatus.ToString()
-                recovery_keys     = $keys
+                recovery_keys     = @($keys)
             }
         }
     } catch {
@@ -47,7 +47,7 @@ switch ($Action) {
     "list" {
         try {
             $volumes = Get-BitLockerInfo
-            [PSCustomObject]@{ success = $true; volumes = $volumes } | ConvertTo-Json -Depth 4
+            [PSCustomObject]@{ success = $true; volumes = @($volumes) } | ConvertTo-Json -Depth 4
         } catch {
             [PSCustomObject]@{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
         }
@@ -98,7 +98,7 @@ switch ($Action) {
                 $lines += "BitLocker n'est peut-etre pas active ou les volumes n'ont pas de cle de recuperation."
             }
 
-            [System.IO.File]::WriteAllLines($FilePath, $lines, [System.Text.Encoding]::UTF8)
+            [System.IO.File]::WriteAllLines($FilePath, $lines, [System.Text.UTF8Encoding]::new($false))
 
             [PSCustomObject]@{
                 success       = $true
