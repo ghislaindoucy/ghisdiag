@@ -51,6 +51,60 @@ function Get-EventLog-Safe {
     }
 }
 
+# Fonction helper : convertit le niveau numerique WinEvent en libelle texte
+# (switch-as-expression invalide en PS5.1 dans une valeur de hashtable)
+function Get-LevelLabel {
+    param([int]$Level)
+    if ($Level -eq 2) { return "Error" }
+    elseif ($Level -eq 3) { return "Warning" }
+    elseif ($Level -eq 1) { return "Critical" }
+    else { return "Info" }
+}
+
+# Fonction helper : tronque un message a N caracteres apres nettoyage des sauts de ligne
+function Trim-Message {
+    param([string]$Msg, [int]$Max = 300)
+    $clean = $Msg -replace '\r?\n', ' '
+    if ($clean.Length -gt $Max) { return $clean.Substring(0, $Max) }
+    return $clean
+}
+
+# Fonction helper generique : evenements d'un provider / liste d'IDs sur N jours.
+# Utilisee pour les journaux de fiabilite (materiel, disque, NTFS, services).
+function Get-ProviderEvents {
+    param(
+        [string]$LogName,
+        [string]$Provider = $null,
+        [int[]]$Ids = $null,
+        [int]$Days = 14,
+        [int]$Max = 25,
+        [int]$MsgLen = 300
+    )
+    try {
+        $filter = @{ LogName = $LogName; StartTime = (Get-Date).AddDays(-$Days) }
+        if ($Provider) { $filter['ProviderName'] = $Provider }
+        if ($Ids)      { $filter['Id'] = $Ids }
+        $evts = Get-WinEvent -FilterHashtable $filter -MaxEvents $Max -ErrorAction Stop
+        if (-not $evts) { return @() }
+        @($evts | ForEach-Object {
+            @{
+                time_created = [string]$_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
+                event_id     = [int]$_.Id
+                level        = Get-LevelLabel $_.Level
+                source       = [string]$_.ProviderName
+                message      = Trim-Message $_.Message $MsgLen
+            }
+        })
+    } catch {
+        # Journal vide OU provider absent sur cette machine = pas une vraie erreur.
+        $msg = $_.Exception.Message
+        if ($msg -notmatch "No events were found|Aucun.*nement|could not be found|introuvable") {
+            $script:errors += "[$Provider] $msg"
+        }
+        return @()
+    }
+}
+
 # ── Journaux principaux ──────────────────────────────────────────────────────
 $systemEvents = Get-EventLog-Safe "System"      @(1, 2)
 $appEvents    = Get-EventLog-Safe "Application" @(1, 2)
@@ -165,11 +219,16 @@ $diagPerfEvents = Safe-Get {
             $appName = $evtData["ProcessName"]
             if (-not $appName) { $appName = $evtData["FileName"] }
             if (-not $appName) { $appName = $evtData["AppName"] }
-            # Durée du ralentissement
-            $dKey = if ($evtData["BootTsTime"]) { "BootTsTime" }
+            # Durée du ralentissement. Pour le boot (ID 100) on privilegie
+            # MainPathBootTime (temps jusqu'au bureau utilisable) : c'est la mesure
+            # qui reflete la lenteur reellement ressentie, exploitee par le garde-fou
+            # cote rapport pour ne pas alerter sur un demarrage normal.
+            $dKey = if ($evtData["MainPathBootTime"]) { "MainPathBootTime" }
+                    elseif ($evtData["BootTime"]) { "BootTime" }
                     elseif ($evtData["ShutdownDuration"]) { "ShutdownDuration" }
                     elseif ($evtData["StandbyDuration"]) { "StandbyDuration" }
                     elseif ($evtData["Duration"]) { "Duration" }
+                    elseif ($evtData["BootTsTime"]) { "BootTsTime" }
                     else { $null }
             if ($dKey) { try { $durationMs = [int]$evtData[$dKey] } catch {} }
         } catch {}
@@ -179,30 +238,13 @@ $diagPerfEvents = Safe-Get {
             event_id     = $evId
             category     = [string]$cat
             description  = [string]$desc
+            level        = Get-LevelLabel $_.Level
             app_name     = if ($appName) { [string]$appName } else { $null }
             duration_ms  = $durationMs
             message      = [string]$msg.Substring(0, [Math]::Min(400, $msg.Length))
         }
     })
 } "DiagPerf" @()
-
-# Fonction helper : convertit le niveau numérique WinEvent en libellé texte
-# (switch-as-expression invalide en PS5.1 dans une valeur de hashtable)
-function Get-LevelLabel {
-    param([int]$Level)
-    if ($Level -eq 2) { return "Error" }
-    elseif ($Level -eq 3) { return "Warning" }
-    elseif ($Level -eq 1) { return "Critical" }
-    else { return "Info" }
-}
-
-# Fonction helper : tronque un message à N caractères après nettoyage des sauts de ligne
-function Trim-Message {
-    param([string]$Msg, [int]$Max = 300)
-    $clean = $Msg -replace '\r?\n', ' '
-    if ($clean.Length -gt $Max) { return $clean.Substring(0, $Max) }
-    return $clean
-}
 
 # ── Stratégie de groupe – GPO (lenteur ouverture de session réseau) ───────────
 $gpoEvents = Safe-Get {
@@ -291,6 +333,70 @@ $setupEvents = Safe-Get {
         }
     })
 } "Setup" @()
+
+# ── Plantages & redemarrages inattendus (BSOD / crash / coupure) ─────────────
+# Fenetre 14 jours : un plantage de la semaine passee doit rester visible.
+# ID 41 = redemarrage sans arret propre (Kernel-Power), 1001 = BugCheck (BSOD),
+# 6008 = arret systeme precedent inattendu.
+$crashEvents = Safe-Get {
+    $evts = Get-WinEvent -FilterHashtable @{
+        LogName   = 'System'
+        Id        = @(41, 1001, 6008)
+        StartTime = (Get-Date).AddDays(-14)
+    } -MaxEvents 30 -ErrorAction Stop
+    if (-not $evts) { return @() }
+    @($evts | ForEach-Object {
+        $evId = [int]$_.Id
+        $kind = if ($evId -eq 41) { "redemarrage-inattendu" }
+                elseif ($evId -eq 1001) { "bugcheck-bsod" }
+                elseif ($evId -eq 6008) { "arret-inattendu" }
+                else { "crash" }
+        # Code BugCheck (BSOD) : depuis les donnees XML pour l'ID 41 (0 = simple
+        # coupure, pas un crash), depuis le message pour l'ID 1001.
+        $bugcheck = $null
+        try {
+            $xmlDoc = [xml]$_.ToXml()
+            $data   = @{}
+            $xmlDoc.Event.EventData.Data | ForEach-Object { if ($_.Name) { $data[$_.Name] = $_.'#text' } }
+            if ($evId -eq 41 -and $data["BugcheckCode"]) {
+                $bc = 0
+                if ([int]::TryParse([string]$data["BugcheckCode"], [ref]$bc) -and $bc -ne 0) {
+                    $bugcheck = ('0x{0:X8}' -f $bc)
+                }
+            }
+        } catch {}
+        if (-not $bugcheck -and $evId -eq 1001) {
+            $mm = [regex]::Match([string]$_.Message, '0x[0-9A-Fa-f]{8}')
+            if ($mm.Success) { $bugcheck = $mm.Value }
+        }
+        @{
+            time_created  = [string]$_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
+            event_id      = $evId
+            kind          = [string]$kind
+            level         = Get-LevelLabel $_.Level
+            bugcheck_code = $bugcheck
+            message       = Trim-Message $_.Message 350
+        }
+    })
+} "Crash" @()
+
+# ── Erreurs materielles WHEA (CPU / RAM / PCIe : corrigees ou non) ───────────
+$wheaEvents = Get-ProviderEvents 'System' 'Microsoft-Windows-WHEA-Logger' $null 30 20 300
+
+# ── Erreurs disque (I/O, secteurs defectueux, timeouts controleur) ───────────
+$diskEvents = Get-ProviderEvents 'System' 'disk' @(7, 11, 51, 153) 14 20 250
+
+# ── Corruption du systeme de fichiers NTFS ───────────────────────────────────
+$ntfsEvents = Get-ProviderEvents 'System' 'Microsoft-Windows-Ntfs' @(55, 57, 98, 137) 14 20 250
+
+# ── Services en echec (crash, timeout, demarrage impossible) ─────────────────
+$scmEvents = Get-ProviderEvents 'System' 'Service Control Manager' @(7000, 7001, 7009, 7011, 7022, 7023, 7024, 7031, 7034) 7 30 250
+
+$result["crash_events"]   = $crashEvents
+$result["whea_events"]    = $wheaEvents
+$result["disk_events"]    = $diskEvents
+$result["ntfs_events"]    = $ntfsEvents
+$result["scm_events"]     = $scmEvents
 
 $result["diag_perf"]      = $diagPerfEvents
 $result["gpo_events"]     = $gpoEvents

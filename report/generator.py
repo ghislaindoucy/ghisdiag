@@ -10,9 +10,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.0.2"
+VERSION = "1.3.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "PlanetDiag_Reports"
+
+# Garde-fou faux positif "démarrage lent" : l'événement Diagnostics-Performance
+# ID 100 est journalisé à CHAQUE démarrage de Windows. On ne le considère "lent"
+# que si la durée mesurée (MainPathBootTime) dépasse ce seuil, pour ne pas signaler
+# un démarrage parfaitement normal comme un problème.
+SLOW_BOOT_MS = 60_000
+# Nombre minimal d'échecs de service avant d'alerter (un échec isolé est banal).
+SCM_FAIL_MIN = 3
 
 
 def get_css() -> str:
@@ -34,8 +42,11 @@ def _ensure_list(val) -> list:
     if isinstance(val, list):
         return val
     if isinstance(val, dict):
-        # PowerShell sérialise parfois un tableau à 1 objet sans les crochets
-        return [val]
+        # PowerShell sérialise un tableau à 1 objet sans les crochets ({"id":..}),
+        # MAIS une collection VIDE retournée par une fonction PS devient {} : il faut
+        # la traiter comme une liste vide, sinon on compte un élément fantôme
+        # (faux positif "1 événement" alors qu'il n'y en a aucun).
+        return [val] if val else []
     return []
 
 
@@ -76,6 +87,21 @@ def _esc(s: Any) -> str:
     if s is None:
         return ""
     return html.escape(str(s), quote=True)
+
+
+# Updaters tiers dont l'échec de service est un bruit chronique connu et inoffensif
+# (ils sont volontairement bloqués/désactivés sur beaucoup de postes). On ne veut pas
+# qu'ils déclenchent une alerte "services en échec".
+_BENIGN_SERVICE_NOISE = (
+    "google update", "gupdate", "edgeupdate", "microsoft edge update",
+    "brave update", "googleupdater",
+)
+
+
+def _is_benign_service_noise(message) -> bool:
+    """True si le message d'échec de service provient d'un updater tiers inoffensif."""
+    m = (message or "").lower()
+    return any(token in m for token in _BENIGN_SERVICE_NOISE)
 
 
 # Règles d'alerte scalaires : (extracteur, condition, level, title, description)
@@ -183,6 +209,7 @@ class ReportGenerator:
         self._analyse_antivirus(d)
         self._analyse_firewall(d)
         self._analyse_events(d)
+        self._analyse_reliability(d)
         self._analyse_smart(d)
 
     def _analyse_disks(self, d: dict):
@@ -280,10 +307,19 @@ class ReportGenerator:
 
     def _analyse_events(self, d: dict):
         diag_perf = _ensure_dicts(_v(d, "events", "diag_perf", default=[]))
-        boot_slow = [e for e in diag_perf if e.get("category") == "boot"]
+        # Garde-fou faux positif : l'ID 100 (category "boot") est émis à CHAQUE
+        # démarrage. On ne le compte comme lent que si la durée dépasse le seuil.
+        boot_slow = [
+            e for e in diag_perf
+            if e.get("category") == "boot"
+            and isinstance(e.get("duration_ms"), (int, float))
+            and e["duration_ms"] >= SLOW_BOOT_MS
+        ]
         if boot_slow:
-            self.alerts.append(("warn", "Démarrage Windows lent détecté",
-                                 f"{len(boot_slow)} événement(s) de ralentissement au démarrage sur 30 jours"))
+            worst = max(e["duration_ms"] for e in boot_slow)
+            self.alerts.append(("warn", "Démarrage Windows lent",
+                                 f"{len(boot_slow)} démarrage(s) > {SLOW_BOOT_MS // 1000}s sur 30 jours "
+                                 f"(le plus lent : {round(worst / 1000)}s)"))
 
         gpo_events = _ensure_dicts(_v(d, "events", "gpo_events", default=[]))
         gpo_errors = [e for e in gpo_events if e.get("level") == "Error"]
@@ -296,6 +332,64 @@ class ReportGenerator:
         if profile_errors:
             self.alerts.append(("warn", "Erreurs de chargement de profil utilisateur",
                                  f"{len(profile_errors)} erreur(s) de profil détectée(s)"))
+
+    def _analyse_reliability(self, d: dict):
+        """Alertes fiabilité matérielle/système : BSOD, crash, WHEA, disque, NTFS, services.
+        Ces journaux (events.* sur 7-30j) sont les plus parlants pour un dépannage L3."""
+        ev = _v(d, "events", default={})
+        if not isinstance(ev, dict):
+            return
+
+        crash = _ensure_dicts(ev.get("crash_events"))
+        bsod  = [e for e in crash if e.get("kind") == "bugcheck-bsod"]
+        if bsod:
+            codes = ", ".join(sorted({e["bugcheck_code"] for e in bsod if e.get("bugcheck_code")}))
+            detail = f" — BugCheck : {codes}" if codes else ""
+            self.alerts.append(("crit", "Écran bleu (BSOD) détecté",
+                                 f"{len(bsod)} plantage(s) sur 14 jours{detail}"))
+
+        unexpected = [e for e in crash if e.get("kind") in ("redemarrage-inattendu", "arret-inattendu")]
+        if unexpected:
+            self.alerts.append(("warn", "Redémarrage(s) inattendu(s)",
+                                 f"{len(unexpected)} arrêt/redémarrage non propre(s) sur 14 jours "
+                                 f"(coupure secteur, gel ou crash)"))
+
+        whea     = _ensure_dicts(ev.get("whea_events"))
+        whea_err = [e for e in whea if e.get("level") in ("Error", "Critical")]
+        if whea_err:
+            self.alerts.append(("crit", "Erreur matérielle (WHEA)",
+                                 f"{len(whea_err)} erreur(s) matérielle(s) non corrigée(s) — "
+                                 f"CPU/RAM/PCIe à contrôler"))
+        elif whea:
+            self.alerts.append(("warn", "Erreurs matérielles corrigées (WHEA)",
+                                 f"{len(whea)} erreur(s) matérielle(s) corrigée(s) automatiquement — à surveiller"))
+
+        disk = _ensure_dicts(ev.get("disk_events"))
+        if disk:
+            self.alerts.append(("crit", "Erreurs disque (E/S)",
+                                 f"{len(disk)} erreur(s) d'entrée/sortie disque sur 14 jours — "
+                                 f"sauvegardez et vérifiez le disque (chkdsk + SMART)"))
+
+        ntfs = _ensure_dicts(ev.get("ntfs_events"))
+        if ntfs:
+            self.alerts.append(("crit", "Corruption système de fichiers (NTFS)",
+                                 f"{len(ntfs)} erreur(s) NTFS sur 14 jours — lancez chkdsk /f"))
+
+        # Services en échec — garde-fou bruit : un updater tiers (Google/Edge) qui
+        # échoue en boucle est un bruit chronique inoffensif, pas une panne système.
+        # On filtre ces sources connues puis on déduplique les échecs récurrents
+        # identiques (13× le même échec = 1 service à traiter, pas 13 problèmes).
+        scm     = _ensure_dicts(ev.get("scm_events"))
+        scm_err = [
+            e for e in scm
+            if e.get("level") in ("Error", "Critical")
+            and not _is_benign_service_noise(e.get("message"))
+        ]
+        distinct = {(e.get("event_id"), (e.get("message") or "")[:80]) for e in scm_err}
+        if len(distinct) >= SCM_FAIL_MIN:
+            self.alerts.append(("warn", "Services en échec",
+                                 f"{len(distinct)} service(s) distinct(s) en échec sur 7 jours "
+                                 f"({len(scm_err)} occurrence(s) hors updaters tiers)"))
 
     # ── HTML ──────────────────────────────────────────────────────────────────
     def _build_html(self) -> str:
@@ -751,8 +845,21 @@ class ReportGenerator:
         net_prof     = _ensure_dicts(d.get("net_profile") or [])
         wlan_events  = _ensure_dicts(d.get("wlan_events") or [])
         setup_events = _ensure_dicts(d.get("setup_events") or [])
+        crash_events = _ensure_dicts(d.get("crash_events") or [])
+        whea_events  = _ensure_dicts(d.get("whea_events") or [])
+        disk_events  = _ensure_dicts(d.get("disk_events") or [])
+        ntfs_events  = _ensure_dicts(d.get("ntfs_events") or [])
+        scm_events   = _ensure_dicts(d.get("scm_events") or [])
 
-        boot_slow = [e for e in diag_perf if e.get("category") in ("boot", "boot-app")]
+        # boot-app (ID 101) = une appli a retardé le boot, c'est déjà un avertissement
+        # Windows. boot (ID 100) n'est "lent" que si la durée dépasse le seuil (garde-fou).
+        boot_slow = [
+            e for e in diag_perf
+            if e.get("category") == "boot-app"
+            or (e.get("category") == "boot"
+                and isinstance(e.get("duration_ms"), (int, float))
+                and e["duration_ms"] >= SLOW_BOOT_MS)
+        ]
 
         summary = (f"{total} erreur(s)/critique(s) en 72h — "
                    f"{sys_ev.get('count',0)} système, {app_ev.get('count',0)} application — "
@@ -810,6 +917,20 @@ class ReportGenerator:
                 for e in events
             )
 
+        def crash_rows(events):
+            rows = []
+            for e in events:
+                kind = e.get("kind", "")
+                bc   = e.get("bugcheck_code")
+                bc_html = f" <span class='badge badge-crit'>{_esc(bc)}</span>" if bc else ""
+                rows.append(
+                    f"<tr><td class='mono'>{_esc(e.get('time_created',''))}</td>"
+                    f"<td class='crit'>{_esc(kind)}{bc_html}</td>"
+                    f"<td>{_esc(e.get('event_id',''))}</td>"
+                    f"<td style='font-size:11px'>{_esc((e.get('message') or '')[:220])}</td></tr>"
+                )
+            return "".join(rows)
+
         source_rows = "".join(
             f"<tr><td>{_esc(s.get('source',''))}</td><td>{_esc(s.get('count',''))}</td></tr>"
             for s in sources
@@ -827,12 +948,29 @@ class ReportGenerator:
             gpo_banner = (f'<div class="alert-box alert-warn"><span class="label">⚠ Erreurs Stratégie de groupe (GPO)</span>'
                           f'<p>{len(gpo_errors)} erreur(s) GPO — cause fréquente de lenteur d\'ouverture de session sur réseau d\'entreprise.</p></div>')
 
+        # Bannière fiabilité matérielle / crash (incidents les plus graves)
+        crash_banner = ""
+        bsod_ev = [e for e in crash_events if e.get("kind") == "bugcheck-bsod"]
+        whea_err = [e for e in whea_events if e.get("level") in ("Error", "Critical")]
+        if bsod_ev or whea_err or disk_events or ntfs_events:
+            parts = []
+            if bsod_ev:     parts.append(f"{len(bsod_ev)} écran(s) bleu(s) (BSOD)")
+            if whea_err:    parts.append(f"{len(whea_err)} erreur(s) matérielle(s) WHEA")
+            if disk_events: parts.append(f"{len(disk_events)} erreur(s) disque")
+            if ntfs_events: parts.append(f"{len(ntfs_events)} erreur(s) NTFS")
+            crash_banner = (f'<div class="alert-box alert-crit"><span class="label">🔴 Fiabilité système — incidents matériels / crash</span>'
+                            f'<p>{" · ".join(parts)} sur les 14 derniers jours. Voir le détail ci-dessous.</p></div>')
+
         return f"""<section id="events" class="section">
 <h2 class="section-title">📋 Événements Windows</h2>
 <div class="section-summary">{summary}</div>
+{crash_banner}
 {boot_banner}
 {gpo_banner}
 <div class="cards">
+  <div class="card card-{'crit' if crash_events else 'ok'}">
+    <div class="card-title">Plantages / crash (14j)</div>
+    <div class="card-value {'crit' if crash_events else 'ok'}">{len(crash_events)}</div></div>
   <div class="card card-{'crit' if total>=50 else 'warn' if total>=20 else 'ok'}">
     <div class="card-title">Erreurs système 72h</div>
     <div class="card-value {'crit' if total>=50 else 'warn' if total>=20 else 'ok'}">{total}</div></div>
@@ -863,6 +1001,41 @@ class ReportGenerator:
 <div class="table-wrap"><table>
 <tr><th>Date/heure</th><th>Description</th><th>ID</th><th>Détail / Application responsable</th></tr>
 {diag_rows(diag_perf) or '<tr><td colspan="4" class="ok">Aucun ralentissement détecté ✅</td></tr>'}
+</table></div></details>
+
+<details{' open' if crash_events else ''}><summary>💥 Plantages & redémarrages inattendus ({len(crash_events)} sur 14j)</summary>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>System</code> — Kernel-Power 41 (redémarrage), BugCheck 1001 (BSOD), 6008 (arrêt inattendu)</p>
+<div class="table-wrap"><table>
+<tr><th>Date/heure</th><th>Type / BugCheck</th><th>ID</th><th>Message</th></tr>
+{crash_rows(crash_events) or '<tr><td colspan="4" class="ok">Aucun plantage ni redémarrage inattendu ✅</td></tr>'}
+</table></div></details>
+
+<details><summary>🔌 Erreurs matérielles WHEA ({len(whea_events)} sur 30j)</summary>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-WHEA-Logger</code> — erreurs CPU/RAM/PCIe (corrigées = Warning, non corrigées = Error)</p>
+<div class="table-wrap"><table>
+<tr><th>Date/heure</th><th>Niveau</th><th>ID</th><th>Message</th></tr>
+{simple_rows(whea_events) or '<tr><td colspan="4" class="ok">Aucune erreur matérielle ✅</td></tr>'}
+</table></div></details>
+
+<details><summary>💽 Erreurs disque ({len(disk_events)} sur 14j)</summary>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>disk</code> — IDs 7/11/51/153 (erreurs E/S, secteurs défectueux, timeouts contrôleur)</p>
+<div class="table-wrap"><table>
+<tr><th>Date/heure</th><th>Niveau</th><th>ID</th><th>Message</th></tr>
+{simple_rows(disk_events) or '<tr><td colspan="4" class="ok">Aucune erreur disque ✅</td></tr>'}
+</table></div></details>
+
+<details><summary>🗂 Erreurs NTFS ({len(ntfs_events)} sur 14j)</summary>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-Ntfs</code> — IDs 55/57/98/137 (corruption du système de fichiers)</p>
+<div class="table-wrap"><table>
+<tr><th>Date/heure</th><th>Niveau</th><th>ID</th><th>Message</th></tr>
+{simple_rows(ntfs_events) or '<tr><td colspan="4" class="ok">Aucune erreur NTFS ✅</td></tr>'}
+</table></div></details>
+
+<details><summary>⚙ Services en échec ({len(scm_events)} sur 7j)</summary>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Service Control Manager</code> — services qui ne démarrent pas, crashent ou dépassent le timeout</p>
+<div class="table-wrap"><table>
+<tr><th>Date/heure</th><th>Niveau</th><th>ID</th><th>Message</th></tr>
+{simple_rows(scm_events) or '<tr><td colspan="4" class="ok">Aucun service en échec ✅</td></tr>'}
 </table></div></details>
 
 <details><summary>🏢 Stratégie de groupe GPO ({len(gpo_events)} événement(s), {len(gpo_errors)} erreur(s) sur 7j)</summary>

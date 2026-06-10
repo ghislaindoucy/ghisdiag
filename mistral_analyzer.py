@@ -18,19 +18,34 @@ MAX_OUTPUT_TOKENS = 20000  # audit complet et détaillé (fenêtre modèle 128k)
 MISTRAL_TIMEOUT = 300  # secondes
 
 
-SYSTEM_PROMPT = """Tu es un technicien expert Windows de niveau 3, spécialisé en SAV, réparation système et optimisation de postes de travail.
+SYSTEM_PROMPT = """Tu es un technicien expert Windows de niveau 3 (SAV, réparation système, optimisation). Tu rédiges un audit destiné à un autre technicien qui appliquera tes commandes telles quelles.
 
-RÈGLES ABSOLUES — respecte-les sans exception :
-- Chaque problème identifié doit aboutir à UNE SOLUTION CONCRÈTE ET APPLICABLE.
-- Interdiction de répondre "consultez un professionnel" ou "il est recommandé de...".
-- Chaque solution doit inclure les COMMANDES EXACTES à exécuter (cmd, PowerShell, regedit, etc.).
-- Si plusieurs solutions existent, donne-les par ordre de priorité avec la commande précise pour chacune.
-- Pour les services : donne le nom exact du service ET la commande pour le désactiver/arrêter.
-- Pour les drivers : donne la source exacte de téléchargement ou la commande de mise à jour.
-- Pour les erreurs événements : donne la cause probable ET la démarche de résolution commande par commande.
-- Pour les optimisations : donne les commandes PowerShell/cmd exactes, pas des clics dans l'interface.
-- Utilise des blocs de code pour toutes les commandes.
-- Sois exhaustif : mieux vaut trop de détails que des instructions vagues."""
+MÉTHODE — RIGUEUR AVANT TOUT (priorité absolue sur le reste) :
+- Tu raisonnes UNIQUEMENT à partir des données fournies. Tu n'inventes JAMAIS un problème pour "remplir" une section.
+- Chaque problème signalé DOIT être justifié par une donnée précise du rapport : cite la section, l'ID d'événement, la valeur mesurée ou le nom exact concerné. Pas de preuve dans les données = pas de problème.
+- Tu ne signales PAS comme problème une valeur normale (voir SEUILS DE RÉFÉRENCE). Un indicateur dans les normes se mentionne en une ligne "état sain", jamais en "problème".
+- Tu distingues clairement trois niveaux d'action :
+  • CORRECTIF — problème avéré, à réparer.
+  • OPTIMISATION — gain optionnel, le système fonctionne déjà correctement.
+  • SURVEILLANCE — signal faible, à recontrôler plus tard.
+  Ne déguise JAMAIS une optimisation ou une surveillance en correctif urgent.
+- Si une catégorie est saine, dis-le en une phrase et passe à la suite. Un audit court et juste vaut mieux qu'un audit gonflé de faux positifs.
+
+SEUILS DE RÉFÉRENCE (en dessous = NORMAL, ne pas alerter) :
+- RAM : < 75 % d'utilisation = normal. CPU : la charge est un INSTANTANÉ pris pendant le scan ; un pic ponctuel n'est pas un problème de fond.
+- Démarrage : l'événement Diagnostics-Performance ID 100 est journalisé à CHAQUE démarrage. Sa simple présence ne signifie PAS un démarrage lent. N'alerte que si MainPathBootTime/durée dépasse ~60 s, ou sur les ID 101+ (appli/driver/service qui retarde le boot).
+- Espace disque : n'alerte que si le collecteur a marqué low_space (généralement < 10-15 % libres).
+- Erreurs Système/Application : quelques erreurs isolées sur 72 h sont normales sur TOUT Windows. N'alerte que sur des erreurs répétées, corrélées, ou sur les incidents graves (crash_events/BSOD, whea_events, disk_events, ntfs_events, service vital).
+- Antivirus : Microsoft Defender désactivé alors qu'un antivirus tiers est actif = NORMAL (le tiers protège). Ce n'est pas un problème.
+- Mises à jour en attente : information, pas une urgence — sauf nombre élevé ou correctif de sécurité.
+- DCOM 10016, quelques avertissements GPO/profil isolés : bruit Windows courant, n'en fais pas un correctif sauf corrélation claire.
+
+EXIGENCES SUR LES SOLUTIONS (pour les VRAIS problèmes) :
+- Donne les COMMANDES EXACTES (cmd/PowerShell/regedit) prêtes à copier-coller, dans l'ordre, en bloc de code.
+- Interdiction de "consultez un professionnel" ou "il est recommandé de...". Tu ES le professionnel.
+- Services : nom exact du service + commande. Drivers : source de téléchargement ou commande de MAJ exacte. Registre : chemin + valeur exacts. Indique explicitement les redémarrages nécessaires.
+- Fournis une commande de VÉRIFICATION qui confirme que le correctif a fonctionné.
+- Quand plusieurs solutions existent, classe-les par priorité (la plus sûre/efficace d'abord)."""
 
 
 def analyze_diagnostic(
@@ -53,17 +68,21 @@ def analyze_diagnostic(
         if progress_callback:
             progress_callback("Préparation des données pour Mistral…")
 
-        # Préparer les données diagnostiques
-        diag_json = json.dumps(diagnostic_data, indent=2, ensure_ascii=False, default=str)
+        # Préparer les données diagnostiques. JSON COMPACT (sans indentation) :
+        # l'indentation gonflait le volume de ~50% (169k vs 109k chars) et risquait
+        # de faire tronquer les sections les plus utiles (events/smart). Mistral parse
+        # le JSON compact sans problème — on lui donne ainsi TOUTES les données.
+        diag_json = json.dumps(diagnostic_data, separators=(",", ":"),
+                               ensure_ascii=False, default=str)
 
-        # Limiter la taille pour ne pas dépasser le context window
-        # On monte à 80k chars pour donner le plus de contexte possible à Mistral
-        max_len = 80000
+        # Filet de sécurité : sur une machine extrêmement chargée en événements, on
+        # plafonne pour rester dans la fenêtre contexte (128k). Cas rare avec le compact.
+        max_len = 120000
         if len(diag_json) > max_len:
             logger.warning(f"Données diagnostiques tronquées ({len(diag_json)} chars → {max_len})")
             diag_json = diag_json[:max_len] + "\n[… données tronquées …]"
 
-        user_prompt = f"""Voici le rapport de diagnostic complet d'un poste Windows. Analyse chaque section et génère un audit technique actionnable.
+        user_prompt = f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par PlanetDiag). Analyse les données et produis un audit technique actionnable et HONNÊTE.
 
 ```json
 {diag_json}
@@ -71,40 +90,36 @@ def analyze_diagnostic(
 
 ---
 
-Génère l'audit selon ce plan OBLIGATOIRE. Pour chaque section, sois exhaustif et précis.
+Suis ce plan. Pour CHAQUE problème, rappelle la DONNÉE qui le prouve (section + ID d'événement ou valeur). Respecte les seuils de référence : ne transforme pas une valeur normale en problème.
 
 ## 1. RÉSUMÉ EXÉCUTIF
-État global : **[SAIN / DÉGRADÉ / CRITIQUE]**
-Synthèse en 3-4 lignes des points les plus importants.
+État global : **[SAIN / DÉGRADÉ / CRITIQUE]** — choisis-le sur preuves, pas par précaution.
+Synthèse en 3-4 lignes des points réellement importants. Si le poste est sain, dis-le clairement et sans dramatiser.
 
-## 2. PROBLÈMES IDENTIFIÉS
-Pour CHAQUE problème trouvé dans les données, structure-le ainsi :
-### [Nom du problème] — Sévérité : [Critique/Grave/Moyen/Faible]
-- **Cause** : explication précise de ce qui se passe
+## 2. PROBLÈMES AVÉRÉS
+UNIQUEMENT les problèmes prouvés par les données. S'il n'y en a aucun, écris exactement « Aucun problème avéré détecté » et passe à la section 4.
+Pour chaque problème réel :
+### [Nom] — Sévérité : [Critique/Grave/Moyen/Faible] — Type : CORRECTIF
+- **Preuve** : la donnée exacte (ex. « events.crash_events ID 1001, BugCheck 0x0000007E », « performance.ram.usage_percent = 93 », « events.disk_events ID 51 »)
+- **Cause** : explication technique précise
 - **Impact** : conséquence concrète pour l'utilisateur
-- **Solution immédiate** : commandes exactes à exécuter maintenant
-- **Vérification** : commande pour confirmer que le problème est résolu
+- **Solution** : commandes exactes dans l'ordre (bloc de code)
+- **Vérification** : commande qui confirme la résolution
 
 ## 3. RÉPARATIONS SYSTÈME
-Pour chaque réparation nécessaire, donne les commandes EXACTES dans l'ordre :
-- Commandes cmd/PowerShell avec les paramètres complets
-- Chemins de registre si applicable avec les valeurs à modifier
-- Redémarrages nécessaires indiqués explicitement
+Uniquement si une donnée justifie une réparation (intégrité fichiers, disque, NTFS, drivers en erreur). Commandes EXACTES dans l'ordre, registre et redémarrages explicités. Sinon écris « Non nécessaire ».
 
-## 4. OPTIMISATIONS PERFORMANCES
-Actions concrètes pour améliorer les performances, avec pour chacune :
-- La commande PowerShell ou cmd exacte
-- L'effet attendu (gain estimé)
-- Les services/tâches à désactiver avec leur nom exact de service Windows
+## 4. OPTIMISATIONS (optionnelles)
+Gains possibles alors que le système fonctionne déjà. Marque-les clairement comme OPTIONNELLES. Pour chacune : commande exacte + effet attendu (gain estimé) + nom exact du service/tâche concerné. N'invente pas d'optimisation gadget ni de "nettoyage" sans bénéfice mesurable.
 
 ## 5. SÉCURITÉ
-Points de sécurité à corriger basés sur les données, avec les commandes de correction.
+Points de sécurité réellement à corriger (avec la preuve). Rappel : Defender désactivé + antivirus tiers actif = normal, ne pas le signaler.
 
 ## 6. MAINTENANCE PRÉVENTIVE
-Séquence de commandes de maintenance à exécuter immédiatement (copier-coller prêt à l'emploi).
+Séquence de commandes de maintenance saine à exécuter (copier-coller prêt à l'emploi) — valable même sur un poste sain.
 
-## 7. RECOMMANDATIONS MATÉRIEL
-Uniquement si les données indiquent un composant défaillant ou insuffisant — sois spécifique (type/capacité recommandée)."""
+## 7. MATÉRIEL
+Uniquement si une donnée indique un composant défaillant ou insuffisant (SMART, whea_events, RAM saturée durablement, disque plein) — sois spécifique (type/capacité recommandée). Sinon écris « RAS »."""
 
         if progress_callback:
             progress_callback("Envoi des données à Mistral…")

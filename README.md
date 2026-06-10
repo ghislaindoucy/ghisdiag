@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.3)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.3.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -130,6 +130,23 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ## 📝 Changelog
 
+### v1.3.0 (Juin 2026)
+🆕 **Diagnostic de fiabilité (logs niveau 3)**
+- Détection des **plantages** : écrans bleus (BSOD avec code BugCheck), redémarrages inattendus
+- **Erreurs matérielles WHEA** (CPU/RAM/PCIe), **erreurs disque** (E/S) et **corruption NTFS**
+- **Services en échec** (démarrage/timeout), filtrés du bruit des updaters tiers
+
+🛡️ **Moins de faux positifs**
+- Alerte « démarrage lent » seulement au-delà d'un seuil réel (60 s), plus à chaque boot
+- Correction d'un bug de comptage fantôme (collections vides comptées comme 1 événement)
+
+🤖 **Analyse IA plus précise**
+- Prompt Mistral exigeant une **preuve** par problème + seuils de référence
+- Distingue correctif / optimisation / surveillance, n'invente plus de problèmes
+- Données envoyées en JSON compact (rapport complet, sans troncature)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.3.0.md)
+
 ### v1.2.3 (Juin 2026)
 🆕 **Onglet PC Neuf enrichi**
 - **VLC media player** ajouté aux logiciels installables
@@ -197,10 +214,10 @@ L'exe généré : `dist/PlanetDiag.exe`
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.2.3.md](./RELEASE_NOTES_v1.2.3.md) | Notes détaillées release |
+| [RELEASE_NOTES_v1.3.0.md](./RELEASE_NOTES_v1.3.0.md) | Notes détaillées release |
 | [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration Mistral (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
-| [RELEASE_CHECKLIST_v1.2.3.md](./RELEASE_CHECKLIST_v1.2.3.md) | Checklist build/release |
+| [RELEASE_CHECKLIST_v1.3.0.md](./RELEASE_CHECKLIST_v1.3.0.md) | Checklist build/release |
 
 ---
 
@@ -235,6 +252,6 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.2.3](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.3) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
+[⬇️ Télécharge v1.3.0](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.3.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
 
 </div>

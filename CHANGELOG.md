@@ -4,6 +4,33 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.3.0] — 2026-06-10
+
+### ✨ Nouvelles Fonctionnalités
+
+- **Diagnostic de fiabilité — journaux niveau 3** ajoutés dans `collectors/events.ps1` :
+  - **Plantages & redémarrages inattendus** (`crash_events`) : Kernel-Power ID 41, BugCheck ID 1001 (avec extraction du **code BSOD** `0x…`), arrêt inattendu 6008 — sur 14 jours
+  - **Erreurs matérielles WHEA** (`whea_events`) : journal `Microsoft-Windows-WHEA-Logger`, erreurs CPU/RAM/PCIe corrigées (Warning) ou non corrigées (Error) sur 30 jours
+  - **Erreurs disque** (`disk_events`) : provider `disk` IDs 7/11/51/153 (E/S, secteurs défectueux, timeouts contrôleur) sur 14 jours
+  - **Corruption NTFS** (`ntfs_events`) : `Microsoft-Windows-Ntfs` IDs 55/57/98/137 sur 14 jours
+  - **Services en échec** (`scm_events`) : `Service Control Manager` IDs 7000/7009/7011/7031/7034… sur 7 jours
+- **Analyse fiabilité** (`_analyse_reliability`) : nouvelles alertes BSOD, redémarrage inattendu, WHEA, disque, NTFS, services — avec sévérité graduée
+- **Section HTML enrichie** : bannière fiabilité, carte « Plantages (14j) » et tableaux de détail par journal
+
+### 🛡️ Moins de Faux Positifs
+
+- **Démarrage lent** : l'événement Diagnostics-Performance ID 100 étant émis à *chaque* démarrage, l'alerte ne se déclenche désormais qu'au-delà d'un **seuil réel** (`SLOW_BOOT_MS = 60 s`, via MainPathBootTime) au lieu de se déclencher systématiquement
+- **Bug de comptage fantôme corrigé** : une collection vide retournée par PowerShell se sérialise en `{}`, que `_ensure_list` transformait en `[{}]` (un élément fantôme) → fausses alertes « 1 événement ». Corrigé au point central, pour **tous** les collecteurs
+- **Bruit des updaters tiers** : les échecs de service récurrents de Google/Edge Update sont filtrés et dédupliqués (plus d'alerte « services en échec » trompeuse)
+
+### 🤖 Analyse IA Mistral — Précision
+
+- **Prompt refondu** autour de la rigueur : **preuve obligatoire** (section + ID/valeur) pour chaque problème, **seuils de référence** fournis (RAM < 75 %, boot < 60 s, Defender off + AV tiers actif = normal…)
+- Distinction explicite **CORRECTIF / OPTIMISATION / SURVEILLANCE** ; interdiction d'inventer un problème pour remplir le plan ; section « problèmes » conditionnelle (« Aucun problème avéré détecté »)
+- **Payload JSON compact** (sans indentation) : le rapport complet tient dans la fenêtre contexte sans troncature des sections utiles
+
+---
+
 ## [1.2.3] — 2026-06-10
 
 ### ✨ Nouvelles Fonctionnalités
