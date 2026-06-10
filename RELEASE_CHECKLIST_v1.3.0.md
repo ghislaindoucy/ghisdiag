@@ -82,7 +82,7 @@ et arrête les faux positifs. L'analyse IA diagnostique sur preuves.
 
 ### SHA-256
 ```
-[À remplir après build]
+dbd553da51d9a51bc6a18997ad87140fe4cdf5a5760bd2e23761a5c96b4722d7
 ```
 ```
 

@@ -96,5 +96,5 @@ perf(mistral): payload JSON compact (rapport complet sans troncature)
 ## ⬇️ Téléchargement
 
 - **Exe** : `PlanetDiag.exe`
-- **Sha256** : _(à compléter après build)_
-- **Taille** : _(à compléter après build)_
+- **Sha256** : `dbd553da51d9a51bc6a18997ad87140fe4cdf5a5760bd2e23761a5c96b4722d7`
+- **Taille** : 19.1 MB
