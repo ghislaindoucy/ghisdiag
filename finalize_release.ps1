@@ -3,15 +3,17 @@
 # puis (optionnel) commit et push. A lancer depuis la racine du projet APRES build.bat.
 #
 # Exemples :
-#   .\finalize_release.ps1                  # remplit les fichiers + affiche (pas de commit)
-#   .\finalize_release.ps1 -Commit          # remplit + commit
-#   .\finalize_release.ps1 -Commit -Push    # remplit + commit + push (origin main & master)
+#   .\finalize_release.ps1                          # remplit les fichiers + affiche (pas de commit)
+#   .\finalize_release.ps1 -Commit                  # remplit + commit
+#   .\finalize_release.ps1 -Commit -Push            # remplit + commit + push (origin main & master)
+#   .\finalize_release.ps1 -Commit -Push -Release   # + attache l'exe, met a jour les notes et PUBLIE la release GitHub
 
 param(
     [string]$Version = "1.3.0",
     [string]$ExePath = "dist\PlanetDiag.exe",
     [switch]$Commit,
-    [switch]$Push
+    [switch]$Push,
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,5 +82,30 @@ if ($Commit) {
     }
 } else {
     Write-Host "  (pas de commit -- relance avec -Commit, ou -Commit -Push)"
+}
+Write-Host ""
+
+if ($Release) {
+    $tag = "v$Version"
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Error "GitHub CLI (gh) introuvable -- impossible de publier la release. Installe-le ou publie a la main."
+        exit 1
+    }
+    # La release doit exister (creee en brouillon au prealable)
+    gh release view $tag 1>$null 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Aucune release $tag sur GitHub. Cree d'abord le brouillon : gh release create $tag --draft --title ... --notes-file $notes"
+        exit 1
+    }
+    Write-Host "  Publication de la release GitHub $tag..."
+    # 1) Attache l'exe (--clobber : remplace l'asset si on relance)
+    gh release upload $tag $ExePath --clobber
+    if ($LASTEXITCODE -ne 0) { Write-Error "Echec de l'upload de l'exe"; exit 1 }
+    Write-Host "  Exe attache."
+    # 2) Met a jour les notes (hash desormais rempli) + passe en public
+    gh release edit $tag --notes-file $notes --draft=false
+    if ($LASTEXITCODE -ne 0) { Write-Error "Echec de la publication"; exit 1 }
+    Write-Host "  Release publiee :"
+    gh release view $tag --json url -q .url
 }
 Write-Host ""
