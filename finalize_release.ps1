@@ -1,0 +1,84 @@
+# finalize_release.ps1
+# Calcule le SHA-256 + la taille de l'exe, les injecte dans les notes de release,
+# puis (optionnel) commit et push. A lancer depuis la racine du projet APRES build.bat.
+#
+# Exemples :
+#   .\finalize_release.ps1                  # remplit les fichiers + affiche (pas de commit)
+#   .\finalize_release.ps1 -Commit          # remplit + commit
+#   .\finalize_release.ps1 -Commit -Push    # remplit + commit + push (origin main & master)
+
+param(
+    [string]$Version = "1.3.0",
+    [string]$ExePath = "dist\PlanetDiag.exe",
+    [switch]$Commit,
+    [switch]$Push
+)
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path $ExePath)) {
+    Write-Error "Exe introuvable : $ExePath  ->  lance build.bat d'abord."
+    exit 1
+}
+
+$notes     = "RELEASE_NOTES_v$Version.md"
+$checklist = "RELEASE_CHECKLIST_v$Version.md"
+if (-not (Test-Path $notes)) { Write-Error "Notes introuvables : $notes"; exit 1 }
+
+$file   = Get-Item $ExePath
+$hash   = (Get-FileHash $ExePath -Algorithm SHA256).Hash.ToLower()
+$sizeMB = [math]::Round($file.Length / 1MB, 1)
+
+Write-Host ""
+Write-Host "  Exe    : $($file.FullName)"
+Write-Host "  Taille : $sizeMB MB"
+Write-Host "  SHA256 : $hash"
+
+# Controle de coherence : la version embarquee doit matcher (sinon build pre-bump)
+$fv = $file.VersionInfo.ProductVersion
+if ($fv) {
+    Write-Host "  Version exe (ProductVersion) : $fv"
+    if ($fv -notlike "$Version*") {
+        Write-Warning "L'exe est en $fv, pas $Version. As-tu rebuild APRES le bump de version ?"
+    }
+}
+Write-Host ""
+
+# --- Injection (UTF-8 sans BOM pour ne pas polluer le diff git) ---
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$replSha  = '- **Sha256** : `' + $hash + '`'
+$replSize = '- **Taille** : ' + $sizeMB + ' MB'
+
+$notesPath = (Resolve-Path $notes).Path
+$txt = [System.IO.File]::ReadAllText($notesPath)
+$txt = $txt -replace '(?m)^- \*\*Sha256\*\* :.*$', $replSha
+$txt = $txt -replace '(?m)^- \*\*Taille\*\* :.*$',  $replSize
+[System.IO.File]::WriteAllText($notesPath, $txt, $utf8)
+Write-Host "  OK -> $notes"
+
+if (Test-Path $checklist) {
+    $ckPath = (Resolve-Path $checklist).Path
+    $ck = [System.IO.File]::ReadAllText($ckPath)
+    # Regex ASCII (independante des accents du placeholder) : [... remplir ... build]
+    $ck = $ck -replace '\[[^\]]*remplir[^\]]*build[^\]]*\]', $hash
+    [System.IO.File]::WriteAllText($ckPath, $ck, $utf8)
+    Write-Host "  OK -> $checklist"
+}
+Write-Host ""
+
+if ($Commit) {
+    git add -- $notes $checklist
+    git commit -m "release: SHA-256 et taille de l'exe v$Version"
+    if ($LASTEXITCODE -ne 0) { Write-Error "Echec du commit"; exit 1 }
+    Write-Host "  Commit cree."
+    if ($Push) {
+        git push origin HEAD:main HEAD:master
+        if ($LASTEXITCODE -ne 0) { Write-Error "Echec du push"; exit 1 }
+        Write-Host "  Pousse sur origin (main + master)."
+    } else {
+        Write-Host "  Pour publier : git push origin HEAD:main HEAD:master"
+    }
+} else {
+    Write-Host "  (pas de commit -- relance avec -Commit, ou -Commit -Push)"
+}
+Write-Host ""
