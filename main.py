@@ -3174,6 +3174,7 @@ class PlanetDiagApp(tk.Tk):
         ("libreoffice", "LibreOffice",           "TheDocumentFoundation.LibreOffice"),
         ("anydesk",     "AnyDesk",               "AnyDesk.AnyDesk"),
         ("xnview",      "XNView MP (visionneuse)", "XnSoft.XnViewMP"),
+        ("vlc",         "VLC media player",      "VideoLAN.VLC"),
     ]
 
     def _build_pcneuf_panel(self, parent: tk.Frame):
@@ -3221,6 +3222,19 @@ class PlanetDiagApp(tk.Tk):
         # Barre de progression (cachée par défaut)
         self._pcneuf_bar = ttk.Progressbar(sec, mode="indeterminate")
 
+        # ── Icônes du bureau ──────────────────────────────────────────────────
+        icons_sec = tk.Frame(sec, bg=SURFACE, padx=16, pady=12)
+        icons_sec.pack(fill="x", pady=(12, 0))
+        tk.Label(icons_sec, text="🖥  Icônes du bureau",
+                 font=("Segoe UI", 11, "bold"), bg=SURFACE, fg=FG).pack(anchor="w")
+        tk.Label(icons_sec,
+                 text="Affiche « Ce PC », les « Fichiers de l'utilisateur » et la « Corbeille » sur le bureau.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED).pack(anchor="w", pady=(2, 8))
+        tk.Button(icons_sec, text="🖥  Ajouter les icônes du bureau",
+                  font=("Segoe UI", 10), bg=SURFACE2, fg=FG,
+                  activebackground=ACCENT, relief="flat", cursor="hand2",
+                  padx=14, pady=8, command=self._pcneuf_add_icons).pack(anchor="w")
+
         # Log
         log_wrap = tk.Frame(sec, bg=SURFACE)
         log_wrap.pack(fill="both", expand=True, pady=(12, 0))
@@ -3252,9 +3266,11 @@ class PlanetDiagApp(tk.Tk):
             return
         for var in self._pcneuf_status.values():
             var.set("…")
+        self._pcneuf_log_append("Vérification des applications installées…")
+
         def _worker():
             try:
-                data = run_ps_action("collectors/setup_apps.ps1", ["-Action", "check"])
+                data = run_ps_action("collectors/setup_apps.ps1", ["-Action", "check"], timeout=120)
                 winget_ok = data.get("winget_available", True)
                 apps = data.get("apps") or {}
                 def _update():
@@ -3265,15 +3281,21 @@ class PlanetDiagApp(tk.Tk):
                             "⚠ winget est absent ou obsolète sur ce PC.\n"
                             "  → Allez dans l'onglet « Mises à Jour » pour mettre à jour winget.", YELLOW)
                         return
+                    nb_installed = 0
                     for key, info in apps.items():
                         if key in self._pcneuf_status:
                             installed = info.get("installed", False)
-                            self._pcneuf_status[key].set("✓ Installé" if installed else "")
+                            self._pcneuf_status[key].set("✓ Installé" if installed else "✗ Non installé")
+                            if installed:
+                                nb_installed += 1
+                    self._pcneuf_log_append(
+                        f"✓ Vérification terminée — {nb_installed} application(s) déjà installée(s).", GREEN)
                 self.after(0, _update)
             except Exception as exc:
                 def _err(e=exc):
                     for var in self._pcneuf_status.values():
                         var.set("")
+                    self._pcneuf_log_append(f"✗ Échec de la vérification : {e}", RED)
                 self.after(0, _err)
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3344,6 +3366,40 @@ class PlanetDiagApp(tk.Tk):
                 self._pcneuf_bar.pack_forget()
                 self._pcneuf_log_append("\n✓ Traitement terminé.", GREEN)
             self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _pcneuf_add_icons(self):
+        if self._setup_busy:
+            return
+        self._setup_busy = True
+        self._pcneuf_log_append("\nAjout des icônes du bureau…")
+
+        def _worker():
+            try:
+                data  = run_ps_action("collectors/desktop_icons.ps1", ["-Action", "enable"])
+                ok    = data.get("success", False)
+                icons = data.get("icons") or []
+
+                def _result():
+                    if ok:
+                        for ic in icons:
+                            name  = ic.get("name", "")
+                            if ic.get("added"):
+                                self._pcneuf_log_append(f"  ✓ {name} — ajouté", GREEN)
+                            else:
+                                self._pcneuf_log_append(f"  ✓ {name} — déjà présent", FG_MUTED)
+                        self._pcneuf_log_append("✓ Icônes du bureau affichées.", GREEN)
+                    else:
+                        err = data.get("error") or "Erreur inconnue"
+                        self._pcneuf_log_append(f"  ✗ {err}", RED)
+                self.after(0, _result)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._pcneuf_log_append(f"  ✗ {e}", RED)
+                self.after(0, _err)
+            finally:
+                self.after(0, lambda: setattr(self, "_setup_busy", False))
 
         threading.Thread(target=_worker, daemon=True).start()
 

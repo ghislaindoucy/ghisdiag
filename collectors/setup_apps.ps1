@@ -14,6 +14,7 @@ $AppIds = @{
     libreoffice  = "TheDocumentFoundation.LibreOffice"
     anydesk      = "AnyDesk.AnyDesk"
     xnview       = "XnSoft.XnViewMP"
+    vlc          = "VideoLAN.VLC"
 }
 $AppNames = @{
     chrome       = "Google Chrome"
@@ -22,18 +23,51 @@ $AppNames = @{
     libreoffice  = "LibreOffice"
     anydesk      = "AnyDesk"
     xnview       = "XNView MP"
+    vlc          = "VLC media player"
+}
+
+# Verifie qu'une invocation winget S'EXECUTE reellement (et pas seulement qu'un
+# fichier existe). Le stub d'alias d'execution (0 octet) "existe" mais echoue a
+# l'execution en contexte eleve : "Le fichier specifie est introuvable".
+function Test-WingetRuns($cmd) {
+    try {
+        # winget --version affiche p.ex. "v1.28.240.0". Si l'invocation ne se lance
+        # pas (stub defaillant), la sortie est vide => candidat rejete.
+        $out = (& $cmd --version 2>$null | Out-String).Trim()
+        return ($out -match '\d+\.\d+')
+    } catch {}
+    return $false
 }
 
 function Get-WingetPath {
-    $p = "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
-    if (Test-Path $p) { return $p }
-    $found = Get-Item "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe" -EA SilentlyContinue |
-             Select-Object -First 1 -ExpandProperty FullName
-    if ($found) { return $found }
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    # 1. Vrai exe via le package AppX (chemin reel sous Program Files\WindowsApps)
     try {
-        $w = (& where.exe winget 2>$null) | Select-Object -First 1
-        if ($w -and (Test-Path $w)) { return $w }
+        $pkg = Get-AppxPackage -Name Microsoft.DesktopAppInstaller -EA SilentlyContinue |
+               Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
+        if ($pkg -and $pkg.InstallLocation) {
+            $candidates.Add((Join-Path $pkg.InstallLocation 'winget.exe'))
+        }
     } catch {}
+
+    # 2. Recherche directe dans WindowsApps (droits admin)
+    try {
+        Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" `
+            -EA SilentlyContinue | Sort-Object FullName -Descending |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    } catch {}
+
+    # 3. Commande nue : laisse l'OS resoudre l'alias d'execution (souvent le seul
+    #    moyen fiable quand le chemin complet du stub echoue).
+    $candidates.Add("winget")
+
+    # 4. Stub d'alias par chemin complet (dernier recours)
+    $candidates.Add("$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe")
+
+    foreach ($c in $candidates) {
+        if (Test-WingetRuns $c) { return $c }
+    }
     return $null
 }
 
@@ -46,17 +80,23 @@ switch ($Action) {
             @{ winget_available = $false; apps = @{} } | ConvertTo-Json -Depth 3
             break
         }
-        $installedRaw = ""
-        try {
-            $lines = & $winget list --accept-source-agreements 2>$null
-            $installedRaw = ($lines | Where-Object { $_ -is [string] }) -join "`n"
-        } catch {}
 
         $status = @{}
         foreach ($key in $AppIds.Keys) {
             $id   = $AppIds[$key]
             $name = $AppNames[$key]
-            $installed = $installedRaw -match [regex]::Escape($id)
+            $installed = $false
+            try {
+                # Interrogation ciblee par ID exact : evite la troncature de la colonne
+                # Id de "winget list" (sortie redirigee = largeur par defaut, ID coupes).
+                # winget renvoie 0 si le paquet est installe, un code != 0 sinon.
+                $out = @(& $winget list --id $id --exact `
+                    --accept-source-agreements 2>&1 | ForEach-Object { "$_" })
+                $exit   = $LASTEXITCODE
+                $joined = ($out -join "`n")
+                $noMatch = $joined -match '(?i)no installed package|aucun package'
+                $installed = ($exit -eq 0 -and -not $noMatch)
+            } catch {}
             $status[$key] = @{
                 name      = $name
                 id        = $id

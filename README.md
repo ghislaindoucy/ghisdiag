@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.2.2-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.2)
+[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.3)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -130,6 +130,18 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ## 📝 Changelog
 
+### v1.2.3 (Juin 2026)
+🆕 **Onglet PC Neuf enrichi**
+- **VLC media player** ajouté aux logiciels installables
+- **Icônes du bureau** en 1 clic : Ce PC, Fichiers utilisateur, Corbeille
+
+🔧 **Fiabilité winget**
+- Résolution robuste de `winget.exe` (fini le « fichier introuvable » en admin)
+- Détection « déjà installé » par ID exact (plus de faux négatifs)
+- Retour visuel clair lors de la vérification
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.2.3.md)
+
 ### v1.2.2 (Juin 2025)
 ✨ **Analyse IA Mistral intégrée**
 - Popup d'attente non-bloquant
@@ -185,10 +197,10 @@ L'exe généré : `dist/PlanetDiag.exe`
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.2.2.md](./RELEASE_NOTES_v1.2.2.md) | Notes détaillées release |
+| [RELEASE_NOTES_v1.2.3.md](./RELEASE_NOTES_v1.2.3.md) | Notes détaillées release |
 | [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration Mistral (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
-| [RELEASE_CHECKLIST_v1.2.2.md](./RELEASE_CHECKLIST_v1.2.2.md) | Checklist build/release |
+| [RELEASE_CHECKLIST_v1.2.3.md](./RELEASE_CHECKLIST_v1.2.3.md) | Checklist build/release |
 
 ---
 
@@ -223,6 +235,6 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.2.2](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.2) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
+[⬇️ Télécharge v1.2.3](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.2.3) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
 
 </div>

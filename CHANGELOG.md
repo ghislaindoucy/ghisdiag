@@ -4,6 +4,25 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.2.3] — 2026-06-10
+
+### ✨ Nouvelles Fonctionnalités
+
+- **Onglet PC Neuf — VLC media player** : ajouté au catalogue des logiciels installables en silence via winget (`VideoLAN.VLC`)
+- **Onglet PC Neuf — Icônes du bureau** : nouveau bouton « Ajouter les icônes du bureau » qui affiche en un clic :
+  - **Ce PC** `{20D04FE0-…}`
+  - **Fichiers de l'utilisateur** `{59031a47-…}`
+  - **Corbeille** `{645FF040-…}` (si elle n'est pas déjà présente)
+  - Application via le registre `HideDesktopIcons\NewStartPanel` + rafraîchissement du shell (`SHChangeNotify`), sans redémarrer l'explorateur
+
+### 🔧 Corrections
+
+- **Fix winget « fichier introuvable » en contexte admin** : `Get-WingetPath` résout désormais le **vrai** `winget.exe` en testant réellement chaque candidat (package AppX, `Program Files\WindowsApps`, commande nue), au lieu de retourner aveuglément le stub d'alias 0 octet qui échouait à l'exécution — corrigé dans `setup_apps.ps1` **et** `winget_manager.ps1` (onglet Mises à jour)
+- **Fix détection « déjà installé »** : la vérification interroge chaque application par son **ID exact** (`winget list --id … --exact`), éliminant les faux « non installé » dus à la troncature de la colonne Id en sortie redirigée
+- **Retour visuel de la vérification** : statut explicite « ✓ Installé » / « ✗ Non installé » par application + messages de progression et de fin dans le journal
+
+---
+
 ## [1.2.2] — 2025-06-03
 
 ### ✨ Nouvelles Fonctionnalités

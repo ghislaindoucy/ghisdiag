@@ -5,19 +5,48 @@ param(
 
 Set-StrictMode -Version Latest
 
-function Get-WingetPath {
-    $candidates = @(
-        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
-        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
-    )
-    foreach ($pattern in $candidates) {
-        $found = Get-Item $pattern -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-        if ($found) { return $found }
-    }
+# Verifie qu'une invocation winget S'EXECUTE reellement (et pas seulement qu'un
+# fichier existe). Le stub d'alias d'execution (0 octet) "existe" mais echoue a
+# l'execution en contexte eleve : "Le fichier specifie est introuvable".
+function Test-WingetRuns($cmd) {
     try {
-        $w = (& where.exe winget 2>$null) | Select-Object -First 1
-        if ($w -and (Test-Path $w)) { return $w }
+        # winget --version affiche p.ex. "v1.28.240.0". Si l'invocation ne se lance
+        # pas (stub defaillant), la sortie est vide => candidat rejete.
+        $out = (& $cmd --version 2>$null | Out-String).Trim()
+        return ($out -match '\d+\.\d+')
     } catch {}
+    return $false
+}
+
+function Get-WingetPath {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    # 1. Vrai exe via le package AppX (chemin reel sous Program Files\WindowsApps)
+    try {
+        $pkg = Get-AppxPackage -Name Microsoft.DesktopAppInstaller -EA SilentlyContinue |
+               Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
+        if ($pkg -and $pkg.InstallLocation) {
+            $candidates.Add((Join-Path $pkg.InstallLocation 'winget.exe'))
+        }
+    } catch {}
+
+    # 2. Recherche directe dans WindowsApps (droits admin)
+    try {
+        Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" `
+            -EA SilentlyContinue | Sort-Object FullName -Descending |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    } catch {}
+
+    # 3. Commande nue : laisse l'OS resoudre l'alias d'execution (souvent le seul
+    #    moyen fiable quand le chemin complet du stub echoue).
+    $candidates.Add("winget")
+
+    # 4. Stub d'alias par chemin complet (dernier recours)
+    $candidates.Add("$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe")
+
+    foreach ($c in $candidates) {
+        if (Test-WingetRuns $c) { return $c }
+    }
     return $null
 }
 
