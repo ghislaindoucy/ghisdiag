@@ -20,4 +20,4 @@
 
 ## SHA-256 de l'exe
 
-[à remplir après le build]
+86b07adf0d80fb19228fc25fc5609bbfd7eaf2b367495ee13bf9d24113362188

@@ -84,5 +84,5 @@ release: bump version 1.4.0 (orchestrator, generator, version_info, README, mist
 ## ⬇️ Téléchargement
 
 - **Exe** : `PlanetDiag.exe`
-- **Sha256** : [à remplir après le build]
-- **Taille** : [à remplir après le build]
+- **Sha256** : `86b07adf0d80fb19228fc25fc5609bbfd7eaf2b367495ee13bf9d24113362188`
+- **Taille** : 19.2 MB
