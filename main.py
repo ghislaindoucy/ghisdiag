@@ -57,18 +57,26 @@ try:
 except ImportError:
     _HAS_REQUESTS = False
 
-# ── Palette Ghost Protocol ────────────────────────────────────────────────────
-BG        = "#030810"
-SURFACE   = "#0a1628"
-SURFACE2  = "#122040"
-FG        = "#b8d4e8"
-FG_DIM    = "#6a9ab8"
-FG_MUTED  = "#3a5a78"
-ACCENT    = "#00d4ff"
-PURPLE    = "#9d50ff"
-GREEN     = "#00ff9d"
-RED       = "#ff2d55"
-YELLOW    = "#ffb730"
+# ── Palette Catppuccin Mocha — alignée sur le rapport HTML (assets/report.css)
+BG        = "#1e1e2e"   # base   — fond principal
+SURFACE   = "#313244"   # surface0 — panneaux, champs
+SURFACE2  = "#45475a"   # surface1 — éléments interactifs / hover
+BORDER    = "#45475a"   # bordures discrètes des panneaux
+FG        = "#cdd6f4"   # text     — texte principal
+FG_DIM    = "#a6adc8"   # subtext0 — texte secondaire
+FG_MUTED  = "#7f849c"   # overlay1 — texte tertiaire
+ACCENT    = "#89b4fa"   # blue
+PURPLE    = "#cba6f7"   # mauve
+GREEN     = "#a6e3a1"
+RED       = "#f38ba8"
+YELLOW    = "#f9e2af"
+
+# Variantes pressées des boutons colorés (≈ −15 % de luminosité)
+ACCENT_HOVER = "#7499d4"
+RED_HOVER    = "#cf768f"
+YELLOW_HOVER = "#d3c094"
+GREEN_HOVER  = "#8dc189"
+YELLOW_BG    = "#3a2e1e"   # fond des encarts d'avertissement
 
 TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
@@ -141,8 +149,19 @@ class PlanetDiagApp(tk.Tk):
         self._wifi_profiles = []  # [{"name":…}]
         self._wifi_networks = []  # [{"ssid":…, "signal":…, …}]
 
+        # Supprime l'anneau de focus clair (couleur système) des widgets tk
+        self.option_add("*Listbox.highlightThickness", 0)
+        self.option_add("*Text.highlightThickness", 0)
+        self.option_add("*Entry.highlightThickness", 0)
+        # Liste déroulante des Combobox aux couleurs du thème
+        self.option_add("*TCombobox*Listbox.background", SURFACE)
+        self.option_add("*TCombobox*Listbox.foreground", FG)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", BG)
+
         self._build_ui()
         self._set_icon()
+        self._enable_dark_titlebar()
         self.update_idletasks()
         self.geometry("740x640")
         x = (self.winfo_screenwidth()  - 740) // 2
@@ -154,6 +173,21 @@ class PlanetDiagApp(tk.Tk):
             ico = Path(__file__).parent / "assets" / "icon.ico"
             if ico.exists():
                 self.iconbitmap(str(ico))
+        except Exception:
+            pass
+
+    def _enable_dark_titlebar(self):
+        """Barre de titre sombre (Windows 10 20H1+) — sans effet ailleurs."""
+        try:
+            import ctypes
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            value = ctypes.c_int(1)
+            # 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (19 sur les builds antérieures)
+            for attr in (20, 19):
+                if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                    break
         except Exception:
             pass
 
@@ -187,12 +221,12 @@ class PlanetDiagApp(tk.Tk):
         # Zone titre
         title_zone = tk.Frame(hdr_inner, bg=BG)
         title_zone.pack(side="left", anchor="center")
-        tk.Label(title_zone, text="PLANETDIAG",
-                 font=("Consolas", 22, "bold"), bg=BG, fg=ACCENT).pack(anchor="w")
-        tk.Label(title_zone, text="WINDOWS DIAGNOSTIC SYSTEM",
-                 font=("Consolas", 9), bg=BG, fg=FG_DIM).pack(anchor="w")
-        tk.Label(title_zone, text=f"v{VERSION}  //  {AUTHORS}",
-                 font=("Consolas", 8), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
+        tk.Label(title_zone, text="PlanetDiag",
+                 font=("Segoe UI Semibold", 22), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(title_zone, text="Diagnostic & maintenance Windows",
+                 font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(anchor="w")
+        tk.Label(title_zone, text=f"v{VERSION}  ·  {AUTHORS}",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
 
         # Ligne décorative bicolore (remplace ttk.Separator)
         sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)
@@ -215,15 +249,29 @@ class PlanetDiagApp(tk.Tk):
         style.configure("PD.TNotebook",
                         background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
         style.configure("PD.TNotebook.Tab",
-                        background=SURFACE, foreground=FG_DIM,
-                        font=("Consolas", 10),
-                        padding=[18, 8])
+                        background=BG, foreground=FG_MUTED,
+                        font=("Segoe UI", 10, "bold"),
+                        padding=[20, 10])
         style.map("PD.TNotebook.Tab",
-                  background=[("selected", SURFACE2)],
-                  foreground=[("selected", ACCENT)])
+                  background=[("selected", SURFACE2), ("active", SURFACE)],
+                  foreground=[("selected", ACCENT), ("active", FG_DIM)])
         style.configure("PD.Horizontal.TProgressbar",
                         background=ACCENT, troughcolor=SURFACE,
-                        bordercolor=SURFACE, lightcolor=ACCENT, darkcolor=ACCENT)
+                        bordercolor=BG, borderwidth=0,
+                        lightcolor=ACCENT, darkcolor=ACCENT)
+        style.configure("PD.Vertical.TScrollbar",
+                        background=SURFACE2, troughcolor=BG,
+                        bordercolor=BG, arrowcolor=FG_MUTED, relief="flat")
+        style.map("PD.Vertical.TScrollbar",
+                  background=[("active", FG_MUTED), ("pressed", FG_MUTED)])
+        style.configure("PD.TCombobox",
+                        fieldbackground=SURFACE2, background=SURFACE2,
+                        foreground=FG, arrowcolor=FG_DIM,
+                        bordercolor=BORDER, lightcolor=SURFACE2, darkcolor=SURFACE2,
+                        selectbackground=SURFACE2, selectforeground=FG)
+        style.map("PD.TCombobox",
+                  fieldbackground=[("readonly", SURFACE2)],
+                  foreground=[("readonly", FG)])
 
         # Notebook
         nb = ttk.Notebook(self, style="PD.TNotebook")
@@ -278,7 +326,7 @@ class PlanetDiagApp(tk.Tk):
             command=self._browse,
         ).pack(side="left", padx=(8, 0))
 
-        ttk.Separator(parent).pack(fill="x", padx=20, pady=(4, 0))
+        tk.Frame(parent, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(4, 0))
 
         # Bouton principal
         btn_zone = tk.Frame(parent, bg=BG, pady=14)
@@ -289,7 +337,7 @@ class PlanetDiagApp(tk.Tk):
             text="▶   Lancer le diagnostic",
             font=("Segoe UI", 14, "bold"),
             bg=ACCENT, fg=BG,
-            activebackground="#00a8cc", activeforeground=BG,
+            activebackground=ACCENT_HOVER, activeforeground=BG,
             relief="flat", cursor="hand2",
             padx=32, pady=14,
             command=self._start,
@@ -322,7 +370,7 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(counter_row, textvariable=self.elapsed_var,
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED, anchor="e").pack(side="right")
 
-        ttk.Separator(parent).pack(fill="x", padx=20, pady=(10, 0))
+        tk.Frame(parent, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(10, 0))
 
         # ── Moniteur Temps Réel ───────────────────────────────────────────────
         mon_outer = tk.Frame(parent, bg=BG)
@@ -334,10 +382,10 @@ class PlanetDiagApp(tk.Tk):
                  font=("Segoe UI", 9, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
         self._mon_status_var = tk.StringVar(value="")
         tk.Label(mon_hdr_row, textvariable=self._mon_status_var,
-                 font=("Segoe UI", 8), bg=BG, fg=FG_MUTED).pack(side="right")
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(side="right")
 
         mon_box = tk.Frame(mon_outer, bg=SURFACE, pady=8, padx=4,
-                           highlightbackground=ACCENT, highlightthickness=1, bd=0)
+                           highlightbackground=BORDER, highlightthickness=1, bd=0)
         mon_box.pack(fill="x", pady=(4, 6))
 
         # 4 colonnes : CPU, RAM, Disque I/O, Températures
@@ -356,7 +404,7 @@ class PlanetDiagApp(tk.Tk):
             top = tk.Frame(col, bg=SURFACE)
             top.pack(fill="x")
             tk.Label(top, text=label,
-                     font=("Segoe UI", 8, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
+                     font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(side="left")
             val_var = tk.StringVar(value="—")
             self._mon_vals[key] = val_var
             tk.Label(top, textvariable=val_var,
@@ -371,15 +419,15 @@ class PlanetDiagApp(tk.Tk):
         temp_col = tk.Frame(mon_box, bg=SURFACE)
         temp_col.pack(side="left", padx=(12, 8), anchor="n")
         tk.Label(temp_col, text="Températures",
-                 font=("Segoe UI", 8, "bold"), bg=SURFACE, fg=FG_DIM).pack(anchor="w")
+                 font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(anchor="w")
         self._mon_temp_cpu_var  = tk.StringVar(value="CPU : —")
         self._mon_temp_gpu_var  = tk.StringVar(value="GPU : —")
         self._mon_temp_disk_var = tk.StringVar(value="SSD/HDD : —")
         for var in (self._mon_temp_cpu_var, self._mon_temp_gpu_var, self._mon_temp_disk_var):
             tk.Label(temp_col, textvariable=var,
-                     font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED).pack(anchor="w")
+                     font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED).pack(anchor="w")
 
-        ttk.Separator(parent).pack(fill="x", padx=20, pady=(0, 0))
+        tk.Frame(parent, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(0, 0))
 
         # ── Boutons bas + Mistral (packés AVANT le log pour rester visibles) ───
         foot = tk.Frame(parent, bg=BG, pady=10)
@@ -433,7 +481,7 @@ class PlanetDiagApp(tk.Tk):
 
         self.mistral_key_entry = tk.Entry(
             mistral_panel, textvariable=self.mistral_api_key_var,
-            show="•", font=("Consolas", 10), bg=SURFACE2, fg=ACCENT,
+            show="•", font=("Consolas", 10), bg=SURFACE2, fg=FG,
             insertbackground=FG, relief="flat", width=38,
         )
         self.mistral_key_entry.pack(side="left", padx=(0, 8))
@@ -450,7 +498,7 @@ class PlanetDiagApp(tk.Tk):
         tk.Label(
             mistral_panel,
             text="Si renseignée, un audit IA sera généré après chaque diagnostic",
-            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
         ).pack(side="left")
 
         # Journal d'activité (expand=True → prend tout l'espace restant, DOIT être en dernier)
@@ -460,19 +508,19 @@ class PlanetDiagApp(tk.Tk):
                  font=("Segoe UI", 10, "bold"), bg=BG, fg=FG_DIM).pack(side="left")
         tk.Button(
             log_hdr, text="Effacer",
-            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
             activebackground=SURFACE2, relief="flat", cursor="hand2",
             padx=8, pady=2, command=self._clear_log,
         ).pack(side="right")
         tk.Button(
             log_hdr, text="Voir le fichier log",
-            font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
             activebackground=SURFACE2, relief="flat", cursor="hand2",
             padx=8, pady=2, command=self._open_log_file,
         ).pack(side="right", padx=(0, 6))
 
         log_wrap = tk.Frame(parent, bg=SURFACE, bd=0,
-                            highlightbackground=PURPLE, highlightthickness=1)
+                            highlightbackground=BORDER, highlightthickness=1)
         log_wrap.pack(fill="both", expand=True, padx=28, pady=(0, 6))
 
         self.log = tk.Text(
@@ -483,7 +531,7 @@ class PlanetDiagApp(tk.Tk):
             state="disabled", wrap="word",
             selectbackground=SURFACE2,
         )
-        sb = tk.Scrollbar(log_wrap, command=self.log.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(log_wrap, command=self.log.yview, style="PD.Vertical.TScrollbar")
         self.log.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
@@ -501,11 +549,11 @@ class PlanetDiagApp(tk.Tk):
         style.configure("Dep.TNotebook",
                         background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
         style.configure("Dep.TNotebook.Tab",
-                        background=SURFACE, foreground=FG_DIM,
-                        font=("Segoe UI", 10), padding=[16, 7])
+                        background=BG, foreground=FG_MUTED,
+                        font=("Segoe UI", 10), padding=[16, 8])
         style.map("Dep.TNotebook.Tab",
-                  background=[("selected", SURFACE2)],
-                  foreground=[("selected", ACCENT)])
+                  background=[("selected", SURFACE2), ("active", SURFACE)],
+                  foreground=[("selected", ACCENT), ("active", FG_DIM)])
 
         sub_nb = ttk.Notebook(parent, style="Dep.TNotebook")
         sub_nb.pack(fill="both", expand=True)
@@ -524,7 +572,7 @@ class PlanetDiagApp(tk.Tk):
 
     def _build_impression_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -537,7 +585,7 @@ class PlanetDiagApp(tk.Tk):
 
     def _build_reseau_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -586,7 +634,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_spooler_fix = tk.Button(
             btns_global, text="🗑  Vider tout",
             font=("Segoe UI", 10), bg=RED, fg=BG,
-            activebackground="#cc1f3f", relief="flat", cursor="hand2",
+            activebackground=RED_HOVER, relief="flat", cursor="hand2",
             padx=12, pady=7, command=self._spooler_fix,
         )
         self.btn_spooler_fix.pack(side="left")
@@ -611,7 +659,7 @@ class PlanetDiagApp(tk.Tk):
             selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=5,
         )
-        pr_sb = tk.Scrollbar(printer_wrap, command=self.printer_listbox.yview, bg=SURFACE2)
+        pr_sb = ttk.Scrollbar(printer_wrap, command=self.printer_listbox.yview, style="PD.Vertical.TScrollbar")
         self.printer_listbox.configure(yscrollcommand=pr_sb.set)
         pr_sb.pack(side="right", fill="y")
         self.printer_listbox.pack(fill="both", expand=True, padx=4, pady=4)
@@ -634,7 +682,7 @@ class PlanetDiagApp(tk.Tk):
             selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=5,
         )
-        job_sb = tk.Scrollbar(job_wrap, command=self.job_listbox.yview, bg=SURFACE2)
+        job_sb = ttk.Scrollbar(job_wrap, command=self.job_listbox.yview, style="PD.Vertical.TScrollbar")
         self.job_listbox.configure(yscrollcommand=job_sb.set)
         job_sb.pack(side="right", fill="y")
         self.job_listbox.pack(fill="both", expand=True, padx=4, pady=4)
@@ -647,7 +695,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_cancel_job = tk.Button(
             job_btns, text="✗  Annuler ce travail",
             font=("Segoe UI", 10), bg=YELLOW, fg=BG,
-            activebackground="#cc9022", relief="flat", cursor="hand2",
+            activebackground=YELLOW_HOVER, relief="flat", cursor="hand2",
             padx=12, pady=6, state="disabled", command=self._spooler_cancel_job,
         )
         self.btn_cancel_job.pack(side="left", padx=(0, 6))
@@ -655,7 +703,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_cancel_all = tk.Button(
             job_btns, text="✗  Annuler tous les travaux",
             font=("Segoe UI", 10), bg=YELLOW, fg=BG,
-            activebackground="#cc9022", relief="flat", cursor="hand2",
+            activebackground=YELLOW_HOVER, relief="flat", cursor="hand2",
             padx=12, pady=6, state="disabled", command=self._spooler_cancel_all,
         )
         self.btn_cancel_all.pack(side="left")
@@ -1014,7 +1062,7 @@ class PlanetDiagApp(tk.Tk):
             activestyle="none",
             height=7,
         )
-        lb_scroll = tk.Scrollbar(list_frame, command=self.network_listbox.yview, bg=SURFACE2)
+        lb_scroll = ttk.Scrollbar(list_frame, command=self.network_listbox.yview, style="PD.Vertical.TScrollbar")
         self.network_listbox.configure(yscrollcommand=lb_scroll.set)
         lb_scroll.pack(side="right", fill="y")
         self.network_listbox.pack(fill="both", expand=True, padx=4, pady=4)
@@ -1034,7 +1082,7 @@ class PlanetDiagApp(tk.Tk):
         ]
         for label, key in fields:
             tk.Label(detail_frame, text=label,
-                     font=("Segoe UI", 8), bg=SURFACE2, fg=FG_DIM,
+                     font=("Segoe UI", 9), bg=SURFACE2, fg=FG_DIM,
                      anchor="w").pack(fill="x")
             var = tk.StringVar(value="—")
             self.net_detail_vars[key] = var
@@ -1057,7 +1105,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_net_reset = tk.Button(
             btns, text="⟳  Réinitialiser",
             font=("Segoe UI", 10), bg=YELLOW, fg=BG,
-            activebackground="#cc9022", relief="flat", cursor="hand2",
+            activebackground=YELLOW_HOVER, relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._network_reset,
         )
         self.btn_net_reset.pack(fill="x")
@@ -1196,7 +1244,7 @@ class PlanetDiagApp(tk.Tk):
     # ── Panneau Réparation système ────────────────────────────────────────────
     def _build_reparation_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -1231,7 +1279,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_sfc = tk.Button(
             sfc_ctrl, text="▶  Lancer SFC /scannow",
             font=("Segoe UI", 10), bg=ACCENT, fg=BG,
-            activebackground="#00a8cc", activeforeground=BG,
+            activebackground=ACCENT_HOVER, activeforeground=BG,
             relief="flat", cursor="hand2", padx=14, pady=7,
             command=lambda: self._repair_run("sfc"),
         )
@@ -1249,14 +1297,14 @@ class PlanetDiagApp(tk.Tk):
         self._sfc_bar_frame.pack_forget()
 
         sfc_log_wrap = tk.Frame(sfc_sec, bg=SURFACE,
-                                highlightbackground=PURPLE, highlightthickness=1, bd=0)
+                                highlightbackground=BORDER, highlightthickness=1, bd=0)
         sfc_log_wrap.pack(fill="x", pady=(8, 0))
         self._sfc_log = tk.Text(
             sfc_log_wrap, bg=SURFACE, fg=FG_DIM,
             font=("Consolas", 9), bd=0, padx=8, pady=8,
             state="disabled", wrap="word", height=6,
         )
-        sfc_log_sb = tk.Scrollbar(sfc_log_wrap, command=self._sfc_log.yview, bg=SURFACE2)
+        sfc_log_sb = ttk.Scrollbar(sfc_log_wrap, command=self._sfc_log.yview, style="PD.Vertical.TScrollbar")
         self._sfc_log.configure(yscrollcommand=sfc_log_sb.set)
         sfc_log_sb.pack(side="right", fill="y")
         self._sfc_log.pack(fill="both", expand=True)
@@ -1270,7 +1318,7 @@ class PlanetDiagApp(tk.Tk):
         )
         self.btn_sfc_log.pack(anchor="w", pady=(6, 0))
 
-        ttk.Separator(inner).pack(fill="x", padx=20, pady=(12, 0))
+        tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(12, 0))
 
         # ── Section DISM ──────────────────────────────────────────────────────
         dism_sec = tk.Frame(inner, bg=BG, pady=12)
@@ -1288,7 +1336,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_dism = tk.Button(
             dism_ctrl, text="▶  Lancer DISM /RestoreHealth",
             font=("Segoe UI", 10), bg=ACCENT, fg=BG,
-            activebackground="#00a8cc", activeforeground=BG,
+            activebackground=ACCENT_HOVER, activeforeground=BG,
             relief="flat", cursor="hand2", padx=14, pady=7,
             command=lambda: self._repair_run("dism-restore"),
         )
@@ -1305,14 +1353,14 @@ class PlanetDiagApp(tk.Tk):
         self._dism_bar_frame.pack_forget()
 
         dism_log_wrap = tk.Frame(dism_sec, bg=SURFACE,
-                                 highlightbackground=PURPLE, highlightthickness=1, bd=0)
+                                 highlightbackground=BORDER, highlightthickness=1, bd=0)
         dism_log_wrap.pack(fill="x", pady=(8, 0))
         self._dism_log = tk.Text(
             dism_log_wrap, bg=SURFACE, fg=FG_DIM,
             font=("Consolas", 9), bd=0, padx=8, pady=8,
             state="disabled", wrap="word", height=8,
         )
-        dism_log_sb = tk.Scrollbar(dism_log_wrap, command=self._dism_log.yview, bg=SURFACE2)
+        dism_log_sb = ttk.Scrollbar(dism_log_wrap, command=self._dism_log.yview, style="PD.Vertical.TScrollbar")
         self._dism_log.configure(yscrollcommand=dism_log_sb.set)
         dism_log_sb.pack(side="right", fill="y")
         self._dism_log.pack(fill="both", expand=True)
@@ -1440,7 +1488,7 @@ class PlanetDiagApp(tk.Tk):
     def _build_wifi_tab(self, parent: tk.Frame):
         # Canvas scrollable (même pattern que _build_troubleshoot_tab)
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -1482,7 +1530,7 @@ class PlanetDiagApp(tk.Tk):
             selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=6,
         )
-        wifi_sb = tk.Scrollbar(profiles_wrap, command=self.wifi_listbox.yview, bg=SURFACE2)
+        wifi_sb = ttk.Scrollbar(profiles_wrap, command=self.wifi_listbox.yview, style="PD.Vertical.TScrollbar")
         self.wifi_listbox.configure(yscrollcommand=wifi_sb.set)
         wifi_sb.pack(side="right", fill="y")
         self.wifi_listbox.pack(fill="both", expand=True, padx=4, pady=4)
@@ -1510,7 +1558,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_wifi_delete = tk.Button(
             btns_profiles, text="✗  Supprimer",
             font=("Segoe UI", 10), bg=RED, fg=BG,
-            activebackground="#cc1f3f", relief="flat", cursor="hand2",
+            activebackground=RED_HOVER, relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._wifi_delete_profile,
         )
         self.btn_wifi_delete.pack(fill="x")
@@ -1539,7 +1587,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_wifi_backup.pack(side="right")
 
         # ── Séparateur ────────────────────────────────────────────────────────
-        ttk.Separator(inner).pack(fill="x", padx=20, pady=(0, 4))
+        tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(0, 4))
 
         # ── Section Réseaux disponibles ───────────────────────────────────────
         sec_n = tk.Frame(inner, bg=BG, pady=16)
@@ -1554,7 +1602,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_wifi_scan = tk.Button(
             scan_hdr, text="🔍  Scanner",
             font=("Segoe UI", 10), bg=ACCENT, fg=BG,
-            activebackground="#00a8cc", relief="flat", cursor="hand2",
+            activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
             padx=14, pady=6, command=self._wifi_scan,
         )
         self.btn_wifi_scan.pack(side="right")
@@ -1572,7 +1620,7 @@ class PlanetDiagApp(tk.Tk):
             selectbackground=ACCENT, selectforeground=BG,
             relief="flat", bd=0, activestyle="none", height=6,
         )
-        net_sb = tk.Scrollbar(networks_wrap, command=self.wifi_networks_listbox.yview, bg=SURFACE2)
+        net_sb = ttk.Scrollbar(networks_wrap, command=self.wifi_networks_listbox.yview, style="PD.Vertical.TScrollbar")
         self.wifi_networks_listbox.configure(yscrollcommand=net_sb.set)
         net_sb.pack(side="right", fill="y")
         self.wifi_networks_listbox.pack(fill="both", expand=True, padx=4, pady=4)
@@ -1581,7 +1629,7 @@ class PlanetDiagApp(tk.Tk):
         self.btn_wifi_connect = tk.Button(
             sec_n, text="🔗  Connecter au réseau sélectionné",
             font=("Segoe UI", 10, "bold"), bg=GREEN, fg=BG,
-            activebackground="#00cc7a", relief="flat", cursor="hand2",
+            activebackground=GREEN_HOVER, relief="flat", cursor="hand2",
             padx=14, pady=8, state="disabled", command=self._wifi_connect,
         )
         self.btn_wifi_connect.pack(fill="x", pady=(8, 0))
@@ -1880,7 +1928,7 @@ class PlanetDiagApp(tk.Tk):
         tk.Button(
             btn_row, text="Connecter",
             font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-            activebackground="#00a8cc", relief="flat", cursor="hand2",
+            activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
             padx=16, pady=7, command=_ok,
         ).pack(side="right")
 
@@ -2620,11 +2668,11 @@ class PlanetDiagApp(tk.Tk):
         style.configure("Setup.TNotebook",
                         background=BG, borderwidth=0, tabmargins=[0, 4, 0, 0])
         style.configure("Setup.TNotebook.Tab",
-                        background=SURFACE, foreground=FG_DIM,
-                        font=("Segoe UI", 10), padding=[16, 7])
+                        background=BG, foreground=FG_MUTED,
+                        font=("Segoe UI", 10), padding=[16, 8])
         style.map("Setup.TNotebook.Tab",
-                  background=[("selected", SURFACE2)],
-                  foreground=[("selected", FG)])
+                  background=[("selected", SURFACE2), ("active", SURFACE)],
+                  foreground=[("selected", ACCENT), ("active", FG_DIM)])
 
         sub_nb = ttk.Notebook(parent, style="Setup.TNotebook")
         sub_nb.pack(fill="both", expand=True)
@@ -2647,7 +2695,7 @@ class PlanetDiagApp(tk.Tk):
     # ── Panneau Comptes ───────────────────────────────────────────────────────
     def _build_comptes_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -2728,10 +2776,10 @@ class PlanetDiagApp(tk.Tk):
         btn_row1.pack(fill="x", pady=(4, 0))
         tk.Button(btn_row1, text="Créer le compte",
                   font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
                   padx=16, pady=8, command=self._comptes_create).pack(side="left")
 
-        ttk.Separator(inner).pack(fill="x", padx=20, pady=(4, 4))
+        tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(4, 4))
 
         # ── Expiration MDP ────────────────────────────────────────────────────
         sec2 = tk.Frame(inner, bg=BG, pady=16)
@@ -2750,7 +2798,8 @@ class PlanetDiagApp(tk.Tk):
                  bg=SURFACE, fg=FG_DIM, width=20, anchor="w").pack(side="left")
         self._pwd_user_var = tk.StringVar()
         self._pwd_user_combo = ttk.Combobox(user_row, textvariable=self._pwd_user_var,
-                                             font=("Segoe UI", 10), width=22, state="readonly")
+                                             font=("Segoe UI", 10), width=22, state="readonly",
+                                             style="PD.TCombobox")
         self._pwd_user_combo.pack(side="left", ipady=3)
         tk.Button(user_row, text="↻", font=("Segoe UI", 10), bg=SURFACE2, fg=FG,
                   relief="flat", cursor="hand2", padx=8,
@@ -2775,7 +2824,7 @@ class PlanetDiagApp(tk.Tk):
         btn_row2.pack(fill="x", pady=(4, 0))
         tk.Button(btn_row2, text="Appliquer",
                   font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
                   padx=16, pady=8, command=self._comptes_set_policy).pack(side="left")
 
         # Log commun aux deux sections
@@ -2892,7 +2941,7 @@ class PlanetDiagApp(tk.Tk):
                  font=("Segoe UI", 9), bg=SURFACE, fg=FG)
         self._winget_status_lbl.pack(side="left", padx=(8, 0))
         self._winget_badge = tk.Label(status_bar, text="⚠ Mise à jour requise",
-                 font=("Segoe UI", 8, "bold"), bg=SURFACE, fg=YELLOW)
+                 font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=YELLOW)
         tk.Button(status_bar, text="↻ Vérifier",
                   font=("Segoe UI", 9), bg=SURFACE2, fg=FG,
                   activebackground=BG, relief="flat", cursor="hand2",
@@ -2914,7 +2963,7 @@ class PlanetDiagApp(tk.Tk):
 
         tk.Button(btns, text="⬆  Tout mettre à jour",
                   font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
                   padx=14, pady=8, command=self._maj_update_all).pack(side="left")
 
         # Barre de progression (cachée par défaut, affichée pendant update-all)
@@ -2927,7 +2976,7 @@ class PlanetDiagApp(tk.Tk):
                                  font=("Consolas", 9), bd=0, padx=10, pady=8,
                                  state="disabled", wrap="word",
                                  selectbackground=SURFACE2)
-        maj_sb = tk.Scrollbar(self._maj_log_wrap, command=self._maj_log.yview, bg=SURFACE2)
+        maj_sb = ttk.Scrollbar(self._maj_log_wrap, command=self._maj_log.yview, style="PD.Vertical.TScrollbar")
         self._maj_log.configure(yscrollcommand=maj_sb.set)
         maj_sb.pack(side="right", fill="y")
         self._maj_log.pack(fill="both", expand=True)
@@ -3037,7 +3086,7 @@ class PlanetDiagApp(tk.Tk):
 
         tk.Button(btns, text="🏪  Via Microsoft Store\n(recommandé)",
                   font=("Segoe UI", 10), bg=ACCENT, fg=BG,
-                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
                   padx=16, pady=10, command=_via_store).pack(side="left", padx=8)
 
         tk.Button(btns, text="⬇  Via GitHub\n(téléchargement direct)",
@@ -3216,7 +3265,7 @@ class PlanetDiagApp(tk.Tk):
                   padx=14, pady=8, command=self._pcneuf_check).pack(side="left", padx=(0, 8))
         tk.Button(self._pcneuf_btns, text="⬇  Installer la sélection",
                   font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
-                  activebackground="#00a8cc", relief="flat", cursor="hand2",
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
                   padx=14, pady=8, command=self._pcneuf_install).pack(side="left")
 
         # Barre de progression (cachée par défaut)
@@ -3242,7 +3291,7 @@ class PlanetDiagApp(tk.Tk):
                                     font=("Consolas", 9), bd=0, padx=10, pady=8,
                                     state="disabled", wrap="word",
                                     selectbackground=SURFACE2)
-        pcn_sb = tk.Scrollbar(log_wrap, command=self._pcneuf_log.yview, bg=SURFACE2)
+        pcn_sb = ttk.Scrollbar(log_wrap, command=self._pcneuf_log.yview, style="PD.Vertical.TScrollbar")
         self._pcneuf_log.configure(yscrollcommand=pcn_sb.set)
         pcn_sb.pack(side="right", fill="y")
         self._pcneuf_log.pack(fill="both", expand=True)
@@ -3406,7 +3455,7 @@ class PlanetDiagApp(tk.Tk):
     # ── Panneau Récupération ──────────────────────────────────────────────────
     def _build_recuperation_panel(self, parent: tk.Frame):
         canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(parent, orient="vertical", command=canvas.yview, bg=SURFACE2)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -3438,14 +3487,14 @@ class PlanetDiagApp(tk.Tk):
         self._winre_status_lbl.pack(side="left", padx=(8, 0))
 
         # ── Avertissement ─────────────────────────────────────────────────────
-        warn = tk.Frame(inner, bg="#3d2e00", padx=16, pady=10)
+        warn = tk.Frame(inner, bg=YELLOW_BG, padx=16, pady=10)
         warn.pack(fill="x", padx=28, pady=(0, 8))
         tk.Label(warn,
                  text="Toutes les donnees de la cle USB selectionnee dans l'assistant seront effacees.",
-                 font=("Segoe UI", 9, "bold"), bg="#3d2e00", fg=YELLOW).pack(anchor="w")
+                 font=("Segoe UI", 9, "bold"), bg=YELLOW_BG, fg=YELLOW).pack(anchor="w")
         tk.Label(warn,
                  text="Preparez une cle USB vierge d'au moins 16 Go avant de continuer.",
-                 font=("Segoe UI", 9), bg="#3d2e00", fg=YELLOW).pack(anchor="w", pady=(2, 0))
+                 font=("Segoe UI", 9), bg=YELLOW_BG, fg=YELLOW).pack(anchor="w", pady=(2, 0))
 
         # ── Clés USB disponibles (info) ───────────────────────────────────────
         sec2 = tk.Frame(inner, bg=BG)
@@ -3482,7 +3531,7 @@ class PlanetDiagApp(tk.Tk):
             btn_row,
             text="Lancer l'assistant de creation",
             font=("Segoe UI", 10, "bold"),
-            bg=ACCENT, fg=BG, activebackground="#00a8cc", activeforeground=BG,
+            bg=ACCENT, fg=BG, activebackground=ACCENT_HOVER, activeforeground=BG,
             relief="flat", cursor="hand2", padx=16, pady=8,
             command=self._recup_launch,
         )
@@ -3502,7 +3551,7 @@ class PlanetDiagApp(tk.Tk):
             font=("Consolas", 9), wrap="word", state="disabled",
             relief="flat", borderwidth=0, height=14,
         )
-        log_sb = tk.Scrollbar(log_wrap, command=self._recup_log.yview, bg=SURFACE2)
+        log_sb = ttk.Scrollbar(log_wrap, command=self._recup_log.yview, style="PD.Vertical.TScrollbar")
         self._recup_log.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y")
         self._recup_log.pack(fill="both", expand=True)
@@ -3549,7 +3598,7 @@ class PlanetDiagApp(tk.Tk):
             font=("Consolas", 9), wrap="word", state="disabled",
             relief="flat", borderwidth=0, height=10,
         )
-        bl_sb = tk.Scrollbar(bl_wrap, command=self._bl_log.yview, bg=SURFACE2)
+        bl_sb = ttk.Scrollbar(bl_wrap, command=self._bl_log.yview, style="PD.Vertical.TScrollbar")
         self._bl_log.configure(yscrollcommand=bl_sb.set)
         bl_sb.pack(side="right", fill="y")
         self._bl_log.pack(fill="both", expand=True)

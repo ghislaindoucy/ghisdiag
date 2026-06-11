@@ -12,18 +12,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Palette Ghost Protocol (depuis main.py)
-BG        = "#030810"
-SURFACE   = "#0a1628"
-SURFACE2  = "#122040"
-FG        = "#b8d4e8"
-FG_DIM    = "#6a9ab8"
-FG_MUTED  = "#3a5a78"
-ACCENT    = "#00d4ff"
-PURPLE    = "#9d50ff"
-GREEN     = "#00ff9d"
-RED       = "#ff2d55"
-YELLOW    = "#ffb730"
+# Palette Catppuccin Mocha (alignée sur main.py et assets/report.css)
+BG        = "#1e1e2e"
+SURFACE   = "#313244"
+SURFACE2  = "#45475a"
+FG        = "#cdd6f4"
+FG_DIM    = "#a6adc8"
+FG_MUTED  = "#7f849c"
+ACCENT    = "#89b4fa"
+PURPLE    = "#cba6f7"
+GREEN     = "#a6e3a1"
+RED       = "#f38ba8"
+YELLOW    = "#f9e2af"
 
 
 # Inline : appliqué APRÈS échappement HTML, uniquement sur du texte (jamais sur du code fence).
