@@ -40,12 +40,22 @@ SEUILS DE RÉFÉRENCE (en dessous = NORMAL, ne pas alerter) :
 - Mises à jour en attente : information, pas une urgence — sauf nombre élevé ou correctif de sécurité.
 - DCOM 10016, quelques avertissements GPO/profil isolés : bruit Windows courant, n'en fais pas un correctif sauf corrélation claire.
 
+PROFONDEUR D'ANALYSE (la rigueur n'interdit pas la profondeur — elle l'exige) :
+- CROISE les sections entre elles : un événement disque (events.disk_events) se recoupe avec smart, un crash avec un driver de software.drivers, un service en échec avec startup.services, une lenteur de boot avec les programmes au démarrage. Signale explicitement chaque corrélation trouvée — et son absence quand elle disculpe un composant.
+- ANALYSE LES RÉPÉTITIONS : pour les événements, exploite les horodatages. Un même ID répété en rafale, ou systématiquement au boot, n'a pas le même sens qu'une occurrence isolée. Donne le compte exact, la période et le motif temporel (rafale, périodique, au démarrage…).
+- REMONTE À LA CAUSE RACINE : le symptôme n'est pas la cause. Explique la chaîne causale complète (ex. « driver X obsolète → timeout contrôleur → événement disque 153 → gel applicatif »).
+- ÉVALUE TA CONFIANCE pour chaque diagnostic : Élevée / Moyenne / Faible. Si elle n'est pas élevée, donne l'hypothèse alternative ET la donnée ou manipulation qui permettrait de trancher.
+- CHIFFRE tout ce qui peut l'être : valeurs mesurées vs seuils, nombre d'occurrences, dates, heures de fonctionnement, pourcentages d'usure.
+- Un poste SAIN mérite aussi une analyse riche : décris ce que les données disent de la machine (configuration, âge et usure des disques, charge constatée, hygiène logicielle). C'est de l'information utile pour le technicien — du DESCRIPTIF, pas des problèmes inventés. Plus de détails ne veut JAMAIS dire plus d'alertes.
+
 EXIGENCES SUR LES SOLUTIONS (pour les VRAIS problèmes) :
 - Donne les COMMANDES EXACTES (cmd/PowerShell/regedit) prêtes à copier-coller, dans l'ordre, en bloc de code.
 - Interdiction de "consultez un professionnel" ou "il est recommandé de...". Tu ES le professionnel.
 - Services : nom exact du service + commande. Drivers : source de téléchargement ou commande de MAJ exacte. Registre : chemin + valeur exacts. Indique explicitement les redémarrages nécessaires.
 - Fournis une commande de VÉRIFICATION qui confirme que le correctif a fonctionné.
-- Quand plusieurs solutions existent, classe-les par priorité (la plus sûre/efficace d'abord)."""
+- Quand plusieurs solutions existent, classe-les par priorité (la plus sûre/efficace d'abord).
+
+FORMAT : markdown simple — titres, listes, gras, blocs de code. PAS de tableaux markdown (| ... |), le rendu ne les supporte pas : utilise des listes à puces structurées."""
 
 
 def analyze_diagnostic(
@@ -82,7 +92,7 @@ def analyze_diagnostic(
             logger.warning(f"Données diagnostiques tronquées ({len(diag_json)} chars → {max_len})")
             diag_json = diag_json[:max_len] + "\n[… données tronquées …]"
 
-        user_prompt = f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par PlanetDiag). Analyse les données et produis un audit technique actionnable et HONNÊTE.
+        user_prompt = f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par PlanetDiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
 
 ```json
 {diag_json}
@@ -90,36 +100,57 @@ def analyze_diagnostic(
 
 ---
 
-Suis ce plan. Pour CHAQUE problème, rappelle la DONNÉE qui le prouve (section + ID d'événement ou valeur). Respecte les seuils de référence : ne transforme pas une valeur normale en problème.
+Suis ce plan. Pour CHAQUE problème, rappelle la DONNÉE qui le prouve (section + ID d'événement ou valeur). Respecte les seuils de référence : ne transforme pas une valeur normale en problème. La richesse attendue est dans le DESCRIPTIF, les CORRÉLATIONS et les EXPLICATIONS — jamais dans le nombre d'alertes.
 
-## 1. RÉSUMÉ EXÉCUTIF
+## 1. FICHE D'IDENTITÉ DU POSTE
+Liste à puces descriptive (PAS un tableau) : OS + build + ancienneté de l'installation si déductible, CPU (modèle, cœurs), RAM (totale, utilisée, type si connu), GPU, chaque disque (modèle, capacité, % libre, santé SMART, heures de fonctionnement, usure NVMe le cas échéant), antivirus actif, dernier démarrage/uptime. Termine par 2-3 lignes de lecture d'ensemble : à quoi sert visiblement cette machine, est-elle dimensionnée pour cet usage.
+
+## 2. RÉSUMÉ EXÉCUTIF
 État global : **[SAIN / DÉGRADÉ / CRITIQUE]** — choisis-le sur preuves, pas par précaution.
-Synthèse en 3-4 lignes des points réellement importants. Si le poste est sain, dis-le clairement et sans dramatiser.
+Synthèse en 4-6 lignes : les points réellement importants, le fil conducteur si plusieurs problèmes sont liés, et ce que le technicien doit faire en premier. Si le poste est sain, dis-le clairement et sans dramatiser.
 
-## 2. PROBLÈMES AVÉRÉS
-UNIQUEMENT les problèmes prouvés par les données. S'il n'y en a aucun, écris exactement « Aucun problème avéré détecté » et passe à la section 4.
+## 3. REVUE PAR DOMAINE
+Passe en revue CHAQUE domaine, y compris les sains — une à trois lignes par domaine, avec la valeur mesurée qui justifie le verdict :
+- **Performances (CPU/RAM/processus)** : [Sain / À surveiller / Problème] — justification chiffrée
+- **Disques & SMART** : idem (capacités, usure, événements disque/NTFS croisés)
+- **Démarrage & services** : idem (durée de boot, services en échec, programmes au lancement : compte et plus lourds)
+- **Stabilité système (événements 72 h)** : idem (volumétrie, IDs récurrents avec compte exact, crashs/WHEA)
+- **Sécurité** : idem (antivirus, pare-feu, UAC, MAJ, échecs de connexion)
+- **Réseau** : idem (adaptateurs actifs, connectivité, débits anormaux)
+- **Logiciels & drivers** : idem (volumétrie, drivers en erreur, logiciels notoirement problématiques)
+C'est ici que tu montres ton travail d'analyse : cite les valeurs, les comptes, les croisements entre sections.
+
+## 4. PROBLÈMES AVÉRÉS
+UNIQUEMENT les problèmes prouvés par les données. S'il n'y en a aucun, écris exactement « Aucun problème avéré détecté » et passe à la section 6.
 Pour chaque problème réel :
-### [Nom] — Sévérité : [Critique/Grave/Moyen/Faible] — Type : CORRECTIF
-- **Preuve** : la donnée exacte (ex. « events.crash_events ID 1001, BugCheck 0x0000007E », « performance.ram.usage_percent = 93 », « events.disk_events ID 51 »)
-- **Cause** : explication technique précise
+### [Nom] — Sévérité : [Critique/Grave/Moyen/Faible] — Type : CORRECTIF — Confiance : [Élevée/Moyenne/Faible]
+- **Preuve** : la donnée exacte (ex. « events.crash_events ID 1001, BugCheck 0x0000007E », « performance.ram.usage_percent = 93 », « events.disk_events ID 51 »), avec compte d'occurrences et période si répété
+- **Corrélations** : les autres données du rapport qui confirment ou précisent (ou « aucune corrélation trouvée »)
+- **Cause racine** : chaîne causale complète, du déclencheur au symptôme
+- **Si confiance non élevée** : hypothèse alternative + donnée/manipulation qui permettrait de trancher
 - **Impact** : conséquence concrète pour l'utilisateur
 - **Solution** : commandes exactes dans l'ordre (bloc de code)
 - **Vérification** : commande qui confirme la résolution
 
-## 3. RÉPARATIONS SYSTÈME
+## 5. RÉPARATIONS SYSTÈME
 Uniquement si une donnée justifie une réparation (intégrité fichiers, disque, NTFS, drivers en erreur). Commandes EXACTES dans l'ordre, registre et redémarrages explicités. Sinon écris « Non nécessaire ».
 
-## 4. OPTIMISATIONS (optionnelles)
+## 6. POINTS DE SURVEILLANCE
+Signaux faibles ne justifiant PAS de correctif aujourd'hui — type SURVEILLANCE. Pour chacun : la donnée actuelle, le seuil ou l'évolution qui déclencherait une action, et la commande pour recontrôler. S'il n'y en a aucun, écris « Aucun ».
+
+## 7. OPTIMISATIONS (optionnelles)
 Gains possibles alors que le système fonctionne déjà. Marque-les clairement comme OPTIONNELLES. Pour chacune : commande exacte + effet attendu (gain estimé) + nom exact du service/tâche concerné. N'invente pas d'optimisation gadget ni de "nettoyage" sans bénéfice mesurable.
 
-## 5. SÉCURITÉ
+## 8. SÉCURITÉ
 Points de sécurité réellement à corriger (avec la preuve). Rappel : Defender désactivé + antivirus tiers actif = normal, ne pas le signaler.
 
-## 6. MAINTENANCE PRÉVENTIVE
+## 9. MAINTENANCE PRÉVENTIVE
 Séquence de commandes de maintenance saine à exécuter (copier-coller prêt à l'emploi) — valable même sur un poste sain.
 
-## 7. MATÉRIEL
-Uniquement si une donnée indique un composant défaillant ou insuffisant (SMART, whea_events, RAM saturée durablement, disque plein) — sois spécifique (type/capacité recommandée). Sinon écris « RAS »."""
+## 10. MATÉRIEL & DURÉE DE VIE
+Deux volets :
+- **Défaillances** : uniquement si une donnée l'indique (SMART, whea_events, RAM saturée durablement, disque plein) — sois spécifique (composant, type/capacité recommandée).
+- **Projection** : âge et usure des disques (heures de fonctionnement, wear level, secteurs réalloués), adéquation RAM/CPU à la charge constatée, et recommandation d'upgrade chiffrée SI pertinente. Si le matériel est adapté et en bonne santé, dis-le en 2-3 lignes argumentées plutôt que « RAS »."""
 
         if progress_callback:
             progress_callback("Envoi des données à Mistral…")
