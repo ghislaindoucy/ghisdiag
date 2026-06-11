@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.3.0)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.4.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -130,6 +130,19 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ## 📝 Changelog
 
+### v1.4.0 (Juin 2026)
+🎨 **Refonte graphique — Catppuccin Mocha**
+- Thème sombre moderne unifié entre l'app et les rapports : contraste élevé, pastels lisibles
+- Barre de titre Windows sombre, scrollbars et widgets entièrement thémés
+- Typographie revue (Segoe UI pour l'interface, Consolas pour les données)
+
+🤖 **Audit IA plus profond**
+- Corrélations entre sections (disque ↔ SMART, crash ↔ driver), motifs temporels des événements
+- Fiche d'identité du poste, revue domaine par domaine, points de surveillance, durée de vie matériel
+- Niveau de confiance par diagnostic — toujours zéro problème inventé
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.4.0.md)
+
 ### v1.3.0 (Juin 2026)
 🆕 **Diagnostic de fiabilité (logs niveau 3)**
 - Détection des **plantages** : écrans bleus (BSOD avec code BugCheck), redémarrages inattendus
@@ -214,10 +227,10 @@ L'exe généré : `dist/PlanetDiag.exe`
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.3.0.md](./RELEASE_NOTES_v1.3.0.md) | Notes détaillées release |
+| [RELEASE_NOTES_v1.4.0.md](./RELEASE_NOTES_v1.4.0.md) | Notes détaillées release |
 | [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration Mistral (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
-| [RELEASE_CHECKLIST_v1.3.0.md](./RELEASE_CHECKLIST_v1.3.0.md) | Checklist build/release |
+| [RELEASE_CHECKLIST_v1.4.0.md](./RELEASE_CHECKLIST_v1.4.0.md) | Checklist build/release |
 
 ---
 
@@ -252,6 +265,6 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.3.0](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.3.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
+[⬇️ Télécharge v1.4.0](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.4.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
 
 </div>

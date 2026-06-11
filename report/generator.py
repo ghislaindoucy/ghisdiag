@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "PlanetDiag_Reports"
 

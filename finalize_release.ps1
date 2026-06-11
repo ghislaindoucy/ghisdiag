@@ -9,7 +9,7 @@
 #   .\finalize_release.ps1 -Commit -Push -Release   # + attache l'exe, met a jour les notes et PUBLIE la release GitHub
 
 param(
-    [string]$Version = "1.3.0",
+    [string]$Version = "1.4.0",
     [string]$ExePath = "dist\PlanetDiag.exe",
     [switch]$Commit,
     [switch]$Push,

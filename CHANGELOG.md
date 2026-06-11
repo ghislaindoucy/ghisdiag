@@ -4,6 +4,25 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.4.0] — 2026-06-11
+
+### 🎨 Refonte Graphique — Thème Catppuccin Mocha Unifié
+
+- **Nouvelle palette** : abandon du thème néon « Ghost Protocol » (cyan électrique sur noir) au profit de **Catppuccin Mocha**, déjà utilisée par le rapport HTML — identité visuelle unifiée entre l'application, le rapport diagnostic et le rapport Mistral, contraste élevé (texte principal AAA), couleurs pastel reposantes
+- **Typographie** : interface en Segoe UI (titre en Semibold), Consolas réservé aux données et journaux ; tailles minimales remontées de 8 pt à 9 pt
+- **Barre de titre Windows sombre** (DWM immersive dark mode) — fini le bandeau blanc
+- **Widgets harmonisés** : 18 scrollbars natives claires remplacées par des `ttk.Scrollbar` thémées, séparateurs blancs remplacés par des lignes discrètes, liste déroulante des comptes aux couleurs du thème, suppression des anneaux de focus clairs (Listbox/Text/Entry)
+- **Constantes hover** (`ACCENT_HOVER`, `RED_HOVER`…) : plus aucune couleur codée en dur dans les widgets
+
+### 🤖 Analyse IA Mistral — Audit Plus Profond
+
+- **Nouveau bloc « Profondeur d'analyse »** dans le prompt : corrélations inter-sections obligatoires (événement disque ↔ SMART, crash ↔ driver…), analyse temporelle des événements répétés (compte, période, motif), cause racine en chaîne causale, niveau de confiance par diagnostic avec hypothèse alternative
+- **Plan d'audit étendu de 7 à 10 sections** : fiche d'identité du poste, revue domaine par domaine (y compris les domaines sains, avec valeurs chiffrées), points de surveillance (le niveau SURVEILLANCE n'avait pas de section), matériel étendu à la projection durée de vie/usure
+- **Garde-fous anti-faux-positifs conservés** : plus de détails ne veut jamais dire plus d'alertes — la richesse est dans le descriptif et les corrélations
+- **Tableaux markdown interdits** dans la réponse IA (non supportés par le rendu du rapport Mistral) au profit de listes structurées
+
+---
+
 ## [1.3.0] — 2026-06-10
 
 ### ✨ Nouvelles Fonctionnalités
