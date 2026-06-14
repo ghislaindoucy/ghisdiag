@@ -34,7 +34,7 @@ rapport.
 - Scan des réseaux et connexion
 
 **⚙️ Setup / MAJ**
-- Comptes locaux (création, expiration de mot de passe)
+- Comptes locaux (création, renommage, expiration de mot de passe)
 - Mises à jour logicielles via winget
 - PC Neuf : installation silencieuse des essentiels + icônes du bureau
 - Récupération : partition de récupération, BitLocker

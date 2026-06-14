@@ -2,6 +2,7 @@
 param(
     [string]$Action   = "list-users",
     [string]$Username = "",
+    [string]$NewName  = "",
     [string]$Password = "",
     [string]$Type     = "standard",  # standard | admin
     [switch]$NoExpiry                # present = jamais d'expiration
@@ -71,6 +72,36 @@ switch ($Action) {
             Add-LocalGroupMember -SID $groupSID -Member $Username -EA Stop | Out-Null
             $typeLabel = if ($Type -eq "admin") { "Administrateur" } else { "Utilisateur standard" }
             @{ success = $true; message = "Compte '$Username' cree ($typeLabel)." } | ConvertTo-Json
+        } catch {
+            @{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
+        }
+        break
+    }
+
+    "rename-user" {
+        if (-not (Test-SafeUsername $Username)) {
+            @{ success = $false; error = "Nom d'utilisateur invalide" } | ConvertTo-Json
+            break
+        }
+        if (-not (Test-SafeUsername $NewName)) {
+            @{ success = $false; error = "Nouveau nom invalide (max 20 car., lettres/chiffres/_-. uniquement)" } | ConvertTo-Json
+            break
+        }
+        if ($Username -eq $NewName) {
+            @{ success = $false; error = "Le nouveau nom est identique a l'ancien." } | ConvertTo-Json
+            break
+        }
+        try {
+            if (-not (Get-LocalUser -Name $Username -EA SilentlyContinue)) {
+                @{ success = $false; error = "Le compte '$Username' est introuvable." } | ConvertTo-Json
+                break
+            }
+            if (Get-LocalUser -Name $NewName -EA SilentlyContinue) {
+                @{ success = $false; error = "Un compte nomme '$NewName' existe deja." } | ConvertTo-Json
+                break
+            }
+            Rename-LocalUser -Name $Username -NewName $NewName -EA Stop
+            @{ success = $true; message = "Compte '$Username' renomme en '$NewName'." } | ConvertTo-Json
         } catch {
             @{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
         }

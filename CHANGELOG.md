@@ -4,6 +4,15 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [Non publié]
+
+### ✨ Nouvelles Fonctionnalités
+
+- **Renommer un compte utilisateur local** (onglet ⚙️ Setup) : nouvelle section « ✏️ Renommer un compte » — sélection d'un compte existant, saisie du nouveau nom, application via `Rename-LocalUser`. Le profil et les données sont conservés (SID inchangé)
+  - Action `rename-user` ajoutée à `collectors/user_manager.ps1`, avec garde-fous : validation du nom (mêmes règles que la création), compte source existant, nouveau nom libre et différent de l'ancien
+
+---
+
 ## [1.4.0] — 2026-06-11
 
 ### 🎨 Refonte Graphique — Thème Catppuccin Mocha Unifié

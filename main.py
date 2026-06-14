@@ -2781,6 +2781,46 @@ class PlanetDiagApp(tk.Tk):
 
         tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(4, 4))
 
+        # ── Renommer un compte ────────────────────────────────────────────────
+        sec_rn = tk.Frame(inner, bg=BG, pady=16)
+        sec_rn.pack(fill="x", padx=28)
+        tk.Label(sec_rn, text="✏️  Renommer un compte",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(sec_rn, text="Change le nom d'un compte local existant (le profil et les données sont conservés).",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 12))
+
+        form_rn = tk.Frame(sec_rn, bg=SURFACE, padx=16, pady=14)
+        form_rn.pack(fill="x")
+
+        rn_user_row = tk.Frame(form_rn, bg=SURFACE)
+        rn_user_row.pack(fill="x", pady=(0, 8))
+        tk.Label(rn_user_row, text="Compte :", font=("Segoe UI", 9),
+                 bg=SURFACE, fg=FG_DIM, width=20, anchor="w").pack(side="left")
+        self._rename_user_var = tk.StringVar()
+        self._rename_user_combo = ttk.Combobox(rn_user_row, textvariable=self._rename_user_var,
+                                                font=("Segoe UI", 10), width=22, state="readonly",
+                                                style="PD.TCombobox")
+        self._rename_user_combo.pack(side="left", ipady=3)
+        tk.Button(rn_user_row, text="↻", font=("Segoe UI", 10), bg=SURFACE2, fg=FG,
+                  relief="flat", cursor="hand2", padx=8,
+                  command=self._comptes_load_users).pack(side="left", padx=(6, 0))
+
+        self._rename_new_var = tk.StringVar()
+        _row(form_rn, "Nouveau nom :", lambda p: tk.Entry(
+            p, textvariable=self._rename_new_var,
+            font=("Consolas", 10), bg=SURFACE2, fg=FG,
+            insertbackground=FG, relief="flat", width=24,
+        ).pack(side="left", ipady=5, ipadx=6))
+
+        btn_row_rn = tk.Frame(form_rn, bg=SURFACE)
+        btn_row_rn.pack(fill="x", pady=(4, 0))
+        tk.Button(btn_row_rn, text="Renommer",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
+                  padx=16, pady=8, command=self._comptes_rename).pack(side="left")
+
+        tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(4, 4))
+
         # ── Expiration MDP ────────────────────────────────────────────────────
         sec2 = tk.Frame(inner, bg=BG, pady=16)
         sec2.pack(fill="x", padx=28)
@@ -2843,8 +2883,12 @@ class PlanetDiagApp(tk.Tk):
                 users = [u.get("Name", "") for u in (data.get("users") or []) if u.get("Enabled")]
                 def _update():
                     self._pwd_user_combo["values"] = users
+                    self._rename_user_combo["values"] = users
                     if users:
-                        self._pwd_user_var.set(users[0])
+                        if self._pwd_user_var.get() not in users:
+                            self._pwd_user_var.set(users[0])
+                        if self._rename_user_var.get() not in users:
+                            self._rename_user_var.set(users[0])
                 self.after(0, _update)
             except Exception as exc:
                 logger.debug("load users : %s", exc)
@@ -2879,6 +2923,44 @@ class PlanetDiagApp(tk.Tk):
                         self._comptes_log_var.set(f"✓ {data.get('message', 'Compte créé.')}")
                         self._new_user_var.set("")
                         self._new_pwd_var.set("")
+                        self._comptes_load_users()
+                    else:
+                        self._comptes_log_var.set(f"Erreur : {data.get('error', '?')}")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._comptes_log_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _comptes_rename(self):
+        if self._setup_busy:
+            return
+        old = self._rename_user_var.get().strip()
+        new = self._rename_new_var.get().strip()
+        if not old:
+            self._comptes_log_var.set("Sélectionnez un compte à renommer.")
+            return
+        if not new:
+            self._comptes_log_var.set("Erreur : nouveau nom vide.")
+            return
+        if old == new:
+            self._comptes_log_var.set("Le nouveau nom est identique à l'ancien.")
+            return
+        self._setup_busy = True
+        self._comptes_log_var.set("Renommage en cours…")
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/user_manager.ps1",
+                                     ["-Action", "rename-user",
+                                      "-Username", old, "-NewName", new])
+                def _update():
+                    self._setup_busy = False
+                    if data.get("success"):
+                        self._comptes_log_var.set(f"✓ {data.get('message', 'Compte renommé.')}")
+                        self._rename_new_var.set("")
                         self._comptes_load_users()
                     else:
                         self._comptes_log_var.set(f"Erreur : {data.get('error', '?')}")
