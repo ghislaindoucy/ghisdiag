@@ -70,6 +70,8 @@ py -m PyInstaller ^
     --hidden-import cryptography ^
     --hidden-import mistral_analyzer ^
     --hidden-import mistral_report ^
+    --hidden-import thermal_bench ^
+    --hidden-import thermal_compare ^
     --collect-submodules cryptography ^
     --hidden-import collectors.realtime_monitor ^
     --hidden-import collectors.sensors ^

@@ -77,8 +77,9 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 
 - **Protocole en 3 phases** : repos (~2 min, baseline) → charge (5-10 min, stress CPU
   configurable 50/100 %) → refroidissement (~5 min)
-- Génération de charge par **multiprocessing** (un processus par cœur logique — les
-  threads Python ne chargent pas un CPU à cause du GIL)
+- Génération de charge par **workers PowerShell** (runspaces .NET, un par cœur
+  logique, sans GIL) plutôt que multiprocessing Python : en `--onefile` chaque
+  processus Python enfant réextrairait les ~20 Mo du bundle
 - Échantillonnage toutes les 2-5 s : températures + charge + fréquence CPU
 - **Détection de throttling** : fréquence qui s'effondre quand la température plafonne
 - **Arrêt d'urgence** : automatique si T > 95 °C, ou bouton Stop

@@ -22,6 +22,17 @@ try:
 except Exception:
     _HAS_MONITOR = False
 
+try:
+    from thermal_bench import (
+        ThermalBench, BenchConfig, BenchPhase,
+        list_sessions as bench_list_sessions,
+        load_session as bench_load_session,
+    )
+    from thermal_compare import compare_sessions, generate_comparison_report
+    _HAS_BENCH = True
+except Exception:
+    _HAS_BENCH = False
+
 from prefs    import LOG_DIR, load_prefs, save_prefs
 from security import is_admin, request_elevation, is_safe_output_dir
 
@@ -70,6 +81,7 @@ PURPLE    = "#cba6f7"   # mauve
 GREEN     = "#a6e3a1"
 RED       = "#f38ba8"
 YELLOW    = "#f9e2af"
+ORANGE    = "#fab387"   # peach — courbe « avant » du comparatif thermique
 
 # Variantes pressées des boutons colorés (≈ −15 % de luminosité)
 ACCENT_HOVER = "#7499d4"
@@ -77,6 +89,11 @@ RED_HOVER    = "#cf768f"
 YELLOW_HOVER = "#d3c094"
 GREEN_HOVER  = "#8dc189"
 YELLOW_BG    = "#3a2e1e"   # fond des encarts d'avertissement
+
+# Teintes de fond des zones de phase du graphe de bench thermique
+ZONE_IDLE = "#2a2b3c"   # repos
+ZONE_LOAD = "#3a2a30"   # charge (teinte chaude)
+ZONE_COOL = "#27314a"   # refroidissement (teinte froide)
 
 TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
@@ -110,6 +127,12 @@ class PlanetDiagApp(tk.Tk):
         self._temp_cache      = {"cpu": None, "gpu": None, "disks": []}
         self._temp_loading    = False
         self._temp_tick       = 0
+
+        # Bench thermique
+        self._bench           = None       # instance ThermalBench en cours
+        self._bench_samples   = []         # échantillons de la session courante
+        self._bench_total_sec = 1          # durée totale (échelle X du graphe)
+        self._bench_running   = False
 
         # Setup/MAJ state
         self._setup_busy      = False
@@ -160,6 +183,7 @@ class PlanetDiagApp(tk.Tk):
         self.option_add("*TCombobox*Listbox.selectForeground", BG)
 
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
         self._set_icon()
         self._enable_dark_titlebar()
         self.update_idletasks()
@@ -276,9 +300,14 @@ class PlanetDiagApp(tk.Tk):
         # Notebook
         nb = ttk.Notebook(self, style="PD.TNotebook")
         nb.pack(fill="both", expand=True)
+        self._nb = nb
 
         analyse_frame = tk.Frame(nb, bg=BG)
         nb.add(analyse_frame, text="  Analyse  ")
+
+        if _HAS_BENCH:
+            bench_frame = tk.Frame(nb, bg=BG)
+            nb.add(bench_frame, text="  Bench thermique  ")
 
         troubleshoot_frame = tk.Frame(nb, bg=BG)
         nb.add(troubleshoot_frame, text="  Dépannage  ")
@@ -290,6 +319,8 @@ class PlanetDiagApp(tk.Tk):
         nb.add(setup_frame, text="  Setup / MAJ  ")
 
         self._build_analyse_tab(analyse_frame)
+        if _HAS_BENCH:
+            self._build_bench_tab(bench_frame)
         self._build_troubleshoot_tab(troubleshoot_frame)
         self._build_wifi_tab(wifi_frame)
         self._build_setup_tab(setup_frame)
@@ -2633,6 +2664,542 @@ class PlanetDiagApp(tk.Tk):
             logger.debug("Fetch températures : %s", exc)
         finally:
             self._temp_loading = False
+
+    # ══ Onglet Bench thermique ═══════════════════════════════════════════════
+
+    # Correspondances widget -> valeurs moteur
+    _BENCH_LABELS   = (("Avant", "avant"), ("Après", "apres"), ("Libre", "libre"))
+    _BENCH_INTENS   = (("100 %", 100), ("50 %", 50))
+    _BENCH_DURATION = (("Court (2 min)", 120), ("Standard (5 min)", 300),
+                       ("Long (10 min)", 600))
+    _BENCH_IDLE_SEC = 120
+    _BENCH_COOL_SEC = 300
+    _BENCH_LABELS_FR = {"avant": "Avant", "apres": "Après", "libre": "Libre"}
+
+    def _build_bench_tab(self, parent: tk.Frame):
+        # En-tête
+        head = tk.Frame(parent, bg=BG)
+        head.pack(fill="x", padx=28, pady=(14, 2))
+        tk.Label(head, text="Bench thermique", font=("Segoe UI", 16, "bold"),
+                 bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(head,
+                 text="Repos → charge CPU → refroidissement. Mesure le gain d'un "
+                      "nettoyage ou d'un changement de pâte thermique (avant / après).",
+                 font=("Segoe UI", 10), bg=BG, fg=FG_DIM,
+                 justify="left").pack(anchor="w")
+
+        # Barre de configuration
+        cfg_box = tk.Frame(parent, bg=SURFACE,
+                           highlightbackground=BORDER, highlightthickness=1, bd=0)
+        cfg_box.pack(fill="x", padx=28, pady=(8, 6))
+        cfg = tk.Frame(cfg_box, bg=SURFACE, pady=10, padx=10)
+        cfg.pack(fill="x")
+
+        def _combo(label, values, default):
+            holder = tk.Frame(cfg, bg=SURFACE)
+            holder.pack(side="left", padx=(0, 16))
+            tk.Label(holder, text=label, font=("Segoe UI", 9, "bold"),
+                     bg=SURFACE, fg=FG_DIM).pack(anchor="w")
+            var = tk.StringVar(value=default)
+            cb = ttk.Combobox(holder, textvariable=var, values=values,
+                              state="readonly", style="PD.TCombobox",
+                              font=("Segoe UI", 10), width=max(len(v) for v in values) + 2)
+            cb.pack(anchor="w", pady=(2, 0))
+            return var, cb
+
+        self._bench_label_var, self._bench_label_cb = _combo(
+            "Étiquette", [t for t, _ in self._BENCH_LABELS], "Avant")
+        self._bench_intens_var, self._bench_intens_cb = _combo(
+            "Intensité", [t for t, _ in self._BENCH_INTENS], "100 %")
+        self._bench_dur_var, self._bench_dur_cb = _combo(
+            "Durée de charge", [t for t, _ in self._BENCH_DURATION], "Standard (5 min)")
+
+        self._bench_btn = tk.Button(
+            cfg, text="▶   Démarrer le test",
+            font=("Segoe UI", 12, "bold"), bg=ACCENT, fg=BG,
+            activebackground=ACCENT_HOVER, activeforeground=BG,
+            relief="flat", cursor="hand2", padx=22, pady=10,
+            command=self._bench_toggle,
+        )
+        self._bench_btn.pack(side="right", anchor="s")
+
+        # Bandeau de statut (phase + relevés temps réel)
+        status = tk.Frame(parent, bg=BG)
+        status.pack(fill="x", padx=28, pady=(2, 0))
+        self._bench_phase_var = tk.StringVar(value="Prêt")
+        self._bench_phase_lbl = tk.Label(status, textvariable=self._bench_phase_var,
+                                         font=("Segoe UI", 11, "bold"), bg=BG, fg=FG_DIM)
+        self._bench_phase_lbl.pack(side="left")
+        self._bench_live_var = tk.StringVar(value="")
+        tk.Label(status, textvariable=self._bench_live_var,
+                 font=("Consolas", 10), bg=BG, fg=FG).pack(side="right")
+
+        # Graphe temps réel
+        chart_box = tk.Frame(parent, bg=SURFACE,
+                             highlightbackground=BORDER, highlightthickness=1, bd=0)
+        chart_box.pack(fill="both", expand=True, padx=28, pady=(6, 6))
+        self._bench_canvas = tk.Canvas(chart_box, bg=BG, highlightthickness=0)
+        self._bench_canvas.pack(fill="both", expand=True)
+        self._bench_canvas.bind("<Configure>", lambda e: self._bench_redraw())
+
+        # Bas : résultats (gauche) + sessions enregistrées (droite)
+        bottom = tk.Frame(parent, bg=BG)
+        bottom.pack(fill="x", padx=28, pady=(0, 12))
+
+        res = tk.Frame(bottom, bg=BG)
+        res.pack(side="left", fill="x", expand=True, anchor="n")
+        tk.Label(res, text="Résultats", font=("Segoe UI", 9, "bold"),
+                 bg=BG, fg=FG_DIM).pack(anchor="w")
+        self._bench_result_var = tk.StringVar(value="Aucun test lancé.")
+        tk.Label(res, textvariable=self._bench_result_var, font=("Segoe UI", 10),
+                 bg=BG, fg=FG, justify="left", anchor="w").pack(anchor="w", fill="x", pady=(2, 0))
+
+        sess = tk.Frame(bottom, bg=BG)
+        sess.pack(side="right", anchor="n", padx=(16, 0))
+        sess_hdr = tk.Frame(sess, bg=BG)
+        sess_hdr.pack(fill="x")
+        tk.Label(sess_hdr, text="Sessions enregistrées", font=("Segoe UI", 9, "bold"),
+                 bg=BG, fg=FG_DIM).pack(side="left")
+        tk.Button(sess_hdr, text="⟳", font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+                  activebackground=SURFACE2, activeforeground=FG, relief="flat",
+                  cursor="hand2", padx=6, pady=0,
+                  command=self._bench_refresh_sessions).pack(side="right")
+        self._bench_sessions_list = tk.Listbox(
+            sess, height=5, width=48, bg=SURFACE, fg=FG,
+            selectbackground=ACCENT, selectforeground=BG,
+            relief="flat", bd=0, highlightthickness=0,
+            font=("Consolas", 9), activestyle="none", selectmode="extended",
+        )
+        self._bench_sessions_list.pack(fill="x", pady=(2, 0))
+        self._bench_sessions_list.bind("<Double-Button-1>", self._bench_open_session)
+
+        sess_foot = tk.Frame(sess, bg=BG)
+        sess_foot.pack(fill="x")
+        tk.Label(sess_foot, text="Double-clic : courbe  ·  2 sélections : comparer",
+                 font=("Segoe UI", 8), bg=BG, fg=FG_MUTED).pack(side="left")
+        tk.Button(sess_foot, text="Comparer avant / après",
+                  font=("Segoe UI", 9), bg=SURFACE2, fg=FG,
+                  activebackground=SURFACE, activeforeground=FG, relief="flat",
+                  cursor="hand2", padx=10, pady=4,
+                  command=self._bench_compare).pack(side="right", pady=(4, 0))
+
+        self._bench_session_files = []
+        self._bench_bounds = []
+        self._bench_mode = "single"        # single | compare
+        self._bench_compare_data = None    # (avant_samples, apres_samples)
+        self.after(500, self._bench_refresh_sessions)
+
+    # -- Pilotage du test ------------------------------------------------------
+
+    def _bench_toggle(self):
+        if self._bench_running:
+            if self._bench is not None:
+                self._bench.stop()
+            self._bench_btn.config(text="Arrêt en cours…", state="disabled")
+            return
+
+        label     = dict(self._BENCH_LABELS)[self._bench_label_var.get()]
+        intensity = dict(self._BENCH_INTENS)[self._bench_intens_var.get()]
+        load_sec  = dict(self._BENCH_DURATION)[self._bench_dur_var.get()]
+
+        total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
+        if not messagebox.askyesno(
+                "Bench thermique",
+                f"Le test va solliciter le processeur (intensité {intensity} %) puis "
+                f"mesurer le refroidissement, sur environ {total_min} min au total.\n\n"
+                "Arrêt automatique si la température CPU dépasse 95 °C.\n"
+                "Fermez les autres applications lourdes pour un résultat fiable.\n\n"
+                "Démarrer le test ?"):
+            return
+
+        out_dir = str(Path(self.out_dir_var.get()) / "thermal")
+        cfg = BenchConfig(
+            label=label, idle_sec=self._BENCH_IDLE_SEC, load_sec=load_sec,
+            cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity,
+            sample_interval_ms=2000, output_dir=out_dir,
+        ).normalized()
+
+        self._bench_samples   = []
+        self._bench_mode = "single"
+        self._bench_compare_data = None
+        self._bench_total_sec = cfg.idle_sec + cfg.load_sec + cfg.cooldown_sec
+        b1 = cfg.idle_sec
+        b2 = cfg.idle_sec + cfg.load_sec
+        self._bench_bounds = [(0, b1, "idle"), (b1, b2, "load"),
+                              (b2, self._bench_total_sec, "cooldown")]
+
+        self._bench = ThermalBench(
+            cfg,
+            on_sample=self._bench_on_sample,
+            on_phase=self._bench_on_phase,
+            on_finish=self._bench_on_finish,
+            on_error=self._bench_on_error,
+        )
+        if not self._bench.start():
+            self._bench = None
+            messagebox.showerror(
+                "Bench thermique",
+                "Impossible de démarrer les capteurs (LibreHardwareMonitor).")
+            return
+
+        self._bench_running = True
+        self._bench_set_controls(False)
+        self._bench_btn.config(text="■   Arrêter", bg=RED,
+                               activebackground=RED_HOVER, state="normal")
+        self._bench_result_var.set("Test en cours…")
+        self._bench_live_var.set("")
+        self._bench_draw_chart()
+
+    def _bench_set_controls(self, enabled: bool):
+        state = "readonly" if enabled else "disabled"
+        for cb in (self._bench_label_cb, self._bench_intens_cb, self._bench_dur_cb):
+            cb.config(state=state)
+
+    def _bench_reset_button(self):
+        self._bench_running = False
+        self._bench = None
+        self._bench_set_controls(True)
+        self._bench_btn.config(text="▶   Démarrer le test", bg=ACCENT,
+                               activebackground=ACCENT_HOVER, state="normal")
+
+    # -- Callbacks moteur (remarshalés vers le thread tkinter) -----------------
+
+    def _bench_on_sample(self, rec):
+        self.after(0, self._bench_consume_sample, rec)
+
+    def _bench_consume_sample(self, rec):
+        if not self._bench_running:
+            return
+        self._bench_samples.append(rec)
+        cpu = rec.get("cpu"); gpu = rec.get("gpu"); clk = rec.get("clock")
+        parts = [f"CPU {cpu:.0f}°C" if cpu is not None else "CPU —",
+                 f"GPU {gpu:.0f}°C" if gpu is not None else "GPU —"]
+        if clk:
+            parts.append(f"{clk:.0f} MHz")
+        self._bench_live_var.set("    ".join(parts))
+        self._bench_draw_chart()
+
+    def _bench_on_phase(self, phase, idx, total):
+        self.after(0, self._bench_set_phase, phase, idx, total)
+
+    def _bench_set_phase(self, phase, idx, total):
+        names = {
+            BenchPhase.IDLE:     ("Repos (baseline)", FG_DIM),
+            BenchPhase.LOAD:     ("Charge CPU", RED),
+            BenchPhase.COOLDOWN: ("Refroidissement", ACCENT),
+        }
+        label, color = names.get(phase, ("?", FG))
+        self._bench_phase_var.set(f"Phase {idx}/{total} — {label}")
+        self._bench_phase_lbl.config(fg=color)
+
+    def _bench_on_finish(self, session, path):
+        self.after(0, self._bench_finished, session, path)
+
+    def _bench_finished(self, session, path):
+        self._bench_reset_button()
+        m = session.get("metrics", {})
+        self._bench_result_var.set(self._bench_format_metrics(m, session))
+        if session.get("aborted"):
+            self._bench_phase_var.set("Interrompu")
+            self._bench_phase_lbl.config(fg=YELLOW)
+        else:
+            self._bench_phase_var.set("Terminé")
+            self._bench_phase_lbl.config(fg=GREEN)
+        self._bench_draw_chart()
+        self._bench_refresh_sessions()
+        if session.get("emergency"):
+            messagebox.showwarning(
+                "Arrêt d'urgence",
+                "Température CPU au-delà de 95 °C : la charge a été coupée "
+                "automatiquement. Le refroidissement a tout de même été mesuré.")
+
+    def _bench_on_error(self, msg):
+        self.after(0, self._bench_errored, msg)
+
+    def _bench_errored(self, msg):
+        self._bench_reset_button()
+        self._bench_phase_var.set("Erreur")
+        self._bench_phase_lbl.config(fg=RED)
+        messagebox.showerror("Bench thermique", msg)
+
+    # -- Sessions enregistrées -------------------------------------------------
+
+    def _bench_refresh_sessions(self):
+        self._bench_sessions_list.delete(0, "end")
+        self._bench_session_files = []
+        try:
+            out = str(Path(self.out_dir_var.get()) / "thermal")
+            sessions = bench_list_sessions(out)
+        except Exception:
+            sessions = []
+        if not sessions:
+            self._bench_sessions_list.insert("end", "  (aucune session)")
+            return
+        for s in sessions[:50]:
+            lab = self._BENCH_LABELS_FR.get(s.get("label"), s.get("label") or "?")
+            when = ""
+            try:
+                when = datetime.fromisoformat(s["started_at"]).strftime("%d/%m %H:%M")
+            except Exception:
+                pass
+            m = s.get("metrics") or {}
+            d = m.get("delta_c"); mx = m.get("load_max_c")
+            dt = f"ΔT {d:+.0f}°C" if d is not None else "ΔT —"
+            mxs = f"max {mx:.0f}°C" if mx is not None else "max —"
+            flag = " (interrompu)" if s.get("aborted") else ""
+            self._bench_sessions_list.insert(
+                "end", f"[{lab:5}] {when}  {dt}  {mxs}{flag}")
+            self._bench_session_files.append(s["file"])
+
+    def _bench_open_session(self, _event=None):
+        if self._bench_running:
+            return
+        sel = self._bench_sessions_list.curselection()
+        if not sel or sel[0] >= len(self._bench_session_files):
+            return
+        session = bench_load_session(self._bench_session_files[sel[0]])
+        if not session:
+            return
+        self._bench_mode = "single"
+        self._bench_compare_data = None
+        self._bench_samples = session.get("samples", [])
+        cfg = session.get("config", {})
+        b1 = cfg.get("idle_sec", 0)
+        b2 = b1 + cfg.get("load_sec", 0)
+        self._bench_total_sec = max(1, b2 + cfg.get("cooldown_sec", 0))
+        self._bench_bounds = [(0, b1, "idle"), (b1, b2, "load"),
+                              (b2, self._bench_total_sec, "cooldown")]
+        lab = self._BENCH_LABELS_FR.get(session.get("label"), "?")
+        self._bench_phase_var.set(f"Session affichée — {lab}")
+        self._bench_phase_lbl.config(fg=FG_DIM)
+        self._bench_live_var.set("")
+        self._bench_result_var.set(
+            self._bench_format_metrics(session.get("metrics", {}), session))
+        self._bench_draw_chart()
+
+    # -- Comparaison avant / après --------------------------------------------
+
+    def _bench_compare(self):
+        if self._bench_running:
+            messagebox.showinfo("Bench thermique", "Attendez la fin du test en cours.")
+            return
+        sel = self._bench_sessions_list.curselection()
+        files = [self._bench_session_files[i] for i in sel
+                 if i < len(self._bench_session_files)]
+        if len(files) != 2:
+            messagebox.showinfo(
+                "Comparaison",
+                "Sélectionnez exactement deux sessions (Ctrl+clic pour la seconde).")
+            return
+        s1 = bench_load_session(files[0])
+        s2 = bench_load_session(files[1])
+        if not s1 or not s2:
+            messagebox.showerror("Comparaison", "Impossible de charger les sessions.")
+            return
+        cmp = compare_sessions(s1, s2)
+        if not cmp["compatible"]:
+            messagebox.showwarning(
+                "Comparaison impossible",
+                "Les deux sessions n'ont pas le même protocole (durée ou intensité "
+                "de charge différente). Ne comparez que des tests identiques.")
+            return
+
+        before, after = cmp["before"], cmp["after"]
+
+        def total_of(s):
+            c = s.get("config", {})
+            return c.get("idle_sec", 0) + c.get("load_sec", 0) + c.get("cooldown_sec", 0)
+
+        cfg = after.get("config", {})
+        b1 = cfg.get("idle_sec", 0)
+        b2 = b1 + cfg.get("load_sec", 0)
+        self._bench_total_sec = max(1, total_of(before), total_of(after))
+        self._bench_bounds = [(0, b1, "idle"), (b1, b2, "load"),
+                              (b2, self._bench_total_sec, "cooldown")]
+        self._bench_mode = "compare"
+        self._bench_compare_data = (before.get("samples") or [],
+                                    after.get("samples") or [])
+        self._bench_phase_var.set("Comparaison avant / après")
+        self._bench_phase_lbl.config(fg=ACCENT)
+        self._bench_live_var.set("")
+        self._bench_result_var.set(self._bench_compare_summary(cmp))
+        self._bench_redraw()
+
+        try:
+            path = generate_comparison_report(
+                before, after, self.out_dir_var.get(), cmp)
+            os.startfile(str(Path(path).resolve()))
+        except Exception as exc:
+            logger.exception("Rapport de comparaison")
+            messagebox.showerror("Rapport", f"Échec de génération du rapport : {exc}")
+
+    @staticmethod
+    def _bench_compare_summary(cmp: dict) -> str:
+        g = cmp["gains"]; thr = cmp["throttling"]
+
+        def gtxt(key, unit="°C"):
+            d = g[key]["gain"]
+            if d is None:
+                return "—"
+            sign = "−" if d > 0 else ("+" if d < 0 else "±")
+            return f"{sign}{abs(d):.0f} {unit}"
+
+        line2 = (f"ΔT {gtxt('delta_c')}    •    plateau {gtxt('load_plateau_c')}"
+                 f"    •    max {gtxt('load_max_c')}"
+                 f"    •    retour au calme {gtxt('cooldown_sec', 's')}")
+        if thr["eliminated"]:
+            line2 += "    •    throttling éliminé"
+        elif thr["appeared"]:
+            line2 += "    •    throttling apparu"
+        return f"Verdict : {cmp['verdict']}\n{line2}"
+
+    # -- Mise en forme des métriques ------------------------------------------
+
+    @staticmethod
+    def _bench_format_metrics(m: dict, session: dict) -> str:
+        def deg(x):
+            return f"{x:.0f}°C" if x is not None else "—"
+        d   = m.get("delta_c")
+        dts = f"{d:+.0f}°C" if d is not None else "—"
+        cool = m.get("cooldown_sec")
+        cs = f"{cool:.0f} s" if cool is not None else "non atteint"
+        thr = "oui" if m.get("throttling") else "non"
+        fanl = m.get("fan_load_rpm")
+        fans = f"{fanl} tr/min" if fanl else "—"
+        line1 = (f"T repos {deg(m.get('idle_c'))}    •    T max {deg(m.get('load_max_c'))}"
+                 f"    •    plateau {deg(m.get('load_plateau_c'))}    •    ΔT {dts}")
+        line2 = (f"Throttling : {thr}    •    Retour au calme : {cs}"
+                 f"    •    Ventilo en charge : {fans}")
+        note = ""
+        if session.get("emergency"):
+            note = "\n⚠ Arrêt d'urgence à 95 °C — résultats partiels."
+        elif session.get("aborted"):
+            note = "\n⚠ Test interrompu — résultats partiels."
+        return f"{line1}\n{line2}{note}"
+
+    # -- Graphe (tk.Canvas) ----------------------------------------------------
+
+    @staticmethod
+    def _bench_sample_value(s: dict, key: str):
+        if key == "__disk__":
+            temps = [d.get("t") for d in (s.get("disks") or [])
+                     if isinstance(d, dict) and d.get("t") is not None]
+            return max(temps) if temps else None
+        return s.get(key)
+
+    @staticmethod
+    def _fmt_mmss(sec: float) -> str:
+        sec = int(sec)
+        return f"{sec // 60}:{sec % 60:02d}"
+
+    def _bench_redraw(self):
+        """Dispatcher : redessine selon le mode (live/single ou comparaison)."""
+        if self._bench_mode == "compare" and self._bench_compare_data:
+            self._bench_draw_compare(*self._bench_compare_data)
+        else:
+            self._bench_draw_chart()
+
+    def _bench_chart_geom(self):
+        """Prépare le canvas (cadre, zones, grille, ligne 95 °C, temps). Retourne
+        (canvas, x0, y0, x1, y1, X, Y) ou None si trop petit."""
+        c = getattr(self, "_bench_canvas", None)
+        if c is None:
+            return None
+        c.delete("all")
+        w = c.winfo_width(); h = c.winfo_height()
+        if w < 60 or h < 60:
+            return None
+        ml, mr, mt, mb = 46, 14, 24, 26
+        x0, y0, x1, y1 = ml, mt, w - mr, h - mb
+        if x1 - x0 < 10 or y1 - y0 < 10:
+            return None
+        tmax = 100.0
+        total = max(1, self._bench_total_sec)
+        pw, ph = x1 - x0, y1 - y0
+
+        def X(t):
+            return x0 + (max(0.0, min(t, total)) / total) * pw
+
+        def Y(v):
+            return y1 - (max(0.0, min(v, tmax)) / tmax) * ph
+
+        zone = {"idle": ZONE_IDLE, "load": ZONE_LOAD, "cooldown": ZONE_COOL}
+        for a, b, name in self._bench_bounds:
+            c.create_rectangle(X(a), y0, X(b), y1, fill=zone.get(name, BG), width=0)
+        for temp in (0, 25, 50, 75, 100):
+            yy = Y(temp)
+            c.create_line(x0, yy, x1, yy, fill=BORDER)
+            c.create_text(x0 - 6, yy, text=str(temp), anchor="e",
+                          fill=FG_MUTED, font=("Segoe UI", 8))
+        ye = Y(95)
+        c.create_line(x0, ye, x1, ye, fill=RED, dash=(4, 3))
+        c.create_text(x1 - 2, ye - 7, text="95 °C", anchor="e",
+                      fill=RED, font=("Segoe UI", 8))
+        for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+            t = total * frac
+            c.create_text(X(t), y1 + 4, text=self._fmt_mmss(t), anchor="n",
+                          fill=FG_MUTED, font=("Segoe UI", 8))
+        c.create_rectangle(x0, y0, x1, y1, outline=BORDER, width=1)
+        return c, x0, y0, x1, y1, X, Y
+
+    @staticmethod
+    def _bench_polyline(c, samples, key, color, X, Y, getter, dash=None):
+        pts = []
+        for s in samples:
+            v = getter(s, key)
+            if v is None:
+                continue
+            pts.extend((X(s.get("t", 0)), Y(v)))
+        if len(pts) >= 4:
+            kw = {"dash": dash} if dash else {}
+            c.create_line(*pts, fill=color, width=2, smooth=True, **kw)
+        elif len(pts) == 2:
+            c.create_oval(pts[0] - 2, pts[1] - 2, pts[0] + 2, pts[1] + 2,
+                          fill=color, width=0)
+
+    @staticmethod
+    def _bench_legend(c, x0, y0, items, dashes=None):
+        lx, ly = x0 + 8, y0 + 6
+        for i, (color, lbl) in enumerate(items):
+            if dashes and dashes[i]:
+                c.create_line(lx, ly + 6, lx + 14, ly + 6, fill=color, width=2, dash=dashes[i])
+            else:
+                c.create_rectangle(lx, ly, lx + 11, ly + 11, fill=color, width=0)
+            c.create_text(lx + 17, ly + 6, text=lbl, anchor="w",
+                          fill=FG_DIM, font=("Segoe UI", 8))
+            lx += 17 + len(lbl) * 7 + 18
+
+    def _bench_draw_chart(self):
+        geom = self._bench_chart_geom()
+        if geom is None:
+            return
+        c, x0, y0, x1, y1, X, Y = geom
+        series = (("cpu", RED, "CPU"), ("gpu", GREEN, "GPU"), ("__disk__", YELLOW, "Disque"))
+        for key, color, _lbl in series:
+            self._bench_polyline(c, self._bench_samples, key, color, X, Y,
+                                 self._bench_sample_value)
+        self._bench_legend(c, x0, y0, [(col, lbl) for _k, col, lbl in series])
+
+    def _bench_draw_compare(self, before_samples, after_samples):
+        geom = self._bench_chart_geom()
+        if geom is None:
+            return
+        c, x0, y0, x1, y1, X, Y = geom
+        get = lambda s, k: s.get("cpu")
+        self._bench_polyline(c, before_samples, "cpu", ORANGE, X, Y, get, dash=(6, 3))
+        self._bench_polyline(c, after_samples, "cpu", GREEN, X, Y, get)
+        self._bench_legend(c, x0, y0,
+                           [(ORANGE, "Avant (CPU)"), (GREEN, "Après (CPU)")],
+                           dashes=[(6, 3), None])
+
+    def _on_app_close(self):
+        """Arrêt propre : coupe le bench (et son worker de charge) avant de fermer."""
+        try:
+            if getattr(self, "_bench", None) is not None:
+                self._bench.stop()
+        except Exception:
+            pass
+        self.destroy()
 
     # ── Driver PawnIO (température/fréquence CPU) au démarrage ────────────────
     def _ensure_pawnio_startup(self):
