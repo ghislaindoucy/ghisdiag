@@ -1,6 +1,6 @@
 # PlanetDiag — Résumé & Roadmap
 
-**Version actuelle : 1.4.0** (2026-06-11) — [Release](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.4.0)
+**Version actuelle : 1.5.0** (2026-06-18) — [Release](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.5.0)
 
 ---
 
@@ -54,7 +54,7 @@ prefs.py / security.py  préférences persistées, UAC, garde-fous
 
 ## 🗺️ Roadmap
 
-### v1.5.0 — 🌡️ Bench thermique avant/après maintenance ⭐ *priorité*
+### v1.5.0 — 🌡️ Bench thermique avant/après maintenance ✅ *livré*
 
 **Le besoin** : objectiver le gain d'un nettoyage ou d'un changement de pâte thermique.
 Courbes de température **avant** intervention, courbes **après**, et chiffrage du gain —

@@ -4,7 +4,31 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
-## [Non publié]
+## [1.5.0] — 2026-06-18
+
+### 🌡️ Bench thermique avant / après maintenance
+
+Nouvel onglet **« Bench thermique »** pour objectiver le gain d'un nettoyage ou d'un
+changement de pâte thermique — un argument concret à montrer au client.
+
+- **Source de températures fiable** : embarque **LibreHardwareMonitorLib** (MPL-2.0)
+  + le driver **PawnIO** (signé, hors blocklist Win11) pour lire température et
+  fréquence CPU via les MSR. Remplace la chaîne WMI/OHM fragile (souvent vide sur
+  desktop). Bénéfice immédiat : le moniteur temps réel affiche enfin des
+  températures partout (CPU/GPU/disques/ventilateurs)
+- **Moteur de bench** (`thermal_bench.py`) : protocole repos → charge CPU →
+  refroidissement, durées et intensité (50/100 %) configurables. Génération de
+  charge par workers PowerShell (runspaces .NET, un par cœur). **Arrêt d'urgence
+  automatique à 95 °C**. Métriques : T repos/max/plateau, ΔT, temps de retour au
+  calme, **détection de throttling**, vitesses ventilateurs. Sessions enregistrées
+  en JSON horodaté (avant/après/libre)
+- **Graphe temps réel** sur `tk.Canvas` (zones colorées par phase, courbes
+  CPU/GPU/disque, ligne d'urgence 95 °C) — sans matplotlib, l'exe reste léger
+- **Comparaison avant / après** (`thermal_compare.py`) : courbes superposées,
+  carte des gains (ΔT, plateau, max, retour au calme, throttling éliminé) et
+  **rapport HTML autonome** (courbes SVG, hors-ligne, imprimable) avec verdict
+  clair pour le client. Garde-fou honnêteté : protocoles identiques exigés, et le
+  ΔT (insensible à l'ambiant) est mis en avant comme mesure fiable
 
 ### ✨ Nouvelles Fonctionnalités
 

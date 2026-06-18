@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.4.0)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.5.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -129,6 +129,15 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.5.0 (Juin 2026)
+🌡️ **Bench thermique avant / après maintenance**
+- Nouvel onglet : protocole repos → charge CPU → refroidissement, courbes en temps réel
+- Températures fiables via LibreHardwareMonitor + driver PawnIO (CPU/GPU/disques/ventilateurs)
+- Détection de throttling, arrêt d'urgence à 95 °C, sessions enregistrées
+- Comparaison avant/après : courbes superposées + rapport HTML imprimable avec verdict client
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.5.0.md)
 
 ### v1.4.0 (Juin 2026)
 🎨 **Refonte graphique — Catppuccin Mocha**
