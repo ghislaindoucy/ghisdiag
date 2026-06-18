@@ -20,6 +20,17 @@ except ImportError:
     _HAS_PSUTIL = False
     logger.warning("psutil non disponible — moniteur temps reel limite")
 
+# Source de temperatures preferentielle : LibreHardwareMonitor (fiable, capteurs
+# CPU/GPU/disques/ventilateurs). On retombe sur la chaine WMI/OHM historique si
+# la DLL est absente ou echoue.
+try:
+    from collectors import sensors as _sensors
+    _HAS_LHM = True
+except Exception:
+    _sensors = None
+    _HAS_LHM = False
+    logger.debug("collectors.sensors (LHM) indisponible — fallback WMI")
+
 
 def _ps_exe() -> str:
     sysroot = os.environ.get("SystemRoot", r"C:\Windows")
@@ -111,9 +122,26 @@ def get_disk_io_percent() -> float | None:
 
 
 def get_temperatures() -> dict:
-    """Recupere les temperatures via PowerShell WMI (bloquant ~3-5s).
+    """Temperatures CPU/GPU/disques. Tente d'abord LibreHardwareMonitor (fiable),
+    puis retombe sur la chaine WMI/OHM historique.
     Retourne {"cpu": float|None, "gpu": float|None, "disks": [{"model": str, "temp": float}]}
     """
+    if _HAS_LHM and _sensors is not None:
+        try:
+            lhm = _sensors.get_temperatures()
+            # On accepte le resultat LHM des qu'il fournit une temperature
+            # exploitable (CPU ou GPU). Sinon on tente le fallback WMI.
+            if lhm is not None and (lhm.get("cpu") is not None
+                                    or lhm.get("gpu") is not None
+                                    or lhm.get("disks")):
+                return lhm
+        except Exception as exc:
+            logger.debug("Temperatures LHM : %s", exc)
+    return _get_temperatures_wmi()
+
+
+def _get_temperatures_wmi() -> dict:
+    """Fallback historique : temperatures via PowerShell WMI (bloquant ~3-5s)."""
     result: dict = {"cpu": None, "gpu": None, "disks": []}
     try:
         proc = subprocess.run(

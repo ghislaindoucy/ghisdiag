@@ -53,6 +53,14 @@ py -m PyInstaller ^
     --add-data "assets;assets" ^
     --add-data "report;report" ^
     --add-binary "tools\smartctl.exe;tools" ^
+    --add-binary "tools\LibreHardwareMonitorLib.dll;tools" ^
+    --add-binary "tools\HidSharp.dll;tools" ^
+    --add-binary "tools\BlackSharp.Core.dll;tools" ^
+    --add-binary "tools\DiskInfoToolkit.dll;tools" ^
+    --add-binary "tools\System.Memory.dll;tools" ^
+    --add-binary "tools\System.Numerics.Vectors.dll;tools" ^
+    --add-binary "tools\System.Runtime.CompilerServices.Unsafe.dll;tools" ^
+    --add-binary "tools\PawnIO_setup.exe;tools" ^
     --hidden-import tkinter ^
     --hidden-import tkinter.ttk ^
     --hidden-import json ^
@@ -64,6 +72,8 @@ py -m PyInstaller ^
     --hidden-import mistral_report ^
     --collect-submodules cryptography ^
     --hidden-import collectors.realtime_monitor ^
+    --hidden-import collectors.sensors ^
+    --hidden-import collectors.pawnio ^
     --icon assets\icon.ico ^
     main.py
 

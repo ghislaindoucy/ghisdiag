@@ -294,6 +294,11 @@ class PlanetDiagApp(tk.Tk):
         self._build_wifi_tab(wifi_frame)
         self._build_setup_tab(setup_frame)
 
+        # Installation du driver PawnIO (temp/freq CPU) au plus tot, en tache de
+        # fond : il sera pret avant le 1er relevé de températures (~10 s).
+        self.after(300, lambda: threading.Thread(
+            target=self._ensure_pawnio_startup, daemon=True).start())
+
         # Démarrage du moniteur et vérification SMART au lancement
         self.after(800, self._monitor_start)
         self.after(1200, lambda: threading.Thread(
@@ -2628,6 +2633,17 @@ class PlanetDiagApp(tk.Tk):
             logger.debug("Fetch températures : %s", exc)
         finally:
             self._temp_loading = False
+
+    # ── Driver PawnIO (température/fréquence CPU) au démarrage ────────────────
+    def _ensure_pawnio_startup(self):
+        """Installe PawnIO en silence s'il manque (idempotent). Sans lui, LHM ne
+        peut pas lire la température ni la fréquence CPU. Échec = temp CPU N/A."""
+        try:
+            from collectors import pawnio
+            result = pawnio.ensure_pawnio()
+            logger.info("PawnIO au démarrage : %s", result.get("action"))
+        except Exception as exc:
+            logger.debug("PawnIO startup : %s", exc)
 
     # ── Vérification SMART au démarrage ──────────────────────────────────────
     def _smart_startup_check(self):
