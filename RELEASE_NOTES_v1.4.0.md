@@ -1,4 +1,4 @@
-# PlanetDiag v1.4.0 — Notes de Release
+# Ghisdiag v1.4.0 — Notes de Release
 
 **Date de sortie :** 2026-06-11  
 **Version précédente :** 1.3.0
@@ -83,6 +83,6 @@ release: bump version 1.4.0 (orchestrator, generator, version_info, README, mist
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag.exe`
+- **Exe** : `Ghisdiag.exe`
 - **Sha256** : `86b07adf0d80fb19228fc25fc5609bbfd7eaf2b367495ee13bf9d24113362188`
 - **Taille** : 19.2 MB

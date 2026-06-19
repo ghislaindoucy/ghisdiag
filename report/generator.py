@@ -1,5 +1,5 @@
 """
-PlanetDiag - Générateur de rapport HTML et JSON
+Ghisdiag - Générateur de rapport HTML et JSON
 """
 
 import html
@@ -12,7 +12,7 @@ from typing import Any
 
 VERSION = "1.6.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
-DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "PlanetDiag_Reports"
+DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "Ghisdiag_Reports"
 
 # Garde-fou faux positif "démarrage lent" : l'événement Diagnostics-Performance
 # ID 100 est journalisé à CHAQUE démarrage de Windows. On ne le considère "lent"
@@ -183,7 +183,7 @@ class ReportGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
         machine  = self.meta.get("machine", "UNKNOWN")
-        basename = f"PlanetDiag_{machine}_{ts}"
+        basename = f"Ghisdiag_{machine}_{ts}"
 
         html_path = self.output_dir / f"{basename}.html"
         json_path = self.output_dir / f"{basename}.json"
@@ -425,13 +425,13 @@ class ReportGenerator:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PlanetDiag – {machine} – {collected}</title>
+<title>Ghisdiag – {machine} – {collected}</title>
 <style>{css}</style>
 </head>
 <body>
 
 <div class="header">
-  <h1>🔍 PlanetDiag <span style="font-size:14px;color:var(--fg-muted);font-weight:400">v{VERSION}</span></h1>
+  <h1>🔍 Ghisdiag <span style="font-size:14px;color:var(--fg-muted);font-weight:400">v{VERSION}</span></h1>
   <div class="header-meta">
     <span>💻 <strong>{machine}</strong></span>
     <span>🕐 {collected}</span>
@@ -454,7 +454,7 @@ class ReportGenerator:
 {body}
 
 <footer>
-  Généré par <strong>PlanetDiag v{VERSION}</strong> le {collected} — Machine : {machine}<br>
+  Généré par <strong>Ghisdiag v{VERSION}</strong> le {collected} — Machine : {machine}<br>
   <span style="color:var(--fg-muted);font-size:11px">Développé par {_esc(AUTHORS)}</span>
 </footer>
 <a class="back-top" href="#" title="Haut de page">↑</a>

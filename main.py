@@ -1,5 +1,5 @@
 """
-PlanetDiag - Interface graphique principale
+Ghisdiag - Interface graphique principale
 """
 
 import os
@@ -38,7 +38,7 @@ from security import is_admin, request_elevation, is_safe_output_dir
 
 # ── Logging (avec rotation pour éviter la croissance illimitée) ──────────────
 _log_handler = logging.handlers.RotatingFileHandler(
-    LOG_DIR / "planetdiag.log",
+    LOG_DIR / "ghisdiag.log",
     maxBytes=2 * 1024 * 1024,
     backupCount=3,
     encoding="utf-8",
@@ -93,10 +93,10 @@ TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
 
 
-class PlanetDiagApp(tk.Tk):
+class GhisdiagApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PlanetDiag")
+        self.title("Ghisdiag")
         self.resizable(True, True)
         self.minsize(700, 580)
         self.configure(bg=BG)
@@ -258,7 +258,7 @@ class PlanetDiagApp(tk.Tk):
         # Zone titre
         title_zone = tk.Frame(hdr_inner, bg=BG)
         title_zone.pack(side="left", anchor="center")
-        tk.Label(title_zone, text="PlanetDiag",
+        tk.Label(title_zone, text="Ghisdiag",
                  font=("Segoe UI Semibold", 22), bg=BG, fg=FG).pack(anchor="w")
         tk.Label(title_zone, text="Diagnostic & maintenance Windows",
                  font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(anchor="w")
@@ -2231,7 +2231,7 @@ class PlanetDiagApp(tk.Tk):
         self.log.configure(state="disabled")
 
     def _open_log_file(self):
-        log_path = LOG_DIR / "planetdiag.log"
+        log_path = LOG_DIR / "ghisdiag.log"
         if log_path.exists():
             try:
                 os.startfile(str(log_path))
@@ -2987,7 +2987,7 @@ class PlanetDiagApp(tk.Tk):
                 "endommager le matériel.\n\n"
                 "Ne lancez ce test que sur une machine dont l'état le permet. En "
                 "cliquant sur « Oui », vous le démarrez en connaissance de cause et "
-                "sous votre entière responsabilité ; PlanetDiag et son auteur ne "
+                "sous votre entière responsabilité ; Ghisdiag et son auteur ne "
                 "sauraient être tenus responsables d'un éventuel dommage matériel.\n\n"
                 "Fermez les autres applications lourdes pour un résultat fiable.\n\n"
                 "Démarrer le test ?",
@@ -3954,7 +3954,7 @@ class PlanetDiagApp(tk.Tk):
         self._maj_log_clear()
         self._maj_log_append("Microsoft Store ouvert — page App Installer.", GREEN)
         self._maj_log_append("Cliquez sur « Mettre à jour » dans le Store,")
-        self._maj_log_append("puis fermez et relancez PlanetDiag.")
+        self._maj_log_append("puis fermez et relancez Ghisdiag.")
 
     def _maj_update_winget_github(self):
         if self._setup_busy:
@@ -3980,7 +3980,7 @@ class PlanetDiagApp(tk.Tk):
                     self._maj_bar.pack_forget()
                     self._maj_log_append("─" * 50)
                     if rc == 0:
-                        self._maj_log_append("✓ Relancez PlanetDiag pour utiliser la nouvelle version.", GREEN)
+                        self._maj_log_append("✓ Relancez Ghisdiag pour utiliser la nouvelle version.", GREEN)
                         self._maj_check_winget()
                     else:
                         self._maj_log_append(f"⚠ Terminé avec code {rc}.", YELLOW)
@@ -4671,7 +4671,7 @@ class PlanetDiagApp(tk.Tk):
 def main():
     if not is_admin() and "--no-uac" not in sys.argv:
         request_elevation()
-    PlanetDiagApp().mainloop()
+    GhisdiagApp().mainloop()
 
 if __name__ == "__main__":
     main()

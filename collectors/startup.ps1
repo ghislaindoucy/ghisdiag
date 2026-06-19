@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Démarrage Windows
+﻿# Ghisdiag - Collecteur Démarrage Windows
 # Collecte les programmes démarrage, services, tâches planifiées, durée boot
 
 $ErrorActionPreference = "SilentlyContinue"

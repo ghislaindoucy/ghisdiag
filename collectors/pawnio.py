@@ -1,5 +1,5 @@
 """
-PlanetDiag - Gestion du driver PawnIO (acces MSR -> temperature/frequence CPU).
+Ghisdiag - Gestion du driver PawnIO (acces MSR -> temperature/frequence CPU).
 
 LibreHardwareMonitor lit la temperature et la frequence du CPU (et les
 ventilateurs de la carte mere) via les registres MSR, accessibles uniquement
@@ -10,7 +10,7 @@ Sans PawnIO : GPU, disques, ventilateur GPU et charge CPU remontent ; mais la
 temperature CPU, la frequence CPU et les ventilateurs carte mere restent N/A.
 
 Ce module detecte PawnIO et l'installe silencieusement depuis l'installeur signe
-embarque (tools\\PawnIO_setup.exe -install -silent). PlanetDiag tournant deja
+embarque (tools\\PawnIO_setup.exe -install -silent). Ghisdiag tournant deja
 sous UAC en production, aucune elevation supplementaire n'est necessaire.
 """
 

@@ -1,15 +1,15 @@
-# 🔍 PlanetDiag
+# 🔍 Ghisdiag
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.6.0)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
 
 ---
 
-## ✨ Ce que tu peux faire avec PlanetDiag
+## ✨ Ce que tu peux faire avec Ghisdiag
 
 ### 🚀 Diagnostic complet en moins de 5 minutes
 
@@ -39,7 +39,7 @@ Après ton diagnostic, active l'analyse IA pour obtenir :
 
 ### 1️⃣ Télécharge et lance
 ```bash
-# Récupère PlanetDiag.exe depuis les releases
+# Récupère Ghisdiag.exe depuis les releases
 # Double-clique et c'est parti!
 ```
 
@@ -59,7 +59,7 @@ Après ton diagnostic, active l'analyse IA pour obtenir :
 ## 📦 Installation
 
 ### Windows (Exe seul)
-1. Télécharge `PlanetDiag.exe` depuis les [releases](https://github.com/ghislaindoucy/planetdiag/releases)
+1. Télécharge `Ghisdiag.exe` depuis les [releases](https://github.com/ghislaindoucy/ghisdiag/releases)
 2. Double-clique
 3. Accepte les droits administrateur
 4. C'est parti!
@@ -68,8 +68,8 @@ Après ton diagnostic, active l'analyse IA pour obtenir :
 
 ### Développement (depuis le code source)
 ```bash
-git clone https://github.com/ghislaindoucy/planetdiag.git
-cd planetdiag
+git clone https://github.com/ghislaindoucy/ghisdiag.git
+cd ghisdiag
 
 # Installe les dépendances
 pip install -r requirements.txt
@@ -82,11 +82,11 @@ python main.py
 
 ## 🔌 Configuration Mistral IA (optionnel)
 
-Veux tu que PlanetDiag génère des audits IA ?
+Veux tu que Ghisdiag génère des audits IA ?
 
 1. **Crée un compte** : https://console.mistral.ai (gratuit)
 2. **Génère une clé API** dans les paramètres
-3. **Colle-la dans PlanetDiag** → onglet Analyse → panneau IA
+3. **Colle-la dans Ghisdiag** → onglet Analyse → panneau IA
 4. **Teste** → clic sur "Tester la clé"
 5. **C'est bon!** Le prochain diagnostic lancera auto l'IA
 
@@ -98,7 +98,7 @@ Veux tu que PlanetDiag génère des audits IA ?
 
 ### Rapport Technique (automatique)
 ```
-PlanetDiag_LAPTOP-ABC_20250603_143056.html
+Ghisdiag_LAPTOP-ABC_20250603_143056.html
 ├── Alertes détectées (RAM à 92%, driver obsolète)
 ├── Statistiques système (graphiques)
 ├── Historique des erreurs
@@ -107,7 +107,7 @@ PlanetDiag_LAPTOP-ABC_20250603_143056.html
 
 ### Rapport IA Mistral (optionnel)
 ```
-PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
+Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ├── Résumé exécutif
 ├── Problèmes rangés par priorité
 ├── **Commandes exactes à exécuter**
@@ -230,7 +230,7 @@ cd D:\Projets\PlanetDIag
 build.bat
 ```
 
-L'exe généré : `dist/PlanetDiag.exe`
+L'exe généré : `dist/Ghisdiag.exe`
 - Toutes les dépendances embarquées
 - Aucun Python requis chez l'utilisateur
 - ~80-100 MB
@@ -258,7 +258,7 @@ L'exe généré : `dist/PlanetDiag.exe`
 ## ❓ FAQ
 
 **Q: L'exe est sûr?**  
-A: Oui. Télécharge depuis les [releases GitHub officielles](https://github.com/ghislaindoucy/planetdiag/releases). Code source open source.
+A: Oui. Télécharge depuis les [releases GitHub officielles](https://github.com/ghislaindoucy/ghisdiag/releases). Code source open source.
 
 **Q: Ça fonctionne sur Linux/Mac?**  
 A: Non, Windows uniquement. C'est spécifique à Windows (WMI, PowerShell, services Windows).
@@ -267,7 +267,7 @@ A: Non, Windows uniquement. C'est spécifique à Windows (WMI, PowerShell, servi
 A: Non, sauf si tu veux l'analyse IA Mistral. Le diagnostic seul est 100% offline.
 
 **Q: Où va l'exe en écrivant les rapports?**  
-A: `%USERPROFILE%\Documents\PlanetDiag_Reports` (modifiable dans l'interface).
+A: `%USERPROFILE%\Documents\Ghisdiag_Reports` (modifiable dans l'interface).
 
 **Q: Ça mange beaucoup?**  
 A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <200 MB.
@@ -276,8 +276,8 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 
 ## 📞 Support
 
-- 🐛 **Bug trouvé?** → [Ouvre une issue GitHub](https://github.com/ghislaindoucy/planetdiag/issues)
-- 💡 **Suggestion?** → [Ouvre une discussion](https://github.com/ghislaindoucy/planetdiag/discussions)
+- 🐛 **Bug trouvé?** → [Ouvre une issue GitHub](https://github.com/ghislaindoucy/ghisdiag/issues)
+- 💡 **Suggestion?** → [Ouvre une discussion](https://github.com/ghislaindoucy/ghisdiag/discussions)
 - 📖 **Question?** → Lis les docs d'abord 😉
 
 ---
@@ -286,6 +286,6 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.4.0](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.4.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/planetdiag/issues)
+[⬇️ Télécharge v1.4.0](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.4.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>

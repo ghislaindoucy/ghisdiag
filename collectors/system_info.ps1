@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Système
+﻿# Ghisdiag - Collecteur Système
 # Collecte les informations système, matériel et BIOS
 # Retourne un objet JSON
 

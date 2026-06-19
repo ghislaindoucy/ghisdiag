@@ -1,5 +1,5 @@
 """
-PlanetDiag - Moteur de bench thermique (Phase 1)
+Ghisdiag - Moteur de bench thermique (Phase 1)
 
 Objective un nettoyage / changement de pate thermique en mesurant le
 comportement en temperature d'une machine selon un protocole reproductible :
@@ -10,7 +10,7 @@ Le moteur s'appuie sur collectors.sensors.SensorStream (LibreHardwareMonitor)
 pour l'echantillonnage et sur collectors/cpu_load.ps1 pour generer la charge.
 Il calcule les metriques utiles (T idle, T max, T plateau, deltaT, temps de
 retour au calme, throttling), declenche un arret d'urgence au-dela d'un seuil,
-et sauvegarde la session en JSON horodate dans Documents\\PlanetDiag_Reports\\thermal.
+et sauvegarde la session en JSON horodate dans Documents\\Ghisdiag_Reports\\thermal.
 
 Conception : moteur pur (sans UI). Il expose des callbacks (on_sample, on_phase,
 on_finish, on_error) appeles depuis des threads de fond ; l'UI (Phase 2) devra
@@ -116,7 +116,7 @@ _NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 def default_output_dir() -> Path:
     """Dossier standard des sessions de bench."""
     return (Path(os.path.expanduser("~")) / "Documents"
-            / "PlanetDiag_Reports" / "thermal")
+            / "Ghisdiag_Reports" / "thermal")
 
 
 # --- Generateur de charge CPU -----------------------------------------------

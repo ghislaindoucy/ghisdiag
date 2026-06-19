@@ -1,4 +1,4 @@
-# PlanetDiag - Helpers PowerShell partagés
+# Ghisdiag - Helpers PowerShell partagés
 # Dot-sourcer avec : . "$PSScriptRoot\_common.ps1"
 # PREREQUIS : le script appelant doit avoir initialisé $script:errors = @()
 

@@ -1,4 +1,4 @@
-# Guide — Antivirus & Faux Positifs PlanetDiag
+# Guide — Antivirus & Faux Positifs Ghisdiag
 
 Un exécutable PyInstaller `--onefile` non signé déclenche souvent des faux positifs AV.
 Ce guide décrit les actions à prendre, du plus efficace au moins urgent.
@@ -35,7 +35,7 @@ Sans signature, chaque nouvelle version repart à zéro en termes de réputation
 winget install Microsoft.WindowsSDK.10.0.22621
 
 :: 4. Testez la signature :
-signtool verify /pa /v dist\PlanetDiag.exe
+signtool verify /pa /v dist\Ghisdiag.exe
 ```
 
 ---
@@ -45,7 +45,7 @@ signtool verify /pa /v dist\PlanetDiag.exe
 À faire **après chaque version majeure**. Rassemblez d'abord l'analyse VirusTotal :
 
 1. Allez sur [virustotal.com](https://www.virustotal.com)
-2. Déposez `dist\PlanetDiag.exe`
+2. Déposez `dist\Ghisdiag.exe`
 3. Notez quels AV détectent un problème
 4. Soumettez uniquement à ceux qui détectent
 
@@ -69,17 +69,17 @@ signtool verify /pa /v dist\PlanetDiag.exe
 ### Modèle de message à envoyer
 
 ```
-Objet : False Positive Report — PlanetDiag.exe
+Objet : False Positive Report — Ghisdiag.exe
 
 Bonjour,
 
 Je vous soumets un faux positif détecté par votre produit.
 
-Logiciel : PlanetDiag v1.2.0
+Logiciel : Ghisdiag v1.2.0
 Éditeur  : Ghislain DOUCY
 Usage    : Outil de diagnostic Windows (analyse matériel, réseau, sécurité)
            Génère un rapport HTML/JSON exportable. Open source.
-Hash SHA-256 : [collez le hash de dist\PlanetDiag.exe]
+Hash SHA-256 : [collez le hash de dist\Ghisdiag.exe]
 VirusTotal   : [collez l'URL du rapport]
 
 Ce logiciel est développé avec Python/PyInstaller et nécessite des droits
@@ -93,7 +93,7 @@ Ghislain DOUCY
 
 Pour obtenir le hash SHA-256 :
 ```powershell
-Get-FileHash dist\PlanetDiag.exe -Algorithm SHA256 | Select-Object Hash
+Get-FileHash dist\Ghisdiag.exe -Algorithm SHA256 | Select-Object Hash
 ```
 
 ---
@@ -119,7 +119,7 @@ décompresse dans `%TEMP%` à l'exécution — pattern identique à de nombreux 
 :: Après
 --onedir ^
 ```
-L'utilisateur recevra un dossier `dist\PlanetDiag\` au lieu d'un seul fichier.
+L'utilisateur recevra un dossier `dist\Ghisdiag\` au lieu d'un seul fichier.
 Zippez ce dossier pour la distribution.
 
 ---

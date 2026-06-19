@@ -1,4 +1,4 @@
-# PlanetDiag - Gestionnaire de Cartes Reseau
+# Ghisdiag - Gestionnaire de Cartes Reseau
 # Usage:
 #   -Action list                    -> liste tous les adaptateurs reseau (JSON)
 #   -Action reset -AdapterName <n>  -> desactive puis reactive l'adaptateur (JSON)

@@ -1,5 +1,5 @@
 """
-PlanetDiag - Orchestrateur
+Ghisdiag - Orchestrateur
 Exécute les collecteurs PowerShell et agrège les données.
 """
 
@@ -331,7 +331,7 @@ class DiagnosticOrchestrator:
             "meta": {
                 "version":         VERSION,
                 "authors":         AUTHORS,
-                "tool":            "PlanetDiag",
+                "tool":            "Ghisdiag",
                 "machine":         self.machine_name,
                 "collected_at":    self.collection_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "started_at":      start_time.strftime("%Y-%m-%d %H:%M:%S"),

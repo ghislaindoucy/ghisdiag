@@ -1,4 +1,4 @@
-# PlanetDiag - Dépendances Python
+# Ghisdiag - Dépendances Python
 # Installation : py -m pip install -r requirements.txt
 
 # Moniteur temps réel (CPU/RAM/IO/températures)

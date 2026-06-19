@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Performance
+﻿# Ghisdiag - Collecteur Performance
 # Collecte l'usage CPU, RAM, disque et les top processus consommateurs
 
 $ErrorActionPreference = "SilentlyContinue"

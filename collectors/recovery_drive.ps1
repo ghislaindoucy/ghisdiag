@@ -85,7 +85,7 @@ switch ($Action) {
             exit 0
         }
         try {
-            # Deja admin (PlanetDiag demande l'elevation au demarrage)
+            # Deja admin (Ghisdiag demande l'elevation au demarrage)
             Start-Process -FilePath $recExe
             [PSCustomObject]@{ success = $true } | ConvertTo-Json
         } catch {

@@ -1,4 +1,4 @@
-# PlanetDiag - Reparation systeme (SFC et DISM)
+# Ghisdiag - Reparation systeme (SFC et DISM)
 # Necessite les droits administrateur.
 # SFC n'expose pas son flux via pipe — run_ps_stream affichera
 # les lignes qui passent et servira de bloc jusqu'a la fin.

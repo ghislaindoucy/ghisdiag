@@ -1,4 +1,4 @@
-# Configuration Mistral AI pour PlanetDiag
+# Configuration Mistral AI pour Ghisdiag
 
 ## Installation des dépendances
 
@@ -20,9 +20,9 @@ pip install requests cryptography
 2. Générez une clé API dans les paramètres
 3. Copiez votre clé API
 
-### 2. Configurer dans PlanetDiag
+### 2. Configurer dans Ghisdiag
 
-1. Ouvrez PlanetDiag
+1. Ouvrez Ghisdiag
 2. Allez à l'onglet **"Analyse"** (onglet principal)
 3. Dans le panneau "🤖 Analyse IA Mistral", entrez votre clé API
 4. Cliquez sur **"Tester la clé"** pour vérifier la validité
@@ -33,7 +33,7 @@ pip install requests cryptography
 - Chaque diagnostic lancé avec une clé API valide :
   - Génère le rapport standard HTML + JSON
   - Lance une analyse Mistral IA (en arrière-plan, non-bloquante)
-  - Génère un rapport d'analyse `PlanetDiag_MACHINE_TIMESTAMP_AI_ANALYSIS.html`
+  - Génère un rapport d'analyse `Ghisdiag_MACHINE_TIMESTAMP_AI_ANALYSIS.html`
   - Ouvre automatiquement le rapport d'analyse dans le navigateur
 
 ## Sécurité
@@ -62,7 +62,7 @@ en clair dans `prefs.json`) :
 
 ## Tarification Mistral
 
-PlanetDiag utilise le modèle **Mistral Large** pour les analyses:
+Ghisdiag utilise le modèle **Mistral Large** pour les analyses:
 - Coût approximatif: ~€0.004 par diagnostic (modèle large)
 - Basé sur les tokens entrée/sortie
 - Consultez [Mistral Pricing](https://mistral.ai/technology/pricing/)
@@ -86,7 +86,7 @@ pip show requests cryptography
 # Réinstaller les dépendances
 pip install --upgrade requests cryptography
 
-# Pour PyInstaller (executable PlanetDiag)
+# Pour PyInstaller (executable Ghisdiag)
 # Contactez les développeurs pour une réinstallation
 ```
 
@@ -117,7 +117,7 @@ pip install --upgrade requests cryptography
 **Cause**: L'API Mistral n'a pas retourné de contenu.
 
 **Solution**:
-1. Vérifiez les logs dans le fichier log de PlanetDiag
+1. Vérifiez les logs dans le fichier log de Ghisdiag
 2. Réessayez le diagnostic
 3. Contactez le support Mistral si le problème persiste
 
@@ -136,10 +136,10 @@ Temperature: 0.7
 Après chaque diagnostic avec clé API valide:
 
 ```
-📁 Documents/PlanetDiag_Reports/
-├── PlanetDiag_LAPTOP-ABC_20260603_143056.html          # Rapport technique
-├── PlanetDiag_LAPTOP-ABC_20260603_143056.json          # Données brutes
-└── PlanetDiag_LAPTOP-ABC_20260603_143056_AI_ANALYSIS.html  # Analyse Mistral ✨
+📁 Documents/Ghisdiag_Reports/
+├── Ghisdiag_LAPTOP-ABC_20260603_143056.html          # Rapport technique
+├── Ghisdiag_LAPTOP-ABC_20260603_143056.json          # Données brutes
+└── Ghisdiag_LAPTOP-ABC_20260603_143056_AI_ANALYSIS.html  # Analyse Mistral ✨
 ```
 
 Le rapport `_AI_ANALYSIS.html` contient:
@@ -155,5 +155,5 @@ Le rapport `_AI_ANALYSIS.html` contient:
 
 Pour les problèmes:
 1. Consultez cette documentation
-2. Vérifiez les logs dans `%APPDATA%\Local\PlanetDiag\planetdiag.log`
-3. Contactez le support PlanetDiag
+2. Vérifiez les logs dans `%APPDATA%\Local\Ghisdiag\ghisdiag.log`
+3. Contactez le support Ghisdiag

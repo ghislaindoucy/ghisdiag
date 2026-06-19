@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Sécurité
+﻿# Ghisdiag - Collecteur Sécurité
 # Collecte antivirus, pare-feu, MAJ Windows, UAC, connexions utilisateur
 
 $ErrorActionPreference = "SilentlyContinue"

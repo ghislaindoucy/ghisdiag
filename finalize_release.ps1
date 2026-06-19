@@ -10,7 +10,7 @@
 
 param(
     [string]$Version = "1.4.0",
-    [string]$ExePath = "dist\PlanetDiag.exe",
+    [string]$ExePath = "dist\Ghisdiag.exe",
     [switch]$Commit,
     [switch]$Push,
     [switch]$Release

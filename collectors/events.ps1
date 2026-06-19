@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Événements Windows
+﻿# Ghisdiag - Collecteur Événements Windows
 # Collecte les événements critiques/erreurs des 72 dernières heures
 
 $ErrorActionPreference = "SilentlyContinue"

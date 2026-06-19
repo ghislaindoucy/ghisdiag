@@ -1,12 +1,12 @@
-# PlanetDiag — Résumé & Roadmap
+# Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.6.0** (2026-06-19) — [Release](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.6.0)
+**Version actuelle : 1.6.0** (2026-06-19) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.0)
 
 ---
 
 ## 📋 L'application aujourd'hui
 
-PlanetDiag est un **outil de diagnostic et de maintenance Windows tout-en-un**, compilé
+Ghisdiag est un **outil de diagnostic et de maintenance Windows tout-en-un**, compilé
 en un seul exécutable (PyInstaller, ~19 MB), sans aucune dépendance à installer sur la
 machine cible. Pensé pour le technicien SAV : on branche, on lance, on repart avec un
 rapport.
@@ -85,7 +85,7 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 - **Arrêt d'urgence** : automatique si T > 95 °C, ou bouton Stop
 - Métriques : T idle, T max, T plateau en charge, ΔT, temps de retour au calme
 - Session sauvegardée en JSON horodaté, étiquetée **Avant / Après / Libre**
-  (`Documents\PlanetDiag_Reports\thermal\`)
+  (`Documents\Ghisdiag_Reports\thermal\`)
 
 #### Phase 2 — UI : nouvel onglet « Bench thermique »
 

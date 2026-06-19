@@ -1,5 +1,5 @@
 """
-PlanetDiag - Générateur de rapport HTML pour l'analyse IA.
+Ghisdiag - Générateur de rapport HTML pour l'analyse IA.
 Convertit l'analyse IA (markdown) en rapport HTML élégant (thème Catppuccin).
 Indépendant du fournisseur : le libellé du fournisseur/modèle est passé en paramètre.
 """
@@ -342,7 +342,7 @@ def generate_ai_report(
         output_dir: répertoire de sortie
         provider_label: libellé du fournisseur (ex. "Anthropic (Claude)")
         model_label: libellé du modèle (ex. "Claude Opus 4.8")
-        app_version: version de PlanetDiag (pour le pied de page)
+        app_version: version de Ghisdiag (pour le pied de page)
 
     Returns:
         Path vers le fichier HTML généré.
@@ -351,7 +351,7 @@ def generate_ai_report(
         output_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"PlanetDiag_{machine_name}_{ts}_AI_ANALYSIS.html"
+        filename = f"Ghisdiag_{machine_name}_{ts}_AI_ANALYSIS.html"
         html_path = output_dir / filename
 
         content_html = _markdown_to_html(ai_analysis)
@@ -367,14 +367,14 @@ def generate_ai_report(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlanetDiag - Analyse IA</title>
+    <title>Ghisdiag - Analyse IA</title>
     <style>
         {_get_css()}
     </style>
 </head>
 <body>
     <header>
-        <h1>🤖 Analyse IA - PlanetDiag</h1>
+        <h1>🤖 Analyse IA - Ghisdiag</h1>
         <div class="meta">
             <p><strong>Machine :</strong> {html.escape(machine_name)}</p>
             <p><strong>Généré :</strong> <span class="timestamp">{datetime.now().strftime("%d/%m/%Y à %H:%M:%S")}</span></p>
@@ -390,7 +390,7 @@ def generate_ai_report(
     </main>
 
     <footer>
-        <p>Rapport généré par <strong>PlanetDiag</strong>{version_line}</p>
+        <p>Rapport généré par <strong>Ghisdiag</strong>{version_line}</p>
         <p>Analyse effectuée par {html.escape(provider_label)} — à recouper avec le rapport technique complet</p>
     </footer>
 </body>

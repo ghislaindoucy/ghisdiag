@@ -1,4 +1,4 @@
-# PlanetDiag v1.2.3 — Notes de Release
+# Ghisdiag v1.2.3 — Notes de Release
 
 **Date de sortie :** 2026-06-10  
 **Version précédente :** 1.2.2
@@ -104,6 +104,6 @@ fix(pcneuf): détection « déjà installé » par ID exact + retour visuel de l
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag.exe`
+- **Exe** : `Ghisdiag.exe`
 - **Sha256** : _(à compléter après build)_
 - **Taille** : _(à compléter après build)_

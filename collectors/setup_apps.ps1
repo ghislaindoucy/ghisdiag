@@ -1,4 +1,4 @@
-# PlanetDiag - Installation d'applications pour PC neuf via winget
+# Ghisdiag - Installation d'applications pour PC neuf via winget
 param(
     [string]$Action = "check",
     [string]$App    = ""    # cle de l'application (chrome, firefox, etc.)

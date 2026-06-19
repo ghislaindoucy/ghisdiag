@@ -1,4 +1,4 @@
-# PlanetDiag - Collecteur Sante SMART
+# Ghisdiag - Collecteur Sante SMART
 # Lit les donnees SMART/NVMe via smartctl.exe (smartmontools 7.5+)
 # Necessite des droits admin pour acceder aux registres SMART.
 # Retourne un objet JSON.

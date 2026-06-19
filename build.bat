@@ -2,7 +2,7 @@
 setlocal
 
 echo ============================================================
-echo  PlanetDiag - Compilation PyInstaller
+echo  Ghisdiag - Compilation PyInstaller
 echo ============================================================
 
 :: Vérification Python
@@ -24,7 +24,7 @@ py -m pip install cryptography --quiet
 echo [2/5] Nettoyage des anciens fichiers...
 if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
-if exist PlanetDiag.spec del PlanetDiag.spec
+if exist Ghisdiag.spec del Ghisdiag.spec
 
 :: Création du manifest UAC (demande élévation admin)
 echo [3/5] Création du manifest UAC...
@@ -32,22 +32,22 @@ echo [3/5] Création du manifest UAC...
 echo ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
 echo ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
 echo   ^<assemblyIdentity version="1.6.0.0" processorArchitecture="X86"
-echo     name="PlanetDiag" type="win32"/^>
+echo     name="Ghisdiag" type="win32"/^>
 echo   ^<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"^>
 echo     ^<security^>^<requestedPrivileges^>
 echo       ^<requestedExecutionLevel level="requireAdministrator" uiAccess="false"/^>
 echo     ^</requestedPrivileges^>^</security^>
 echo   ^</trustInfo^>
 echo ^</assembly^>
-) > PlanetDiag.manifest
+) > Ghisdiag.manifest
 
 :: Compilation
 echo [4/5] Compilation en cours...
 py -m PyInstaller ^
     --onefile ^
     --windowed ^
-    --name PlanetDiag ^
-    --manifest PlanetDiag.manifest ^
+    --name Ghisdiag ^
+    --manifest Ghisdiag.manifest ^
     --version-file version_info.txt ^
     --add-data "collectors;collectors" ^
     --add-data "assets;assets" ^
@@ -103,7 +103,7 @@ if errorlevel 1 (
 ::     /td sha256 ^
 ::     /fd sha256 ^
 ::     /a ^
-::     dist\PlanetDiag.exe
+::     dist\Ghisdiag.exe
 :: if errorlevel 1 (
 ::     echo ERREUR: La signature a échoué. Vérifiez votre certificat.
 ::     pause & exit /b 1
@@ -115,12 +115,12 @@ echo [5/5] (Signature désactivée — voir commentaires dans build.bat)
 echo.
 echo ============================================================
 echo  Compilation réussie !
-echo  Fichier : dist\PlanetDiag.exe
+echo  Fichier : dist\Ghisdiag.exe
 echo ============================================================
 
 :: Pour réduire les faux positifs antivirus, pensez à :
 ::   1. Activer la signature numérique ci-dessus
-::   2. Soumettre dist\PlanetDiag.exe sur https://www.virustotal.com
+::   2. Soumettre dist\Ghisdiag.exe sur https://www.virustotal.com
 ::      puis signaler les faux positifs directement aux éditeurs AV
 ::   3. Voir le guide : docs/antivirus-guide.md
 

@@ -1,4 +1,4 @@
-# PlanetDiag - Daemon capteurs (temperatures / ventilateurs / horloges)
+# Ghisdiag - Daemon capteurs (temperatures / ventilateurs / horloges)
 # Charge LibreHardwareMonitorLib.dll (embarquee dans ..\tools) et expose les
 # capteurs sous forme de JSON normalise.
 #
@@ -8,7 +8,7 @@
 #                                 tick, jusqu'a -DurationSec (0 = illimite).
 #
 # IMPORTANT : les capteurs CPU / carte mere exigent des droits admin (driver
-# ring0). Sans elevation, seuls GPU et disques remontent. L'exe PlanetDiag
+# ring0). Sans elevation, seuls GPU et disques remontent. L'exe Ghisdiag
 # tourne sous UAC, donc en production tout remonte.
 #
 # Pas de caractere non-ASCII dans ce fichier (regle PS du projet).

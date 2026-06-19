@@ -1,4 +1,4 @@
-# PlanetDiag - Gestion winget et mises a jour applications
+# Ghisdiag - Gestion winget et mises a jour applications
 param(
     [string]$Action = "check"
 )
@@ -96,8 +96,8 @@ switch ($Action) {
 
     "update-all" {
         try {
-            $outFile = "$env:TEMP\planetdiag_winget_out.txt"
-            $errFile = "$env:TEMP\planetdiag_winget_err.txt"
+            $outFile = "$env:TEMP\ghisdiag_winget_out.txt"
+            $errFile = "$env:TEMP\ghisdiag_winget_err.txt"
 
             $proc = Start-Process -FilePath $winget `
                 -ArgumentList "upgrade --all --silent --accept-source-agreements --accept-package-agreements" `
@@ -155,7 +155,7 @@ switch ($Action) {
 
         Write-Output "Recuperation de la derniere version depuis GitHub..."
         try {
-            $headers = @{ "User-Agent" = "PlanetDiag-WingetUpdater" }
+            $headers = @{ "User-Agent" = "Ghisdiag-WingetUpdater" }
             $release = Invoke-RestMethod "https://api.github.com/repos/microsoft/winget-cli/releases/latest" `
                        -Headers $headers -UseBasicParsing -TimeoutSec 30
             if (-not $release.tag_name) {
@@ -196,7 +196,7 @@ switch ($Action) {
             Write-Output "Installation de winget $($release.tag_name)..."
             Add-AppxPackage -Path $tmpMsix
             Write-Output ""
-            Write-Output "SUCCESS: winget mis a jour. Relancez PlanetDiag pour utiliser la nouvelle version."
+            Write-Output "SUCCESS: winget mis a jour. Relancez Ghisdiag pour utiliser la nouvelle version."
             exit 0
         } catch {
             Write-Output ""

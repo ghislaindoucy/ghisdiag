@@ -1,11 +1,11 @@
-# PlanetDiag v1.3.0 — Notes de Release
+# Ghisdiag v1.3.0 — Notes de Release
 
 **Date de sortie :** 2026-06-10  
 **Version précédente :** 1.2.3
 
 ---
 
-> Release **diagnostic** : PlanetDiag voit désormais les **vrais** incidents
+> Release **diagnostic** : Ghisdiag voit désormais les **vrais** incidents
 > (écrans bleus, erreurs matérielles, disque qui souffre, NTFS corrompu) —
 > et arrête de crier au loup sur les faux positifs. L'analyse IA, elle,
 > diagnostique sur **preuves** et ne s'invente plus de problèmes.
@@ -14,7 +14,7 @@
 
 ## 🆕 Diagnostic de fiabilité — les logs qui comptent vraiment
 
-PlanetDiag collecte maintenant les journaux Windows qu'un technicien de niveau 3
+Ghisdiag collecte maintenant les journaux Windows qu'un technicien de niveau 3
 regarde en premier, qui manquaient jusqu'ici :
 
 | Journal | Ce qu'il révèle | Fenêtre |
@@ -95,6 +95,6 @@ perf(mistral): payload JSON compact (rapport complet sans troncature)
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag.exe`
+- **Exe** : `Ghisdiag.exe`
 - **Sha256** : `dbd553da51d9a51bc6a18997ad87140fe4cdf5a5760bd2e23761a5c96b4722d7`
 - **Taille** : 19.1 MB

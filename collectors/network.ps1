@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Réseau
+﻿# Ghisdiag - Collecteur Réseau
 # Collecte adaptateurs, connectivité, partages, connexions TCP
 
 $ErrorActionPreference = "SilentlyContinue"

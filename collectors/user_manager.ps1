@@ -1,4 +1,4 @@
-# PlanetDiag - Gestion des comptes utilisateurs locaux
+# Ghisdiag - Gestion des comptes utilisateurs locaux
 param(
     [string]$Action   = "list-users",
     [string]$Username = "",
@@ -67,7 +67,7 @@ switch ($Action) {
                 ConvertTo-SecureString $Password -AsPlainText -Force
             }
             New-LocalUser -Name $Username -Password $secPwd `
-                -Description "Cree par PlanetDiag" -EA Stop | Out-Null
+                -Description "Cree par Ghisdiag" -EA Stop | Out-Null
             $groupSID = if ($Type -eq "admin") { $AdminSID } else { $UsersSID }
             Add-LocalGroupMember -SID $groupSID -Member $Username -EA Stop | Out-Null
             $typeLabel = if ($Type -eq "admin") { "Administrateur" } else { "Utilisateur standard" }

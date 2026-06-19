@@ -1,4 +1,4 @@
-# PlanetDiag v1.2.2 — Notes de Release
+# Ghisdiag v1.2.2 — Notes de Release
 
 **Date de sortie :** 2025-06-03  
 **Version précédente :** 1.2.1
@@ -8,12 +8,12 @@
 ## 🤖 Nouvelle Fonctionnalité : Analyse IA Mistral
 
 ### Qu'est-ce que c'est ?
-Après chaque diagnostic, PlanetDiag peut maintenant générer un **audit IA complet** en utilisant **Mistral Large**. Cette analyse transforme les données techniques en **recommandations concrètes et actionnables** avec des commandes exactes à exécuter.
+Après chaque diagnostic, Ghisdiag peut maintenant générer un **audit IA complet** en utilisant **Mistral Large**. Cette analyse transforme les données techniques en **recommandations concrètes et actionnables** avec des commandes exactes à exécuter.
 
 ### Comment l'utiliser
 
 1. **Configuration de la clé API**
-   - Ouvrez PlanetDiag
+   - Ouvrez Ghisdiag
    - Allez à l'onglet **"Analyse"** (onglet principal)
    - Dans le panneau "🤖 Analyse IA Mistral (optionnel)", entrez votre clé API Mistral
    - Cliquez "Tester la clé" pour vérifier
@@ -22,7 +22,7 @@ Après chaque diagnostic, PlanetDiag peut maintenant générer un **audit IA com
 2. **Lancer un diagnostic**
    - Le diagnostic s'exécute normalement (rapport HTML + JSON)
    - Une popup vous informe que Mistral analyse les données (peut prendre plusieurs minutes)
-   - Un second rapport HTML est généré : `PlanetDiag_MACHINE_TIMESTAMP_AI_ANALYSIS.html`
+   - Un second rapport HTML est généré : `Ghisdiag_MACHINE_TIMESTAMP_AI_ANALYSIS.html`
    - Le rapport s'ouvre automatiquement dans votre navigateur
 
 3. **Rapport IA**
@@ -37,7 +37,7 @@ Après chaque diagnostic, PlanetDiag peut maintenant générer un **audit IA com
 
 1. Créez un compte sur [Mistral AI Console](https://console.mistral.ai)
 2. Générez une clé API dans les paramètres
-3. Entrez-la dans PlanetDiag (elle est chiffrée avant sauvegarde)
+3. Entrez-la dans Ghisdiag (elle est chiffrée avant sauvegarde)
 
 **Tarification :** ~€0.004 par diagnostic (avec Mistral Large)
 
@@ -123,7 +123,7 @@ c58860e feat(ui): popup d'attente non bloquant pendant l'analyse Mistral
 e108d89 feat(mistral): max_tokens 4096 -> 15000 + timeout 90s -> 240s
 004b791 fix(mistral): corrections revue senior sur l'intégration IA
 8a53834 refactor: Suppression import sys non utilisé
-af96230 docs: Guide de configuration Mistral AI pour PlanetDiag
+af96230 docs: Guide de configuration Mistral AI pour Ghisdiag
 06ce810 feat(ai-analysis): Intégration Mistral AI pour l'analyse diagnostique
 ```
 
@@ -131,7 +131,7 @@ af96230 docs: Guide de configuration Mistral AI pour PlanetDiag
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag.exe`
+- **Exe** : `Ghisdiag.exe`
 - **Sha256** : 0A600601FE35798708D520054884077E06361B0BB96184BEABDEF30017C46B18
 - **Taille** : 19,1 mo
 ---

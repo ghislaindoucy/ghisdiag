@@ -1,5 +1,5 @@
 """
-PlanetDiag - Comparaison de deux sessions de bench thermique (Phase 3)
+Ghisdiag - Comparaison de deux sessions de bench thermique (Phase 3)
 
 Confronte une session « avant » et une session « après » intervention
 (nettoyage, changement de pâte thermique) :
@@ -261,7 +261,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = out / f"PlanetDiag_bench_comparaison_{ts}.html"
+    path = out / f"Ghisdiag_bench_comparaison_{ts}.html"
 
     def when(s):
         try:
@@ -314,7 +314,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
     html_doc = f"""<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PlanetDiag — Comparaison bench thermique</title>
+<title>Ghisdiag — Comparaison bench thermique</title>
 <style>{_CSS}</style></head>
 <body>
 <header class="header">
@@ -355,7 +355,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
   </section>
 </main>
 
-<footer>Rapport généré par <b>PlanetDiag</b> — bench thermique</footer>
+<footer>Rapport généré par <b>Ghisdiag</b> — bench thermique</footer>
 </body></html>"""
 
     path.write_text(html_doc, encoding="utf-8")

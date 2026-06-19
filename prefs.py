@@ -1,5 +1,5 @@
 """
-PlanetDiag - Gestion des préférences utilisateur.
+Ghisdiag - Gestion des préférences utilisateur.
 """
 import json
 import logging
@@ -17,7 +17,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-LOG_DIR    = Path(os.path.expanduser("~")) / "AppData" / "Local" / "PlanetDiag"
+LOG_DIR    = Path(os.path.expanduser("~")) / "AppData" / "Local" / "Ghisdiag"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 PREFS_FILE = LOG_DIR / "prefs.json"
 
@@ -65,7 +65,7 @@ def _get_encryption_key() -> bytes:
         machine_name = "unknown"
 
     username = os.environ.get("USERNAME", "unknown")
-    seed = f"{machine_name}:{username}:planetdiag".encode("utf-8")
+    seed = f"{machine_name}:{username}:ghisdiag".encode("utf-8")
 
     # Hash du seed pour obtenir une clé 32 bytes (256 bits)
     key_hash = hashlib.sha256(seed).digest()

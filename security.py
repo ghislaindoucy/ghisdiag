@@ -1,5 +1,5 @@
 """
-PlanetDiag - Utilitaires sécurité (UAC, validation de chemins).
+Ghisdiag - Utilitaires sécurité (UAC, validation de chemins).
 """
 import ctypes
 import os

@@ -1,4 +1,4 @@
-# PlanetDiag v1.6.0 — Notes de Release
+# Ghisdiag v1.6.0 — Notes de Release
 
 **Date de sortie :** 2026-06-19  
 **Version précédente :** 1.5.0
@@ -60,7 +60,7 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
   automatique à 95 °C, arrêt manuel) réduisent mais n'éliminent pas le risque ;
   selon l'état du matériel (poussière, pâte dégradée, ventilateur/capteur défaillant,
   composants fragilisés) un dommage reste possible. Le test démarre sous la
-  responsabilité de l'utilisateur — PlanetDiag et son auteur dégagés de toute
+  responsabilité de l'utilisateur — Ghisdiag et son auteur dégagés de toute
   responsabilité.
 - **Durée de charge personnalisable** : en plus des presets (Court / Standard / Long),
   une option « Personnalisé… » accepte une durée en minutes (1 à 30). La comparaison
@@ -110,6 +110,6 @@ feat(thermal): duree de charge personnalisable
 
 ## ⬇️ Téléchargement
 
-- **Exe** : `PlanetDiag.exe`
+- **Exe** : `Ghisdiag.exe`
 - **Sha256** : _à compléter après build_
 - **Taille** : _à compléter après build_

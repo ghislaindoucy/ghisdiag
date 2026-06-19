@@ -243,7 +243,7 @@ switch ($Action) {
             exit 0
         }
 
-        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_wifi_$([System.Guid]::NewGuid().ToString('N'))"
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "ghisdiag_wifi_$([System.Guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
         $names    = Get-ProfileNames
@@ -292,7 +292,7 @@ switch ($Action) {
             exit 0
         }
 
-        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_wifi_restore_$([System.Guid]::NewGuid().ToString('N'))"
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "ghisdiag_wifi_restore_$([System.Guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
         try {
@@ -361,7 +361,7 @@ switch ($Action) {
             $isOpen  = ($Auth -eq "open")
             $xmlContent = New-WifiProfileXml -Ssid $ProfileName -HexSsid $hexSSID -Pwd $Password -IsOpen $isOpen
 
-            $tmpXml = Join-Path ([System.IO.Path]::GetTempPath()) "planetdiag_conn_$([System.Guid]::NewGuid().ToString('N')).xml"
+            $tmpXml = Join-Path ([System.IO.Path]::GetTempPath()) "ghisdiag_conn_$([System.Guid]::NewGuid().ToString('N')).xml"
             [System.IO.File]::WriteAllText($tmpXml, $xmlContent, [System.Text.Encoding]::UTF8)
 
             $addResult = @(netsh wlan add profile filename="$tmpXml" user=all 2>&1)

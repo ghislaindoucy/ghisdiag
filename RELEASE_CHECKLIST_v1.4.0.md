@@ -1,4 +1,4 @@
-# Release Checklist — PlanetDiag v1.4.0
+# Release Checklist — Ghisdiag v1.4.0
 
 **Date :** 2026-06-11
 
@@ -13,9 +13,9 @@
 
 ## Build & publication
 
-1. `build.bat` → `dist\PlanetDiag.exe` (vérifier Propriétés → Détails : **1.4.0.0**)
+1. `build.bat` → `dist\Ghisdiag.exe` (vérifier Propriétés → Détails : **1.4.0.0**)
 2. `git push origin HEAD:main HEAD:master`
-3. `gh release create v1.4.0 --draft --title "PlanetDiag v1.4.0 — Refonte graphique & audit IA approfondi" --notes-file RELEASE_NOTES_v1.4.0.md`
+3. `gh release create v1.4.0 --draft --title "Ghisdiag v1.4.0 — Refonte graphique & audit IA approfondi" --notes-file RELEASE_NOTES_v1.4.0.md`
 4. `.\finalize_release.ps1 -Version 1.4.0 -Commit -Push -Release`
 
 ## SHA-256 de l'exe

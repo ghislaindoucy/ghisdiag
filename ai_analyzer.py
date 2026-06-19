@@ -1,5 +1,5 @@
 """
-PlanetDiag - Analyseur IA multi-fournisseurs.
+Ghisdiag - Analyseur IA multi-fournisseurs.
 
 Envoie les données diagnostiques à un fournisseur IA pour une analyse experte.
 Tout en HTTP brut via `requests` — AUCUN SDK (anthropic/openai/...) : ça gonflerait
@@ -167,7 +167,7 @@ def _build_user_prompt(diagnostic_data: dict) -> str:
         logger.warning(f"Données diagnostiques tronquées ({len(diag_json)} chars → {max_len})")
         diag_json = diag_json[:max_len] + "\n[… données tronquées …]"
 
-    return f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par PlanetDiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
+    return f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par Ghisdiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
 
 ```json
 {diag_json}

@@ -1,5 +1,5 @@
 """
-PlanetDiag - Source de temperatures unifiee (LibreHardwareMonitor)
+Ghisdiag - Source de temperatures unifiee (LibreHardwareMonitor)
 
 Pilote collectors/sensors.ps1, qui charge LibreHardwareMonitorLib.dll embarquee
 et expose les capteurs (CPU / GPU / disques / ventilateurs) en JSON normalise.
@@ -12,7 +12,7 @@ Trois usages :
                                 pour brancher directement sur realtime_monitor.
 
 Sur une machine non elevee, les capteurs CPU/carte mere (driver ring0) sont
-vides ; GPU et disques remontent quand meme. L'exe PlanetDiag tourne sous UAC.
+vides ; GPU et disques remontent quand meme. L'exe Ghisdiag tourne sous UAC.
 """
 
 import json

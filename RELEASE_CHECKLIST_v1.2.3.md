@@ -1,4 +1,4 @@
-# Release Checklist — PlanetDiag v1.2.3
+# Release Checklist — Ghisdiag v1.2.3
 
 **Date cible :** 2026-06-10  
 **Statut :** ✅ Prêt pour build
@@ -23,12 +23,12 @@
    cd D:\Projets\PlanetDIag
    build.bat
    ```
-   - Vérifie que `dist/PlanetDiag.exe` est créé
+   - Vérifie que `dist/Ghisdiag.exe` est créé
    - Taille estimée : ~80-100 MB
    - Durée estimée : 3-5 minutes
 
 2. **Tester l'exe produit (focus PC Neuf)**
-   - Lancer `dist/PlanetDiag.exe` **en administrateur**
+   - Lancer `dist/Ghisdiag.exe` **en administrateur**
    - Onglet **Setup / MAJ → PC Neuf**
      - « 🔍 Vérifier installés » → chaque app affiche **✓ Installé** / **✗ Non installé**
      - **VLC media player** présent dans la liste
@@ -38,13 +38,13 @@
 
 3. **Calculer le hash SHA-256**
    ```powershell
-   Get-FileHash "dist\PlanetDiag.exe" -Algorithm SHA256 | Format-Table Hash
+   Get-FileHash "dist\Ghisdiag.exe" -Algorithm SHA256 | Format-Table Hash
    ```
    - Copier le hash dans RELEASE_NOTES_v1.2.3.md
 
 4. **Noter la taille de l'exe**
    ```powershell
-   (Get-Item "dist\PlanetDiag.exe").Length / 1MB
+   (Get-Item "dist\Ghisdiag.exe").Length / 1MB
    ```
    - Remplir dans RELEASE_NOTES_v1.2.3.md
 
@@ -54,7 +54,7 @@
 
 ```
 dist/
-└── PlanetDiag.exe          ← Le build principal
+└── Ghisdiag.exe          ← Le build principal
 
 À inclure dans la release :
 ├── RELEASE_NOTES_v1.2.3.md  ← Notes utilisateur (lire d'abord!)
@@ -78,7 +78,7 @@ git push origin v1.2.3
 ## 📝 Description Release GitHub
 
 ```markdown
-## PlanetDiag v1.2.3 — PC Neuf enrichi & winget fiabilisé
+## Ghisdiag v1.2.3 — PC Neuf enrichi & winget fiabilisé
 
 Release ciblée sur l'onglet **PC Neuf** et la robustesse de **winget**.
 
@@ -95,7 +95,7 @@ Release ciblée sur l'onglet **PC Neuf** et la robustesse de **winget**.
 
 ### Installation
 
-**Exe seul** : `PlanetDiag.exe` (toutes dépendances embarquées)
+**Exe seul** : `Ghisdiag.exe` (toutes dépendances embarquées)
 
 ### SHA-256
 ```

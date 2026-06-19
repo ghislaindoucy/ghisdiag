@@ -1,4 +1,4 @@
-# PlanetDiag - Icones du bureau (Ce PC, Fichiers utilisateur, Corbeille)
+# Ghisdiag - Icones du bureau (Ce PC, Fichiers utilisateur, Corbeille)
 param(
     [string]$Action = "check"   # check | enable
 )
@@ -24,7 +24,7 @@ function Update-Shell {
     # Force le shell a rafraichir le bureau sans redemarrer explorer.
     try {
         $sig = '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);'
-        $t = Add-Type -MemberDefinition $sig -Name 'PdShell' -Namespace 'PlanetDiag' -PassThru -EA SilentlyContinue
+        $t = Add-Type -MemberDefinition $sig -Name 'PdShell' -Namespace 'Ghisdiag' -PassThru -EA SilentlyContinue
         # SHCNE_ASSOCCHANGED = 0x08000000, SHCNF_IDLIST = 0x0000
         $t::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     } catch {}

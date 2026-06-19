@@ -1,4 +1,4 @@
-# PlanetDiag - Generateur de charge CPU (bench thermique)
+# Ghisdiag - Generateur de charge CPU (bench thermique)
 #
 # Lance N runspaces (par defaut un par processeur logique) executant une boucle
 # de calcul flottant a rapport cyclique configurable. Sert a chauffer le CPU de

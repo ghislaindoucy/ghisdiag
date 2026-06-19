@@ -1,5 +1,5 @@
 """
-PlanetDiag - Moniteur temps reel
+Ghisdiag - Moniteur temps reel
 CPU %, RAM %, Disk I/O % via psutil
 Temperatures CPU/GPU/disques via PowerShell WMI (appel ponctuel toutes les 10s)
 """

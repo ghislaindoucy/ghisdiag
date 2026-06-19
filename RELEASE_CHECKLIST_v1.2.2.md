@@ -1,4 +1,4 @@
-# Release Checklist — PlanetDiag v1.2.2
+# Release Checklist — Ghisdiag v1.2.2
 
 **Date cible :** 2025-06-03  
 **Statut :** ✅ Prêt pour build
@@ -23,12 +23,12 @@
    cd D:\Projets\PlanetDIag
    build.bat
    ```
-   - Vérifie que `dist/PlanetDiag.exe` est créé
+   - Vérifie que `dist/Ghisdiag.exe` est créé
    - Taille estimée : ~80-100 MB
    - Durée estimée : 3-5 minutes
 
 2. **Tester l'exe produit**
-   - Double-cliquer sur `dist/PlanetDiag.exe`
+   - Double-cliquer sur `dist/Ghisdiag.exe`
    - Vérifier que l'interface démarre en mode maximisé
    - Vérifier que le panneau Mistral est visible dans l'onglet Analyse
    - Tester le bouton "Tester la clé" (ou affiche erreur dépendances manquantes)
@@ -36,13 +36,13 @@
 
 3. **Calculer le hash SHA-256**
    ```powershell
-   Get-FileHash "dist\PlanetDiag.exe" -Algorithm SHA256 | Format-Table Hash
+   Get-FileHash "dist\Ghisdiag.exe" -Algorithm SHA256 | Format-Table Hash
    ```
    - Copier le hash dans RELEASE_NOTES_v1.2.2.md
 
 4. **Noter la taille de l'exe**
    ```powershell
-   (Get-Item "dist\PlanetDiag.exe").Length / 1MB
+   (Get-Item "dist\Ghisdiag.exe").Length / 1MB
    ```
    - Remplir dans RELEASE_NOTES_v1.2.2.md
 
@@ -52,7 +52,7 @@
 
 ```
 dist/
-└── PlanetDiag.exe          ← Le build principal
+└── Ghisdiag.exe          ← Le build principal
 
 À inclure dans la release :
 ├── RELEASE_NOTES_v1.2.2.md  ← Notes utilisateur (lire d'abord!)
@@ -77,7 +77,7 @@ git push origin v1.2.2
 ## 📝 Description Release GitHub
 
 ```markdown
-## PlanetDiag v1.2.2 — Analyse IA avec Mistral
+## Ghisdiag v1.2.2 — Analyse IA avec Mistral
 
 **Nouvelle fonctionnalité majeure :** Après chaque diagnostic, générez automatiquement un audit IA complet avec Mistral Large.
 
@@ -102,7 +102,7 @@ git push origin v1.2.2
 
 ### Installation
 
-**Exe seul** : `PlanetDiag.exe` (contient toutes les dépendances)
+**Exe seul** : `Ghisdiag.exe` (contient toutes les dépendances)
 
 **Première utilisation** :
 1. Générez une clé API Mistral (gratuit sur https://console.mistral.ai)

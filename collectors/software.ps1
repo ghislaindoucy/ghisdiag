@@ -1,4 +1,4 @@
-﻿# PlanetDiag - Collecteur Logiciels & Drivers
+﻿# Ghisdiag - Collecteur Logiciels & Drivers
 # Collecte logiciels installés, MAJ Windows, drivers
 
 $ErrorActionPreference = "SilentlyContinue"

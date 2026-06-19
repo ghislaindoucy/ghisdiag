@@ -1,4 +1,4 @@
-# PlanetDiag - Gestionnaire du Spooler d'impression
+# Ghisdiag - Gestionnaire du Spooler d'impression
 # Usage:
 #   -Action list                                       -> statut service + nb total travaux
 #   -Action printers                                   -> imprimantes + travaux par imprimante
