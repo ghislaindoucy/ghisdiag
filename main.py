@@ -12,7 +12,7 @@ import logging.handlers
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 try:
     from collectors.realtime_monitor import (
@@ -2848,7 +2848,15 @@ class PlanetDiagApp(tk.Tk):
         self._bench_intens_var, self._bench_intens_cb = _combo(
             "Intensité", [t for t, _ in self._BENCH_INTENS], "100 %")
         self._bench_dur_var, self._bench_dur_cb = _combo(
-            "Durée de charge", [t for t, _ in self._BENCH_DURATION], "Standard (5 min)")
+            "Durée de charge",
+            [t for t, _ in self._BENCH_DURATION] + ["Personnalisé…"],
+            "Standard (5 min)")
+        # Élargi pour afficher « Personnalisé (NN min) » sans troncature.
+        self._bench_dur_cb.config(width=22)
+        self._bench_dur_cb.bind("<<ComboboxSelected>>", self._bench_on_duration)
+        # Durée de charge custom (secondes) + mémoire du dernier choix valide.
+        self._bench_custom_load_sec = None
+        self._bench_dur_last = "Standard (5 min)"
 
         self._bench_btn = tk.Button(
             cfg, text="▶   Démarrer le test",
@@ -2927,6 +2935,31 @@ class PlanetDiagApp(tk.Tk):
 
     # -- Pilotage du test ------------------------------------------------------
 
+    def _bench_on_duration(self, _event=None):
+        """Gère le choix « Personnalisé… » : demande une durée de charge en minutes."""
+        sel = self._bench_dur_var.get()
+        if sel != "Personnalisé…":
+            self._bench_dur_last = sel   # dernier choix valide (preset)
+            return
+
+        current_min = max(1, round((self._bench_custom_load_sec or 300) / 60))
+        mins = simpledialog.askinteger(
+            "Durée personnalisée",
+            "Durée de la phase de charge, en minutes (1 à 30).\n\n"
+            "Pour une comparaison avant / après valable, utilisez EXACTEMENT la même "
+            "durée (et la même intensité) pour les deux tests — sinon la comparaison "
+            "sera refusée.",
+            parent=self, minvalue=1, maxvalue=30, initialvalue=current_min)
+
+        if mins is None:
+            # Annulation : on revient au dernier choix valide.
+            self._bench_dur_var.set(self._bench_dur_last)
+            return
+
+        self._bench_custom_load_sec = mins * 60
+        self._bench_dur_var.set(f"Personnalisé ({mins} min)")
+        self._bench_dur_last = self._bench_dur_var.get()
+
     def _bench_toggle(self):
         if self._bench_running:
             if self._bench is not None:
@@ -2936,7 +2969,9 @@ class PlanetDiagApp(tk.Tk):
 
         label     = dict(self._BENCH_LABELS)[self._bench_label_var.get()]
         intensity = dict(self._BENCH_INTENS)[self._bench_intens_var.get()]
-        load_sec  = dict(self._BENCH_DURATION)[self._bench_dur_var.get()]
+        # Preset connu, sinon durée personnalisée (repli 300 s si non définie).
+        load_sec  = dict(self._BENCH_DURATION).get(
+            self._bench_dur_var.get(), self._bench_custom_load_sec or 300)
 
         total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
         if not messagebox.askyesno(
