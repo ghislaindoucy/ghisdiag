@@ -2940,12 +2940,23 @@ class PlanetDiagApp(tk.Tk):
 
         total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
         if not messagebox.askyesno(
-                "Bench thermique",
-                f"Le test va solliciter le processeur (intensité {intensity} %) puis "
-                f"mesurer le refroidissement, sur environ {total_min} min au total.\n\n"
-                "Arrêt automatique si la température CPU dépasse 95 °C.\n"
+                "⚠ Avertissement — Test de charge thermique",
+                f"Ce test sollicite VOLONTAIREMENT le processeur à forte charge "
+                f"(intensité {intensity} %) pendant environ {total_min} min, afin de "
+                "mesurer son comportement thermique puis son refroidissement.\n\n"
+                "Des sécurités sont prévues — arrêt automatique au-delà de 95 °C et "
+                "arrêt manuel possible à tout moment. Elles réduisent le risque mais "
+                "NE l'éliminent PAS : selon l'état réel du matériel (poussière, pâte "
+                "thermique dégradée, ventilateur ou capteur défaillant, composants "
+                "vieillissants ou déjà fragilisés), la montée en température peut "
+                "endommager le matériel.\n\n"
+                "Ne lancez ce test que sur une machine dont l'état le permet. En "
+                "cliquant sur « Oui », vous le démarrez en connaissance de cause et "
+                "sous votre entière responsabilité ; PlanetDiag et son auteur ne "
+                "sauraient être tenus responsables d'un éventuel dommage matériel.\n\n"
                 "Fermez les autres applications lourdes pour un résultat fiable.\n\n"
-                "Démarrer le test ?"):
+                "Démarrer le test ?",
+                icon="warning"):
             return
 
         out_dir = str(Path(self.out_dir_var.get()) / "thermal")
