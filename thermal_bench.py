@@ -107,6 +107,15 @@ def _resolve_python() -> str:
     return sys.executable
 
 
+# En version compilee (PyInstaller --onefile), sys.executable pointe vers
+# Ghisdiag.exe lui-meme et non un interpreteur Python : lancer
+# "Ghisdiag.exe collectors/cpu_load.py ..." ouvrirait une seconde fenetre de
+# l'app (les arguments inconnus sont ignores par le point d'entree), pas le
+# generateur de charge. Il faut donc relancer l'exe avec un indicateur interne
+# (gere dans main.py) qui bascule vers le mode worker sans GUI.
+_FROZEN = getattr(sys, "frozen", False)
+_CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
+
 _PYTHON_EXE   = _resolve_python()
 _LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.py"
 _NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -130,14 +139,17 @@ class _LoadGenerator:
         self._proc: Optional[subprocess.Popen] = None
 
     def available(self) -> bool:
-        return _LOAD_SCRIPT.is_file()
+        return _FROZEN or _LOAD_SCRIPT.is_file()
 
     def start(self) -> bool:
         if not self.available():
             logger.error("cpu_load.py introuvable : %s", _LOAD_SCRIPT)
             return False
-        args = [
-            _PYTHON_EXE, str(_LOAD_SCRIPT),
+        if _FROZEN:
+            args = [_PYTHON_EXE, _CPU_LOAD_WORKER_FLAG]
+        else:
+            args = [_PYTHON_EXE, str(_LOAD_SCRIPT)]
+        args += [
             "--threads", str(self.threads),
             "--intensity", str(self.intensity),
             "--duration", str(self.max_duration_sec),

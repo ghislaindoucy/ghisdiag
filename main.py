@@ -4707,10 +4707,25 @@ class GhisdiagApp(tk.Tk):
 
 
 # ── Point d'entrée ────────────────────────────────────────────────────────────
+# Indicateur interne : en version compilee (PyInstaller --onefile), sys.executable
+# pointe vers Ghisdiag.exe lui-meme (pas un interpreteur Python). Le generateur de
+# charge CPU (collectors/cpu_load.py) relance donc l'exe avec ce flag pour basculer
+# en mode "worker" sans GUI, plutot que d'ouvrir une nouvelle fenetre de l'app.
+_CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
+
+
 def main():
     if not is_admin() and "--no-uac" not in sys.argv:
         request_elevation()
     GhisdiagApp().mainloop()
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.freeze_support()
+    if _CPU_LOAD_WORKER_FLAG in sys.argv:
+        sys.argv.remove(_CPU_LOAD_WORKER_FLAG)
+        mp.set_start_method("spawn", force=True)
+        from collectors.cpu_load import main as _cpu_load_main
+        _cpu_load_main()
+        sys.exit(0)
     main()
