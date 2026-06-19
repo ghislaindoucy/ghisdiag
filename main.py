@@ -27,6 +27,7 @@ try:
         ThermalBench, BenchConfig, BenchPhase,
         list_sessions as bench_list_sessions,
         load_session as bench_load_session,
+        THROTTLE_CLOCK_DROP, THROTTLE_TEMP_FLOOR_C,
     )
     from thermal_compare import compare_sessions, generate_comparison_report
     _HAS_BENCH = True
@@ -3351,6 +3352,38 @@ class GhisdiagApp(tk.Tk):
                           fill=FG_DIM, font=("Segoe UI", 8))
             lx += 17 + len(lbl) * 7 + 18
 
+    @staticmethod
+    def _bench_throttle_ranges(samples, bounds):
+        """Detecte les intervalles de throttling pendant la phase de charge, en
+        reprenant les seuils de thermal_bench.compute_metrics() (chute de
+        frequence vs debut de charge, a temperature elevee) mais echantillon
+        par echantillon pour un affichage sur la courbe."""
+        load = next(((a, b) for a, b, name in bounds if name == "load"), None)
+        if load is None:
+            return []
+        a, b = load
+        load_samples = [s for s in samples if a <= s.get("t", -1) <= b]
+        early_end = a + 0.4 * (b - a)
+        early_clocks = [s["clock"] for s in load_samples
+                         if s.get("clock") and s.get("t", 0) <= early_end]
+        if not early_clocks:
+            return []
+        threshold = max(early_clocks) * (1 - THROTTLE_CLOCK_DROP)
+        ranges = []
+        cur_start = None
+        for s in load_samples:
+            clk, temp, t = s.get("clock"), s.get("cpu"), s.get("t", 0)
+            hot = (clk is not None and clk < threshold
+                   and temp is not None and temp >= THROTTLE_TEMP_FLOOR_C)
+            if hot and cur_start is None:
+                cur_start = t
+            elif not hot and cur_start is not None:
+                ranges.append((cur_start, t))
+                cur_start = None
+        if cur_start is not None:
+            ranges.append((cur_start, load_samples[-1].get("t", b)))
+        return ranges
+
     def _bench_draw_chart(self):
         geom = self._bench_chart_geom()
         if geom is None:
@@ -3360,7 +3393,13 @@ class GhisdiagApp(tk.Tk):
         for key, color, _lbl in series:
             self._bench_polyline(c, self._bench_samples, key, color, X, Y,
                                  self._bench_sample_value)
-        self._bench_legend(c, x0, y0, [(col, lbl) for _k, col, lbl in series])
+        ranges = self._bench_throttle_ranges(self._bench_samples, self._bench_bounds)
+        for ra, rb in ranges:
+            c.create_line(X(ra), y1 - 4, X(rb), y1 - 4, fill=ORANGE, width=4)
+        legend = [(col, lbl) for _k, col, lbl in series]
+        if ranges:
+            legend.append((ORANGE, "Throttling"))
+        self._bench_legend(c, x0, y0, legend)
 
     def _bench_draw_compare(self, before_samples, after_samples):
         geom = self._bench_chart_geom()
