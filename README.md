@@ -1,6 +1,6 @@
 # 🔍 PlanetDiag
 
-> **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA (Claude ou Mistral, au choix) vous générer un plan d'action détaillé.
+> **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
 [![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.6.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -132,7 +132,7 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ### v1.6.0 (Juin 2026)
 🤖 **Analyse IA multi-fournisseurs**
-- Choix du fournisseur (Anthropic / Claude Opus 4.8 ou Mistral Large) via une fenêtre « Configurer l'IA »
+- 5 fournisseurs au choix via une fenêtre « Configurer l'IA » : Anthropic (Claude Opus 4.8), Mistral (Large), OpenAI (GPT-5.5), Grok (xAI, 4.3), Google (Gemini 2.5 Pro)
 - Clé API par fournisseur (chiffrée), bouton « Tester la clé », migration de l'ancienne clé Mistral
 - Prompt d'audit expert mutualisé, moteur léger en `requests` (aucun SDK)
 

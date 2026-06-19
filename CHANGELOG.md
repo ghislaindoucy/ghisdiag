@@ -11,15 +11,16 @@ Toutes les modifications notables de ce projet sont documentées ici.
 L'analyse IA n'est plus verrouillée sur Mistral : choisissez votre fournisseur et
 saisissez votre clé via une fenêtre de configuration dédiée.
 
-- **Fournisseurs au choix** : **Anthropic (Claude Opus 4.8)** et **Mistral (Large)**,
+- **5 fournisseurs au choix** : **Anthropic** (Claude Opus 4.8), **Mistral** (Large),
+  **OpenAI** (GPT-5.5), **Grok** (xAI, Grok 4.3) et **Google** (Gemini 2.5 Pro),
   sélectionnés dans une fenêtre « Configurer l'IA » (menu déroulant, clé API par
-  fournisseur, bouton « Tester la clé »). Architecture extensible (OpenAI / Grok /
-  Gemini prévus)
+  fournisseur, bouton « Tester la clé »)
 - **Prompt d'audit mutualisé** : le même prompt expert (10 sections, garde-fous
   anti-faux-positifs) est réutilisé à l'identique quel que soit le fournisseur —
   la qualité ne dépend pas du modèle
 - **Moteur léger en `requests` brut** (aucun SDK ajouté, l'exe reste compact) :
-  deux familles d'API couvrant les fournisseurs (OpenAI-compatible + Anthropic)
+  trois familles d'API couvrent les fournisseurs (OpenAI-compatible pour
+  Mistral/OpenAI/Grok, Anthropic, Gemini), paramétrées par fournisseur
 - **Clés chiffrées par fournisseur** (Fernet, comme avant) + migration automatique
   de l'ancienne clé Mistral
 - Rapport HTML d'analyse générique (fournisseur et modèle indiqués)

@@ -107,10 +107,11 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 
 ### v1.6.0 — 🤖 Analyse IA multi-fournisseurs ✅ *livré*
 
-- Choix du fournisseur d'analyse IA (Anthropic / Claude, Mistral) via une fenêtre de
-  configuration dédiée — clé API par fournisseur (chiffrée), bouton de test
+- Choix du fournisseur d'analyse IA via une fenêtre de configuration dédiée :
+  **Anthropic** (Claude), **Mistral**, **OpenAI** (GPT), **Grok** (xAI), **Google** (Gemini)
+  — clé API par fournisseur (chiffrée), bouton de test
 - Prompt d'audit expert mutualisé entre fournisseurs ; moteur léger en `requests`
-  (2 familles d'API : OpenAI-compatible + Anthropic), extensible OpenAI/Grok/Gemini
+  (3 familles d'API : OpenAI-compatible, Anthropic, Gemini), sans SDK
 - Migration automatique de l'ancienne clé Mistral
 
 ---

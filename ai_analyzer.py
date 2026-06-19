@@ -12,11 +12,16 @@ Trois familles d'API couvrent les fournisseurs envisagés (1 fonction par famill
                   Couvre Mistral, OpenAI et Grok (xAI, api.x.ai/v1, compatible OpenAI).
   - "anthropic" → /v1/messages, headers x-api-key + anthropic-version,
                   `system` séparé des `messages`, réponse content[0].text.
-  - "gemini"    → Google AI, clé en ?key=, schéma contents/parts (non encore branché).
+  - "gemini"    → Google AI, clé en ?key=, system_instruction + contents/parts,
+                  réponse candidates[0].content.parts[].text.
 
-Seuls Anthropic et Mistral sont exposés pour l'instant (voir UI_PROVIDERS).
-Pour ajouter OpenAI ou Grok : une entrée dans PROVIDERS avec api="openai" + url + model.
-Pour Gemini : api="gemini" + écrire `_call_gemini`.
+Les 5 fournisseurs sont branchés (Anthropic, Mistral, OpenAI, Grok, Gemini).
+Le chemin "openai" est paramétrable par fournisseur via PROVIDERS :
+  - max_tokens_param : "max_tokens" (Mistral) ou "max_completion_tokens" (GPT-5/Grok 4).
+  - sampling : True pour envoyer temperature/top_p (Mistral), False sinon (modèles
+    de raisonnement récents qui refusent ces paramètres).
+NB : les IDs de modèles « best » évoluent vite (gpt-5.5, grok-4.3, gemini-2.5-pro,
+claude-opus-4-8) — à réviser via les docs fournisseurs si un appel renvoie 404.
 """
 
 import json
@@ -50,12 +55,42 @@ PROVIDERS: dict[str, dict] = {
         "model_label": "Mistral Large",
         "key_pref":    "mistral_api_key",
         "url":         "https://api.mistral.ai/v1/chat/completions",
+        # Mistral accepte les paramètres OpenAI classiques (max_tokens + temperature).
+    },
+    "openai": {
+        "label":            "OpenAI (GPT)",
+        "api":              "openai",
+        "model":            "gpt-5.5",
+        "model_label":      "GPT-5.5",
+        "key_pref":         "openai_api_key",
+        "url":              "https://api.openai.com/v1/chat/completions",
+        "max_tokens_param": "max_completion_tokens",  # série GPT-5 : max_tokens refusé
+        "sampling":         False,                    # modèle de raisonnement : pas de temperature
+    },
+    "grok": {
+        "label":            "Grok (xAI)",
+        "api":              "openai",
+        "model":            "grok-4.3",
+        "model_label":      "Grok 4.3",
+        "key_pref":         "grok_api_key",
+        "url":              "https://api.x.ai/v1/chat/completions",
+        "max_tokens_param": "max_completion_tokens",  # max_tokens déprécié côté xAI
+        "sampling":         False,                    # modèle de raisonnement
+    },
+    "gemini": {
+        "label":       "Google (Gemini)",
+        "api":         "gemini",
+        "model":       "gemini-2.5-pro",
+        "model_label": "Gemini 2.5 Pro",
+        "key_pref":    "gemini_api_key",
+        # {model} est substitué + la clé est ajoutée en ?key= dans _call_gemini.
+        "url":         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
     },
 }
 
-# Fournisseurs proposés dans l'UI (l'ordre est respecté). Pour activer un nouveau
-# fournisseur déjà décrit dans PROVIDERS, l'ajouter ici.
-UI_PROVIDERS = ["anthropic", "mistral"]
+# Fournisseurs proposés dans l'UI (l'ordre est respecté). Pour en retirer un de la
+# liste sans supprimer son support, l'enlever d'ici.
+UI_PROVIDERS = ["anthropic", "mistral", "openai", "grok", "gemini"]
 
 DEFAULT_PROVIDER = "anthropic"
 
@@ -191,7 +226,11 @@ Deux volets :
 # ── Appels API par famille ────────────────────────────────────────────────────
 
 def _call_openai(provider: dict, api_key: str, user_prompt: str) -> str:
-    """Famille OpenAI-compatible (/v1/chat/completions). Couvre Mistral, OpenAI, Grok."""
+    """Famille OpenAI-compatible (/v1/chat/completions). Couvre Mistral, OpenAI, Grok.
+
+    Paramétrable par fournisseur : nom du champ tokens (max_tokens / max_completion_tokens)
+    et envoi ou non des paramètres d'échantillonnage (temperature/top_p).
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -202,10 +241,12 @@ def _call_openai(provider: dict, api_key: str, user_prompt: str) -> str:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.2,   # faible = réponses factuelles et précises
-        "max_tokens": MAX_OUTPUT_TOKENS,
-        "top_p": 0.9,
+        provider.get("max_tokens_param", "max_tokens"): MAX_OUTPUT_TOKENS,
     }
+    # Les modèles de raisonnement récents (GPT-5, Grok 4) refusent temperature/top_p.
+    if provider.get("sampling", True):
+        payload["temperature"] = 0.2   # faible = réponses factuelles et précises
+        payload["top_p"] = 0.9
 
     response = requests.post(provider["url"], json=payload, headers=headers, timeout=AI_TIMEOUT)
     _raise_for_status(response, provider)
@@ -215,6 +256,37 @@ def _call_openai(provider: dict, api_key: str, user_prompt: str) -> str:
         logger.error(f"Réponse {provider['label']} invalide: {data}")
         raise RuntimeError(f"Format de réponse {provider['label']} invalide")
     return data["choices"][0]["message"]["content"]
+
+
+def _call_gemini(provider: dict, api_key: str, user_prompt: str) -> str:
+    """Famille Google Gemini (generateContent). Clé en ?key=, system_instruction séparé."""
+    url = provider["url"].format(model=provider["model"]) + f"?key={api_key}"
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
+    }
+
+    response = requests.post(
+        url, json=payload, headers={"Content-Type": "application/json"}, timeout=AI_TIMEOUT
+    )
+    _raise_for_status(response, provider)
+
+    data = response.json()
+    candidates = data.get("candidates")
+    if not candidates:
+        # Requête potentiellement bloquée par les filtres de sécurité.
+        reason = (data.get("promptFeedback") or {}).get("blockReason")
+        logger.error(f"Réponse {provider['label']} sans candidat: {data}")
+        raise RuntimeError(
+            f"{provider['label']} : réponse vide" + (f" (bloquée : {reason})" if reason else "")
+        )
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p)
+    if not text:
+        logger.error(f"Réponse {provider['label']} sans texte: {data}")
+        raise RuntimeError(f"Réponse {provider['label']} vide")
+    return text
 
 
 def _call_anthropic(provider: dict, api_key: str, user_prompt: str) -> str:
@@ -253,13 +325,21 @@ def _call_anthropic(provider: dict, api_key: str, user_prompt: str) -> str:
 _API_DISPATCH = {
     "openai":    _call_openai,
     "anthropic": _call_anthropic,
+    "gemini":    _call_gemini,
 }
+
+
+def _is_invalid_key_400(response) -> bool:
+    """Gemini renvoie un 400 (et non 401/403) quand la clé API est invalide."""
+    return response.status_code == 400 and (
+        "API key not valid" in response.text or "API_KEY_INVALID" in response.text
+    )
 
 
 def _raise_for_status(response, provider: dict):
     """Traduit les codes HTTP courants en exceptions typées (clé invalide vs erreur)."""
     label = provider["label"]
-    if response.status_code in (401, 403):
+    if response.status_code in (401, 403) or _is_invalid_key_400(response):
         logger.error(f"Erreur authentification {label}: clé API invalide ({response.status_code})")
         raise ValueError(f"Clé API {label} invalide")
     if response.status_code == 429:
@@ -369,13 +449,24 @@ def test_api_key(provider_id: str, api_key: str) -> tuple[str, str]:
                 },
                 timeout=10,
             )
-        else:  # openai-compatible
+        elif provider["api"] == "gemini":
+            url = provider["url"].format(model=provider["model"]) + f"?key={api_key}"
+            response = requests.post(
+                url,
+                json={
+                    "contents": [{"role": "user", "parts": [{"text": "Bonjour"}]}],
+                    "generationConfig": {"maxOutputTokens": 10},
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+        else:  # openai-compatible (utilise le bon champ tokens, sans sampling)
             response = requests.post(
                 provider["url"],
                 json={
                     "model": provider["model"],
                     "messages": [{"role": "user", "content": "Bonjour"}],
-                    "max_tokens": 10,
+                    provider.get("max_tokens_param", "max_tokens"): 10,
                 },
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -386,7 +477,7 @@ def test_api_key(provider_id: str, api_key: str) -> tuple[str, str]:
 
         if response.status_code == 200:
             return ("ok", f"✅  Clé API {label} valide !")
-        if response.status_code in (401, 403):
+        if response.status_code in (401, 403) or _is_invalid_key_400(response):
             return ("invalid", f"❌  Clé API {label} invalide")
         return ("error", f"Erreur {response.status_code}: {response.text[:200]}")
 

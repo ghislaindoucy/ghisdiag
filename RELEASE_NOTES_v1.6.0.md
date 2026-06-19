@@ -22,7 +22,8 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
 - Un bouton **« Configurer l'IA… »** ouvre une fenêtre : menu déroulant du
   fournisseur, champ de clé API (masqué), modèle utilisé affiché, et un bouton
   **« Tester la clé »** qui valide la clé en direct.
-- Fournisseurs disponibles : **Anthropic (Claude Opus 4.8)** et **Mistral (Large)**.
+- **5 fournisseurs disponibles** : **Anthropic** (Claude Opus 4.8), **Mistral** (Large),
+  **OpenAI** (GPT-5.5), **Grok** (xAI, Grok 4.3) et **Google** (Gemini 2.5 Pro).
 - **Une clé API par fournisseur**, chacune **chiffrée** (Fernet, comme auparavant).
   Le fournisseur actif est mémorisé.
 
@@ -37,9 +38,11 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
 
 - Tout passe par des appels **HTTP bruts en `requests`** — **aucun SDK** ajouté
   (`anthropic`, `openai`…), pour garder l'exécutable compact.
-- Deux familles d'API couvrent les fournisseurs : **OpenAI-compatible**
-  (Mistral, et plus tard OpenAI / Grok) et **Anthropic** (`/v1/messages`).
-  Architecture extensible (OpenAI / Grok / Gemini prévus).
+- **Trois familles d'API** couvrent les fournisseurs : **OpenAI-compatible**
+  (Mistral, OpenAI, Grok), **Anthropic** (`/v1/messages`) et **Gemini**
+  (`generateContent`). Le chemin OpenAI-compatible est paramétré par fournisseur
+  (champ `max_completion_tokens` pour GPT-5/Grok, `temperature` réservé aux modèles
+  qui l'acceptent).
 
 ### Migration transparente
 
