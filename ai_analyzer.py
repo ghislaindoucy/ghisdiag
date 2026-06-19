@@ -66,6 +66,11 @@ PROVIDERS: dict[str, dict] = {
         "url":              "https://api.openai.com/v1/chat/completions",
         "max_tokens_param": "max_completion_tokens",  # série GPT-5 : max_tokens refusé
         "sampling":         False,                    # modèle de raisonnement : pas de temperature
+        # gpt-5.5 raisonne en "medium" par défaut → trop lent en non-streaming
+        # (dépasse le timeout sur une sortie longue). "low" raisonne encore mais tient
+        # le délai ; passer à "medium"/"high" si la profondeur prime sur la latence.
+        "extra_params":     {"reasoning_effort": "low"},
+        "timeout":          600,                      # marge large (raisonnement + sortie longue)
     },
     "grok": {
         "label":            "Grok (xAI)",
@@ -247,8 +252,10 @@ def _call_openai(provider: dict, api_key: str, user_prompt: str) -> str:
     if provider.get("sampling", True):
         payload["temperature"] = 0.2   # faible = réponses factuelles et précises
         payload["top_p"] = 0.9
+    # Paramètres spécifiques au fournisseur (ex. reasoning_effort pour GPT-5).
+    payload.update(provider.get("extra_params", {}))
 
-    response = requests.post(provider["url"], json=payload, headers=headers, timeout=AI_TIMEOUT)
+    response = requests.post(provider["url"], json=payload, headers=headers, timeout=provider.get("timeout", AI_TIMEOUT))
     _raise_for_status(response, provider)
 
     data = response.json()
@@ -268,7 +275,7 @@ def _call_gemini(provider: dict, api_key: str, user_prompt: str) -> str:
     }
 
     response = requests.post(
-        url, json=payload, headers={"Content-Type": "application/json"}, timeout=AI_TIMEOUT
+        url, json=payload, headers={"Content-Type": "application/json"}, timeout=provider.get("timeout", AI_TIMEOUT)
     )
     _raise_for_status(response, provider)
 
@@ -305,7 +312,7 @@ def _call_anthropic(provider: dict, api_key: str, user_prompt: str) -> str:
         ],
     }
 
-    response = requests.post(provider["url"], json=payload, headers=headers, timeout=AI_TIMEOUT)
+    response = requests.post(provider["url"], json=payload, headers=headers, timeout=provider.get("timeout", AI_TIMEOUT))
     _raise_for_status(response, provider)
 
     data = response.json()
