@@ -1,8 +1,8 @@
 # 🔍 PlanetDiag
 
-> **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez Mistral IA vous générer un plan d'action détaillé.
+> **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA (Claude ou Mistral, au choix) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.5.0)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.6.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -129,6 +129,14 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.6.0 (Juin 2026)
+🤖 **Analyse IA multi-fournisseurs**
+- Choix du fournisseur (Anthropic / Claude Opus 4.8 ou Mistral Large) via une fenêtre « Configurer l'IA »
+- Clé API par fournisseur (chiffrée), bouton « Tester la clé », migration de l'ancienne clé Mistral
+- Prompt d'audit expert mutualisé, moteur léger en `requests` (aucun SDK)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.6.0.md)
 
 ### v1.5.0 (Juin 2026)
 🌡️ **Bench thermique avant / après maintenance**

@@ -1,6 +1,6 @@
 # PlanetDiag — Résumé & Roadmap
 
-**Version actuelle : 1.5.0** (2026-06-18) — [Release](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.5.0)
+**Version actuelle : 1.6.0** (2026-06-19) — [Release](https://github.com/ghislaindoucy/planetdiag/releases/tag/v1.6.0)
 
 ---
 
@@ -105,7 +105,17 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 
 ---
 
-### v1.6.0 — Diagnostic encore plus parlant
+### v1.6.0 — 🤖 Analyse IA multi-fournisseurs ✅ *livré*
+
+- Choix du fournisseur d'analyse IA (Anthropic / Claude, Mistral) via une fenêtre de
+  configuration dédiée — clé API par fournisseur (chiffrée), bouton de test
+- Prompt d'audit expert mutualisé entre fournisseurs ; moteur léger en `requests`
+  (2 familles d'API : OpenAI-compatible + Anthropic), extensible OpenAI/Grok/Gemini
+- Migration automatique de l'ancienne clé Mistral
+
+---
+
+### v1.7.0 — Diagnostic encore plus parlant
 
 - **Résumé exécutif** « Ce qui ralentit ce PC » en tête du rapport HTML (top 3 priorisé)
 - **Pilotes obsolètes / non signés** : détection + source de mise à jour
