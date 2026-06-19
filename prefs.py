@@ -25,18 +25,36 @@ _PREFS_MAX_BYTES = 16 * 1024
 
 # Types et validateurs attendus par clé.
 # Pour ajouter une préférence : déclarer ici, pas dans _load_prefs.
+# `ai_provider` = fournisseur IA actif ; une clé API par fournisseur (chiffrée).
+# `mistral_api_key` est conservé tel quel pour la migration des anciennes prefs.
 _PREFS_SCHEMA: dict[str, type] = {
     "output_dir":        str,
     "auto_open_browser": bool,
+    "ai_provider":       str,
+    "anthropic_api_key": str,
     "mistral_api_key":   str,
+    "openai_api_key":    str,
+    "gemini_api_key":    str,
+    "grok_api_key":      str,
 }
 _PREFS_VALIDATORS: dict[str, object] = {
     "output_dir": lambda v: len(v) < 4096,
+    "ai_provider": lambda v: len(v) < 32,
+    "anthropic_api_key": lambda v: len(v) < 4096,
     "mistral_api_key": lambda v: len(v) < 4096,
+    "openai_api_key": lambda v: len(v) < 4096,
+    "gemini_api_key": lambda v: len(v) < 4096,
+    "grok_api_key": lambda v: len(v) < 4096,
 }
 
-# Clés sensibles qui doivent être chiffrées
-_ENCRYPTED_KEYS = {"mistral_api_key"}
+# Clés sensibles qui doivent être chiffrées (une par fournisseur)
+_ENCRYPTED_KEYS = {
+    "anthropic_api_key",
+    "mistral_api_key",
+    "openai_api_key",
+    "gemini_api_key",
+    "grok_api_key",
+}
 
 
 def _get_encryption_key() -> bytes:

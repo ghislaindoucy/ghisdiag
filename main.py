@@ -54,19 +54,13 @@ from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, r
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 
 try:
-    from mistral_analyzer import analyze_diagnostic
-    from mistral_report import generate_mistral_report
-    _HAS_MISTRAL = True
+    import ai_analyzer
+    from ai_analyzer import analyze_diagnostic, test_api_key
+    from ai_report import generate_ai_report
+    _HAS_AI = True
 except ImportError:
-    _HAS_MISTRAL = False
-    logger.warning("Modules Mistral non disponibles (requests/cryptography manquants)")
-
-# requests seul suffit pour tester la clé — indépendant de cryptography
-try:
-    import requests as _requests
-    _HAS_REQUESTS = True
-except ImportError:
-    _HAS_REQUESTS = False
+    _HAS_AI = False
+    logger.warning("Modules d'analyse IA non disponibles (requests/cryptography manquants)")
 
 # ── Palette Catppuccin Mocha — alignée sur le rapport HTML (assets/report.css)
 BG        = "#1e1e2e"   # base   — fond principal
@@ -119,7 +113,7 @@ class PlanetDiagApp(tk.Tk):
         self._tick_id    = None
         self.report_path = None
         self.json_path   = None
-        self.mistral_report_path = None
+        self.ai_report_path = None
 
         # Moniteur temps réel
         self._monitor_paused  = False
@@ -149,11 +143,30 @@ class PlanetDiagApp(tk.Tk):
         )
         self.auto_open_var.trace_add("write", self._on_auto_open_changed)
 
-        # Clé API Mistral
-        self.mistral_api_key_var = tk.StringVar(
-            value=prefs.get("mistral_api_key", "")
-        )
-        self.mistral_api_key_var.trace_add("write", self._on_mistral_key_changed)
+        # ── Analyse IA multi-fournisseurs ──────────────────────────────────
+        # Une clé API par fournisseur (StringVar), + le fournisseur actif.
+        if _HAS_AI:
+            self.ai_key_vars = {
+                pid: tk.StringVar(value=prefs.get(ai_analyzer.PROVIDERS[pid]["key_pref"], ""))
+                for pid in ai_analyzer.UI_PROVIDERS
+            }
+            # Fournisseur actif : préférence enregistrée, sinon migration depuis
+            # une ancienne clé Mistral, sinon le défaut.
+            saved_provider = prefs.get("ai_provider", "")
+            if saved_provider in ai_analyzer.UI_PROVIDERS:
+                active = saved_provider
+            elif prefs.get("mistral_api_key"):
+                active = "mistral"
+            else:
+                active = ai_analyzer.DEFAULT_PROVIDER
+            self.ai_provider_var = tk.StringVar(value=active)
+            # Persistance + rafraîchissement du résumé à chaque modification.
+            self.ai_provider_var.trace_add("write", self._on_ai_provider_changed)
+            for var in self.ai_key_vars.values():
+                var.trace_add("write", self._on_ai_key_changed)
+        else:
+            self.ai_key_vars = {}
+            self.ai_provider_var = tk.StringVar(value="")
 
         # Spooler state
         self._spooler_busy     = False
@@ -465,7 +478,7 @@ class PlanetDiagApp(tk.Tk):
 
         tk.Frame(parent, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(0, 0))
 
-        # ── Boutons bas + Mistral (packés AVANT le log pour rester visibles) ───
+        # ── Boutons bas + panneau IA (packés AVANT le log pour rester visibles) ───
         foot = tk.Frame(parent, bg=BG, pady=10)
         foot.pack(fill="x", padx=28)
 
@@ -501,41 +514,31 @@ class PlanetDiagApp(tk.Tk):
         )
         self.result_lbl.pack(side="right")
 
-        # ── Mistral IA Settings ────────────────────────────────────────────────
-        mistral_panel = tk.Frame(parent, bg=SURFACE, pady=8)
-        mistral_panel.pack(fill="x", padx=28, pady=(0, 6))
+        # ── Analyse IA (résumé + bouton de configuration) ───────────────────────
+        ai_panel = tk.Frame(parent, bg=SURFACE, pady=8)
+        ai_panel.pack(fill="x", padx=28, pady=(0, 6))
 
         tk.Label(
-            mistral_panel, text="🤖  Analyse IA Mistral (optionnel)",
+            ai_panel, text="🤖  Analyse IA (optionnel)",
             font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
         ).pack(side="left", padx=(8, 12))
 
-        tk.Label(
-            mistral_panel, text="Clé API :",
-            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
-        ).pack(side="left", padx=(0, 6))
-
-        self.mistral_key_entry = tk.Entry(
-            mistral_panel, textvariable=self.mistral_api_key_var,
-            show="•", font=("Consolas", 10), bg=SURFACE2, fg=FG,
-            insertbackground=FG, relief="flat", width=38,
+        # Libellé d'état (fournisseur actif + clé renseignée ou non), tenu à jour.
+        self.ai_status_lbl = tk.Label(
+            ai_panel, text="",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
         )
-        self.mistral_key_entry.pack(side="left", padx=(0, 8))
+        self.ai_status_lbl.pack(side="left")
 
-        self.btn_mistral_test = tk.Button(
-            mistral_panel, text="Tester la clé",
+        tk.Button(
+            ai_panel, text="Configurer l'IA…",
             font=("Segoe UI", 9), bg=ACCENT, fg=BG,
             activebackground=PURPLE, relief="flat", cursor="hand2",
             padx=12, pady=4,
-            command=self._test_mistral_key,
-        )
-        self.btn_mistral_test.pack(side="left", padx=(0, 12))
+            command=self._open_ai_config,
+        ).pack(side="right", padx=(8, 8))
 
-        tk.Label(
-            mistral_panel,
-            text="Si renseignée, un audit IA sera généré après chaque diagnostic",
-            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
-        ).pack(side="left")
+        self._refresh_ai_status()
 
         # Journal d'activité (expand=True → prend tout l'espace restant, DOIT être en dernier)
         log_hdr = tk.Frame(parent, bg=BG)
@@ -2340,18 +2343,19 @@ class PlanetDiagApp(tk.Tk):
             elapsed          = data["meta"]["elapsed_sec"]
             failed           = data["meta"].get("collectors_fail", [])
 
-            # Vérifier si une clé API Mistral est fournie pour l'analyse IA
-            mistral_api_key = self.mistral_api_key_var.get().strip()
-            if mistral_api_key and _HAS_MISTRAL:
-                # Lancer l'analyse Mistral en thread séparé.
+            # Vérifier si une clé API est fournie pour le fournisseur IA actif.
+            provider_id = self.ai_provider_var.get()
+            ai_key = self._active_ai_key().strip()
+            if ai_key and _HAS_AI:
+                # Lancer l'analyse IA en thread séparé.
                 # Copie superficielle suffisante : le worker ne fait que LIRE les dicts
                 # imbriqués, et le thread principal ne les mute pas après ce point
                 # (le `del data` plus bas ne retire que la liaison locale).
                 diagnostic_data_copy = data.copy()
                 machine_name = data["meta"].get("machine", "UNKNOWN")
                 thread = threading.Thread(
-                    target=self._run_mistral_analysis,
-                    args=(diagnostic_data_copy, mistral_api_key, machine_name),
+                    target=self._run_ai_analysis,
+                    args=(diagnostic_data_copy, provider_id, ai_key, machine_name),
                     daemon=True,
                 )
                 thread.start()
@@ -2407,80 +2411,207 @@ class PlanetDiagApp(tk.Tk):
         prefs["auto_open_browser"] = self.auto_open_var.get()
         save_prefs(prefs)
 
-    def _on_mistral_key_changed(self, *_):
+    # ── Analyse IA : configuration & persistance ──────────────────────────────
+    def _active_ai_key(self) -> str:
+        """Clé API du fournisseur IA actuellement sélectionné (vide si aucun)."""
+        var = self.ai_key_vars.get(self.ai_provider_var.get())
+        return var.get() if var else ""
+
+    def _save_ai_prefs(self):
+        """Persiste le fournisseur actif et toutes les clés API (chiffrées par prefs)."""
+        if not _HAS_AI:
+            return
         prefs = load_prefs()
-        prefs["mistral_api_key"] = self.mistral_api_key_var.get()
+        prefs["ai_provider"] = self.ai_provider_var.get()
+        for pid, var in self.ai_key_vars.items():
+            prefs[ai_analyzer.PROVIDERS[pid]["key_pref"]] = var.get()
         save_prefs(prefs)
 
-    def _test_mistral_key(self):
-        """Teste la validité de la clé API Mistral (appel réseau déporté hors du thread UI)."""
-        if not _HAS_REQUESTS:
+    def _refresh_ai_status(self):
+        """Met à jour le libellé d'état du panneau principal (fournisseur + clé)."""
+        lbl = getattr(self, "ai_status_lbl", None)
+        if lbl is None:
+            return
+        if not _HAS_AI:
+            lbl.configure(text="indisponible (requests/cryptography manquants)", fg=FG_MUTED)
+            return
+        pid = self.ai_provider_var.get()
+        name = ai_analyzer.provider_label(pid)
+        if self._active_ai_key().strip():
+            lbl.configure(text=f"{name} — un audit IA sera généré après le diagnostic", fg=GREEN)
+        else:
+            lbl.configure(text=f"{name} — clé non renseignée (cliquez sur Configurer)", fg=FG_MUTED)
+
+    def _on_ai_provider_changed(self, *_):
+        self._save_ai_prefs()
+        self._refresh_ai_status()
+        # Si la fenêtre de config est ouverte, recâbler le champ clé sur le nouveau fournisseur.
+        if getattr(self, "_ai_cfg_win", None) and self._ai_cfg_win.winfo_exists():
+            self._ai_cfg_bind_provider()
+
+    def _on_ai_key_changed(self, *_):
+        self._save_ai_prefs()
+        self._refresh_ai_status()
+
+    def _open_ai_config(self):
+        """Ouvre la fenêtre de configuration de l'analyse IA (fournisseur + clé + test)."""
+        if not _HAS_AI:
             messagebox.showerror(
                 "Dépendance manquante",
-                "La librairie 'requests' est requise pour tester la clé.\n\n"
+                "L'analyse IA nécessite les librairies 'requests' et 'cryptography'.\n\n"
                 "Exécutez dans un terminal :\n"
                 "  py -m pip install requests cryptography",
             )
             return
 
-        api_key = self.mistral_api_key_var.get().strip()
-        if not api_key:
-            messagebox.showwarning("Attention", "Veuillez entrer une clé API Mistral")
+        # Si déjà ouverte, la ramener au premier plan.
+        existing = getattr(self, "_ai_cfg_win", None)
+        if existing and existing.winfo_exists():
+            existing.lift()
+            existing.focus_force()
             return
 
-        # On désactive le bouton pendant le test pour éviter les double-clics.
-        self.btn_mistral_test.configure(state="disabled", text="Test en cours…")
+        win = tk.Toplevel(self)
+        win.title("Configuration de l'analyse IA")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.transient(self)
+        self._ai_cfg_win = win
+
+        self.update_idletasks()
+        w, h = 520, 360
+        px = self.winfo_x() + (self.winfo_width()  - w) // 2
+        py = self.winfo_y() + (self.winfo_height() - h) // 2
+        win.geometry(f"{w}x{h}+{max(px, 0)}+{max(py, 0)}")
+
+        def _on_close():
+            self._ai_cfg_win = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+        tk.Label(
+            win, text="🤖  Analyse IA après diagnostic",
+            font=("Segoe UI", 13, "bold"), bg=BG, fg=ACCENT,
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+
+        tk.Label(
+            win,
+            text="Les données du diagnostic sont transmises au fournisseur choisi pour\n"
+                 "produire un audit technique. Confidentialité : ces données quittent\n"
+                 "votre machine vers l'API du fournisseur.",
+            font=("Segoe UI", 9), bg=BG, fg=FG_MUTED, justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 14))
+
+        # Fournisseur
+        row = tk.Frame(win, bg=BG)
+        row.pack(fill="x", padx=20, pady=(0, 10))
+        tk.Label(row, text="Fournisseur :", font=("Segoe UI", 10),
+                 bg=BG, fg=FG_DIM, width=12, anchor="w").pack(side="left")
+
+        # Map label ↔ id pour le Combobox.
+        self._ai_cfg_label_to_id = {
+            ai_analyzer.PROVIDERS[pid]["label"]: pid for pid in ai_analyzer.UI_PROVIDERS
+        }
+        labels = [ai_analyzer.PROVIDERS[pid]["label"] for pid in ai_analyzer.UI_PROVIDERS]
+        self._ai_cfg_combo = ttk.Combobox(
+            row, values=labels, state="readonly", font=("Segoe UI", 10),
+        )
+        self._ai_cfg_combo.set(ai_analyzer.provider_label(self.ai_provider_var.get()))
+        self._ai_cfg_combo.pack(side="left", fill="x", expand=True)
+        self._ai_cfg_combo.bind("<<ComboboxSelected>>", self._ai_cfg_on_combo)
+
+        # Modèle (figé, informatif)
+        self._ai_cfg_model_lbl = tk.Label(
+            win, text="", font=("Segoe UI", 9), bg=BG, fg=FG_MUTED, anchor="w",
+        )
+        self._ai_cfg_model_lbl.pack(fill="x", padx=20, pady=(0, 12))
+
+        # Clé API
+        row2 = tk.Frame(win, bg=BG)
+        row2.pack(fill="x", padx=20, pady=(0, 6))
+        tk.Label(row2, text="Clé API :", font=("Segoe UI", 10),
+                 bg=BG, fg=FG_DIM, width=12, anchor="w").pack(side="left")
+        self._ai_cfg_key_entry = tk.Entry(
+            row2, show="•", font=("Consolas", 10), bg=SURFACE2, fg=FG,
+            insertbackground=FG, relief="flat",
+        )
+        self._ai_cfg_key_entry.pack(side="left", fill="x", expand=True, ipady=3)
+
+        # Boutons test + fermeture
+        btns = tk.Frame(win, bg=BG)
+        btns.pack(fill="x", padx=20, pady=(16, 0))
+        self._ai_cfg_test_btn = tk.Button(
+            btns, text="Tester la clé",
+            font=("Segoe UI", 9), bg=ACCENT, fg=BG,
+            activebackground=PURPLE, relief="flat", cursor="hand2",
+            padx=14, pady=5, command=self._ai_cfg_test_key,
+        )
+        self._ai_cfg_test_btn.pack(side="left")
+        tk.Button(
+            btns, text="Fermer",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=14, pady=5, command=_on_close,
+        ).pack(side="right")
+
+        # Résultat du test
+        self._ai_cfg_result_lbl = tk.Label(
+            win, text="", font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+            anchor="w", justify="left", wraplength=480,
+        )
+        self._ai_cfg_result_lbl.pack(fill="x", padx=20, pady=(12, 0))
+
+        self._ai_cfg_bind_provider()
+
+    def _ai_cfg_on_combo(self, _event=None):
+        """Sélection d'un fournisseur dans le Combobox → met à jour la variable active."""
+        pid = self._ai_cfg_label_to_id.get(self._ai_cfg_combo.get())
+        if pid and pid != self.ai_provider_var.get():
+            self.ai_provider_var.set(pid)   # déclenche _on_ai_provider_changed → _ai_cfg_bind_provider
+
+    def _ai_cfg_bind_provider(self):
+        """Recâble le champ clé + le libellé modèle sur le fournisseur actif."""
+        pid = self.ai_provider_var.get()
+        # Combobox synchronisé (utile si changement provoqué hors combobox).
+        self._ai_cfg_combo.set(ai_analyzer.provider_label(pid))
+        self._ai_cfg_model_lbl.configure(text=f"Modèle : {ai_analyzer.model_label(pid)}")
+        var = self.ai_key_vars.get(pid)
+        if var is not None:
+            self._ai_cfg_key_entry.configure(textvariable=var)
+        self._ai_cfg_result_lbl.configure(text="", fg=FG_MUTED)
+
+    def _ai_cfg_test_key(self):
+        """Teste la clé du fournisseur actif (appel réseau déporté hors du thread UI)."""
+        pid = self.ai_provider_var.get()
+        api_key = self._active_ai_key().strip()
+        if not api_key:
+            self._ai_cfg_result_lbl.configure(
+                text="Veuillez saisir une clé API.", fg=YELLOW)
+            return
+        self._ai_cfg_test_btn.configure(state="disabled", text="Test en cours…")
+        self._ai_cfg_result_lbl.configure(text="Test en cours…", fg=FG_MUTED)
         threading.Thread(
-            target=self._test_mistral_key_worker, args=(api_key,), daemon=True
+            target=self._ai_cfg_test_worker, args=(pid, api_key), daemon=True
         ).start()
 
-    def _test_mistral_key_worker(self, api_key: str):
+    def _ai_cfg_test_worker(self, provider_id: str, api_key: str):
         """Effectue l'appel de test dans un thread ; restitue le résultat via self.after."""
-        def _finish(kind: str, message: str):
-            def _show():
-                self.btn_mistral_test.configure(state="normal", text="Tester la clé")
-                if kind == "info":
-                    messagebox.showinfo("Succès", message)
-                elif kind == "warn":
-                    messagebox.showwarning("Attention", message)
-                else:
-                    messagebox.showerror("Erreur", message)
-            self.after(0, _show)
+        kind, message = test_api_key(provider_id, api_key)
 
-        try:
-            response = _requests.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                json={
-                    "model": "mistral-large-latest",
-                    "messages": [{"role": "user", "content": "Bonjour"}],
-                    "max_tokens": 10,
-                },
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=10,
-            )
+        def _show():
+            win = getattr(self, "_ai_cfg_win", None)
+            if not (win and win.winfo_exists()):
+                return
+            self._ai_cfg_test_btn.configure(state="normal", text="Tester la clé")
+            color = GREEN if kind == "ok" else (RED if kind == "invalid" else YELLOW)
+            self._ai_cfg_result_lbl.configure(text=message, fg=color)
+        self.after(0, _show)
 
-            if response.status_code == 200:
-                _finish("info", "✅  Clé API Mistral valide!")
-            elif response.status_code == 401:
-                _finish("error", "❌  Clé API invalide")
-            else:
-                _finish("error", f"Erreur {response.status_code}: {response.text[:200]}")
-
-        except _requests.exceptions.Timeout:
-            _finish("error", "Timeout - Impossible de contacter Mistral")
-        except _requests.exceptions.ConnectionError:
-            _finish("error", "Erreur de connexion")
-        except Exception as e:
-            _finish("error", f"Erreur: {e}")
-
-    # ── Popup d'attente Mistral ───────────────────────────────────────────────
-    def _open_mistral_waiting_popup(self):
-        """Ouvre une fenêtre non bloquante indiquant que l'analyse Mistral est en cours."""
+    # ── Popup d'attente de l'analyse IA ────────────────────────────────────────
+    def _open_ai_waiting_popup(self, provider_label: str):
+        """Ouvre une fenêtre non bloquante indiquant que l'analyse IA est en cours."""
         popup = tk.Toplevel(self)
-        popup.title("Analyse Mistral IA")
+        popup.title("Analyse IA")
         popup.configure(bg=SURFACE)
         popup.resizable(False, False)
         popup.grab_set()   # garde le focus mais ne bloque pas le thread principal
@@ -2495,81 +2626,86 @@ class PlanetDiagApp(tk.Tk):
         popup.protocol("WM_DELETE_WINDOW", lambda: None)
 
         tk.Label(
-            popup, text="🤖  Analyse Mistral IA en cours…",
+            popup, text="🤖  Analyse IA en cours…",
             font=("Segoe UI", 13, "bold"), bg=SURFACE, fg=ACCENT,
         ).pack(pady=(24, 8))
 
         tk.Label(
             popup,
-            text="Les données sont transmises à Mistral pour un audit complet.\n"
+            text=f"Les données sont transmises à {provider_label} pour un audit complet.\n"
                  "La génération du rapport peut prendre plusieurs minutes.\n"
                  "Merci de patienter, la fenêtre se fermera automatiquement.",
             font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
             justify="center",
         ).pack(pady=(0, 20))
 
-        self._mistral_popup = popup
+        self._ai_popup = popup
 
-    def _close_mistral_waiting_popup(self):
+    def _close_ai_waiting_popup(self):
         """Ferme la popup d'attente si elle est ouverte."""
-        popup = getattr(self, "_mistral_popup", None)
+        popup = getattr(self, "_ai_popup", None)
         if popup and popup.winfo_exists():
             popup.grab_release()
             popup.destroy()
-        self._mistral_popup = None
+        self._ai_popup = None
 
-    def _run_mistral_analysis(self, diagnostic_data: dict, api_key: str, machine_name: str):
-        """Lance l'analyse Mistral en thread séparé (ne bloque pas l'UI)."""
+    def _run_ai_analysis(self, diagnostic_data: dict, provider_id: str,
+                         api_key: str, machine_name: str):
+        """Lance l'analyse IA en thread séparé (ne bloque pas l'UI)."""
+        name = ai_analyzer.provider_label(provider_id)
         # Ouvrir la popup d'attente depuis le thread UI
-        self.after(0, self._open_mistral_waiting_popup)
+        self.after(0, lambda: self._open_ai_waiting_popup(name))
         try:
-            self.after(0, lambda: self._log("🤖  Analyse Mistral IA en cours…", "info"))
+            self.after(0, lambda: self._log(f"🤖  Analyse IA ({name}) en cours…", "info"))
 
-            # Appeler Mistral
             progress_msg = lambda m: self.after(0, lambda msg=m: self._log(f"   {msg}", "dim"))
-            analysis_text = analyze_diagnostic(diagnostic_data, api_key, progress_callback=progress_msg)
+            analysis_text = analyze_diagnostic(
+                diagnostic_data, provider_id, api_key, progress_callback=progress_msg
+            )
 
             if not analysis_text:
-                self.after(0, self._close_mistral_waiting_popup)
-                self.after(0, lambda: self._log("⚠ Analyse Mistral vide", "warn"))
+                self.after(0, self._close_ai_waiting_popup)
+                self.after(0, lambda: self._log("⚠ Analyse IA vide", "warn"))
                 return
 
-            # Générer le rapport HTML Mistral
-            mistral_html_path = generate_mistral_report(
+            # Générer le rapport HTML
+            html_path = generate_ai_report(
                 analysis_text,
                 machine_name,
                 self._out_dir,
+                provider_label=name,
+                model_label=ai_analyzer.model_label(provider_id),
+                app_version=VERSION,
             )
 
-            self.mistral_report_path = mistral_html_path
+            self.ai_report_path = html_path
 
-            # Fermer la popup puis afficher le succès
-            self.after(0, self._close_mistral_waiting_popup)
-            self.after(0, lambda: self._log(f"✅  Rapport Mistral : {mistral_html_path}", "ok"))
+            self.after(0, self._close_ai_waiting_popup)
+            self.after(0, lambda: self._log(f"✅  Rapport IA : {html_path}", "ok"))
 
-            # Ouvrir automatiquement le rapport Mistral
             if self.auto_open_var.get():
-                self.after(600, lambda: self._open_mistral_html(mistral_html_path))
+                self.after(600, lambda: self._open_ai_html(html_path))
 
         except ValueError as e:
-            # Clé API invalide
-            self.after(0, self._close_mistral_waiting_popup)
-            self.after(0, lambda: self._log(f"❌  Mistral: {str(e)}", "err"))
-            self.after(0, lambda: messagebox.showerror("Erreur Mistral", str(e)))
+            # Clé API invalide / fournisseur inconnu
+            self.after(0, self._close_ai_waiting_popup)
+            self.after(0, lambda: self._log(f"❌  IA : {str(e)}", "err"))
+            self.after(0, lambda: messagebox.showerror("Erreur analyse IA", str(e)))
 
         except RuntimeError as e:
             # Erreur réseau ou timeout
-            self.after(0, self._close_mistral_waiting_popup)
-            self.after(0, lambda: self._log(f"⚠ Mistral: {str(e)}", "warn"))
-            self.after(0, lambda: messagebox.showwarning("Avertissement", f"Analyse Mistral non disponible:\n{str(e)}"))
+            self.after(0, self._close_ai_waiting_popup)
+            self.after(0, lambda: self._log(f"⚠ IA : {str(e)}", "warn"))
+            self.after(0, lambda: messagebox.showwarning(
+                "Avertissement", f"Analyse IA non disponible :\n{str(e)}"))
 
         except Exception as e:
-            logger.exception("Erreur lors de l'analyse Mistral")
-            self.after(0, self._close_mistral_waiting_popup)
-            self.after(0, lambda: self._log(f"❌  Erreur Mistral: {str(e)}", "err"))
+            logger.exception("Erreur lors de l'analyse IA")
+            self.after(0, self._close_ai_waiting_popup)
+            self.after(0, lambda: self._log(f"❌  Erreur IA : {str(e)}", "err"))
 
-    def _open_mistral_html(self, path: Path):
-        """Ouvre le rapport Mistral dans le navigateur."""
+    def _open_ai_html(self, path: Path):
+        """Ouvre le rapport IA dans le navigateur."""
         try:
             os.startfile(str(path.resolve()))
         except OSError as e:

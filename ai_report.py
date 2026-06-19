@@ -1,6 +1,7 @@
 """
-PlanetDiag - Générateur de rapport HTML pour analyse Mistral
-Convertit l'analyse Mistral en rapport HTML élégant.
+PlanetDiag - Générateur de rapport HTML pour l'analyse IA.
+Convertit l'analyse IA (markdown) en rapport HTML élégant (thème Catppuccin).
+Indépendant du fournisseur : le libellé du fournisseur/modèle est passé en paramètre.
 """
 
 import html
@@ -133,7 +134,7 @@ def _markdown_to_html(markdown_text: str) -> str:
 
 
 def _get_css() -> str:
-    """Retourne le CSS personnalisé pour le rapport Mistral."""
+    """Retourne le CSS personnalisé pour le rapport IA."""
     return f"""
     * {{
         margin: 0;
@@ -324,51 +325,61 @@ def _get_css() -> str:
     """
 
 
-def generate_mistral_report(
-    mistral_analysis: str,
+def generate_ai_report(
+    ai_analysis: str,
     machine_name: str,
     output_dir: Path,
+    provider_label: str = "IA",
+    model_label: str = "",
+    app_version: str = "",
 ) -> Path:
     """
-    Génère un rapport HTML à partir de l'analyse Mistral.
+    Génère un rapport HTML à partir de l'analyse IA.
 
     Args:
-        mistral_analysis: Texte de l'analyse Mistral
-        machine_name: Nom du PC
-        output_dir: Répertoire de sortie
+        ai_analysis: texte de l'analyse (markdown)
+        machine_name: nom du PC
+        output_dir: répertoire de sortie
+        provider_label: libellé du fournisseur (ex. "Anthropic (Claude)")
+        model_label: libellé du modèle (ex. "Claude Opus 4.8")
+        app_version: version de PlanetDiag (pour le pied de page)
 
     Returns:
-        Path vers le fichier HTML généré
+        Path vers le fichier HTML généré.
     """
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Générer le nom du fichier
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"PlanetDiag_{machine_name}_{ts}_AI_ANALYSIS.html"
         html_path = output_dir / filename
 
-        # Convertir markdown → HTML
-        content_html = _markdown_to_html(mistral_analysis)
+        content_html = _markdown_to_html(ai_analysis)
 
-        # Générer le HTML complet
+        model_line = (
+            f'<p><strong>Modèle :</strong> {html.escape(model_label)}</p>'
+            if model_label else ""
+        )
+        version_line = f" v{html.escape(app_version)}" if app_version else ""
+
         html_content = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlanetDiag - Analyse Mistral IA</title>
+    <title>PlanetDiag - Analyse IA</title>
     <style>
         {_get_css()}
     </style>
 </head>
 <body>
     <header>
-        <h1>🤖 Analyse Mistral IA - PlanetDiag</h1>
+        <h1>🤖 Analyse IA - PlanetDiag</h1>
         <div class="meta">
-            <p><strong>Machine:</strong> {html.escape(machine_name)}</p>
-            <p><strong>Généré:</strong> <span class="timestamp">{datetime.now().strftime("%d/%m/%Y à %H:%M:%S")}</span></p>
-            <p><strong>Modèle:</strong> Mistral Large (analyse experte)</p>
+            <p><strong>Machine :</strong> {html.escape(machine_name)}</p>
+            <p><strong>Généré :</strong> <span class="timestamp">{datetime.now().strftime("%d/%m/%Y à %H:%M:%S")}</span></p>
+            <p><strong>Fournisseur :</strong> {html.escape(provider_label)}</p>
+            {model_line}
         </div>
     </header>
 
@@ -379,18 +390,17 @@ def generate_mistral_report(
     </main>
 
     <footer>
-        <p>Rapport généré par <strong>PlanetDiag</strong> v1.5.0</p>
-        <p>Analyse effectuée par Mistral IA — à recouper avec le rapport technique complet</p>
+        <p>Rapport généré par <strong>PlanetDiag</strong>{version_line}</p>
+        <p>Analyse effectuée par {html.escape(provider_label)} — à recouper avec le rapport technique complet</p>
     </footer>
 </body>
 </html>"""
 
-        # Sauvegarder le fichier
         html_path.write_text(html_content, encoding="utf-8")
-        logger.info(f"Rapport Mistral généré: {html_path}")
+        logger.info(f"Rapport IA généré: {html_path}")
 
         return html_path
 
     except Exception as e:
-        logger.exception(f"Erreur génération rapport Mistral: {e}")
+        logger.exception(f"Erreur génération rapport IA: {e}")
         raise RuntimeError(f"Erreur génération rapport: {e}")
