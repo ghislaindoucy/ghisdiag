@@ -43,6 +43,9 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
   (`generateContent`). Le chemin OpenAI-compatible est paramétré par fournisseur
   (champ `max_completion_tokens` pour GPT-5/Grok, `temperature` réservé aux modèles
   qui l'acceptent).
+- **Réglages par fournisseur** : timeout et `reasoning_effort` ajustables. OpenAI
+  (gpt-5.5, modèle de raisonnement) tourne en effort « low » avec un timeout élargi
+  (600 s) pour éviter une expiration sur les audits longs en non-streaming.
 
 ### Migration transparente
 
@@ -51,13 +54,31 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
 
 ---
 
+## 🌡️ Aussi dans cette version — bench thermique
+
+- **Avertissement de responsabilité** avant chaque test : les sécurités (arrêt
+  automatique à 95 °C, arrêt manuel) réduisent mais n'éliminent pas le risque ;
+  selon l'état du matériel (poussière, pâte dégradée, ventilateur/capteur défaillant,
+  composants fragilisés) un dommage reste possible. Le test démarre sous la
+  responsabilité de l'utilisateur — PlanetDiag et son auteur dégagés de toute
+  responsabilité.
+- **Durée de charge personnalisable** : en plus des presets (Court / Standard / Long),
+  une option « Personnalisé… » accepte une durée en minutes (1 à 30). La comparaison
+  avant / après reste protégée par l'exigence d'un protocole identique (même durée et
+  même intensité des deux côtés).
+
+---
+
 ## ✅ Vérification Pré-Release
 
 - ✅ `ai_analyzer.py`, `ai_report.py`, `prefs.py`, `main.py` compilent
 - ✅ Smoke test UI : fenêtre « Configurer l'IA », bascule de fournisseur, libellé modèle
-- ✅ Appel **Anthropic** validé en conditions réelles (clé valide → audit généré)
+- ✅ Appels **Anthropic** et **Mistral** validés en conditions réelles (clé valide
+  → audit généré) ; OpenAI / Grok / Gemini validés au niveau code (payloads, URL,
+  routage par famille d'API)
 - ✅ Génération du rapport HTML d'analyse (markdown → HTML, fournisseur/modèle indiqués)
 - ✅ Chiffrement/déchiffrement des clés + migration de `mistral_api_key`
+- ✅ Bench thermique : durée personnalisée (presets + custom) et avertissement vérifiés
 - ✅ Versions synchronisées (orchestrator, generator, version_info, manifest, README)
 
 ---
@@ -79,6 +100,10 @@ gagne une **fenêtre de configuration dédiée** et le choix du fournisseur.
 ```
 feat(ia): analyse IA multi-fournisseurs (Anthropic + Mistral)
 release: bump version 1.6.0 (orchestrator, generator, version_info, manifest, README, CHANGELOG, ROADMAP)
+feat(ia): branche OpenAI, Grok et Gemini (5 fournisseurs)
+fix(ia): OpenAI gpt-5.5 timeout — reasoning_effort low + timeout 600s
+feat(thermal): avertissement de responsabilite avant le bench
+feat(thermal): duree de charge personnalisable
 ```
 
 ---

@@ -136,6 +136,10 @@ PlanetDiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 - Clé API par fournisseur (chiffrée), bouton « Tester la clé », migration de l'ancienne clé Mistral
 - Prompt d'audit expert mutualisé, moteur léger en `requests` (aucun SDK)
 
+🌡️ **Bench thermique**
+- Avertissement de responsabilité avant le test (le matériel peut être endommagé selon son état)
+- Durée de charge personnalisable (presets + saisie libre en minutes)
+
 [📖 Notes complètes →](./RELEASE_NOTES_v1.6.0.md)
 
 ### v1.5.0 (Juin 2026)

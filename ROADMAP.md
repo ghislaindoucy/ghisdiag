@@ -113,6 +113,10 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 - Prompt d'audit expert mutualisé entre fournisseurs ; moteur léger en `requests`
   (3 familles d'API : OpenAI-compatible, Anthropic, Gemini), sans SDK
 - Migration automatique de l'ancienne clé Mistral
+- Timeout / `reasoning_effort` réglables par fournisseur (OpenAI gpt-5.5 en effort
+  « low » + timeout élargi pour éviter les expirations sur audits longs)
+- **Bench thermique** : avertissement de responsabilité avant le test, et durée de
+  charge personnalisable (presets + saisie libre, comparaison protégée par protocole identique)
 
 ---
 

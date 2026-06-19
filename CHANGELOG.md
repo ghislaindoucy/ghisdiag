@@ -24,6 +24,20 @@ saisissez votre clé via une fenêtre de configuration dédiée.
 - **Clés chiffrées par fournisseur** (Fernet, comme avant) + migration automatique
   de l'ancienne clé Mistral
 - Rapport HTML d'analyse générique (fournisseur et modèle indiqués)
+- Timeout et `reasoning_effort` réglables par fournisseur : OpenAI (gpt-5.5,
+  modèle de raisonnement) tourne en effort « low » avec un timeout élargi pour
+  éviter une expiration sur les audits longs
+
+### 🌡️ Améliorations du bench thermique
+
+- **Avertissement de responsabilité** avant chaque test : rappelle que les sécurités
+  (arrêt à 95 °C, arrêt manuel) réduisent mais n'éliminent pas le risque, et que
+  selon l'état du matériel un dommage reste possible — démarrage sous la
+  responsabilité de l'utilisateur
+- **Durée de charge personnalisable** : en plus des presets (Court / Standard / Long),
+  une option « Personnalisé… » permet de saisir une durée en minutes (1 à 30). La
+  comparaison avant / après refuse les protocoles différents, garantissant une durée
+  identique des deux côtés
 
 ## [1.5.0] — 2026-06-18
 
