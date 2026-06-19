@@ -102,14 +102,13 @@ def _base_path() -> Path:
     return Path(__file__).parent.resolve()
 
 
-def _resolve_powershell() -> str:
-    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
-    candidate = Path(sysroot) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    return str(candidate) if candidate.is_file() else "powershell.exe"
+def _resolve_python() -> str:
+    """Retourne le chemin de Python, ou sys.executable en fallback."""
+    return sys.executable
 
 
-_PS_EXE       = _resolve_powershell()
-_LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.ps1"
+_PYTHON_EXE   = _resolve_python()
+_LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.py"
 _NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -122,7 +121,7 @@ def default_output_dir() -> Path:
 # --- Generateur de charge CPU -----------------------------------------------
 
 class _LoadGenerator:
-    """Pilote collectors/cpu_load.ps1 dans un processus dedie."""
+    """Pilote collectors/cpu_load.py dans un processus dedie."""
 
     def __init__(self, intensity: int, threads: int, max_duration_sec: int):
         self.intensity        = intensity
@@ -135,15 +134,13 @@ class _LoadGenerator:
 
     def start(self) -> bool:
         if not self.available():
-            logger.error("cpu_load.ps1 introuvable : %s", _LOAD_SCRIPT)
+            logger.error("cpu_load.py introuvable : %s", _LOAD_SCRIPT)
             return False
         args = [
-            _PS_EXE, "-NonInteractive", "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", str(_LOAD_SCRIPT),
-            "-Threads", str(self.threads),
-            "-Intensity", str(self.intensity),
-            "-DurationSec", str(self.max_duration_sec),
+            _PYTHON_EXE, str(_LOAD_SCRIPT),
+            "--threads", str(self.threads),
+            "--intensity", str(self.intensity),
+            "--duration", str(self.max_duration_sec),
         ]
         try:
             self._proc = subprocess.Popen(
