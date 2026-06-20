@@ -207,10 +207,22 @@ class GhisdiagApp(tk.Tk):
         self.geometry(f"740x640+{x}+{y}")
 
     def _set_icon(self):
+        # En mode exe gelé (PyInstaller), les assets sont extraits dans _MEIPASS.
+        assets = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "assets"
+        # Barre de titre : .ico (frames multi-tailles nettes).
         try:
-            ico = Path(__file__).parent / "assets" / "icon.ico"
+            ico = assets / "icon.ico"
             if ico.exists():
                 self.iconbitmap(str(ico))
+        except Exception:
+            pass
+        # Barre des tâches : iconbitmap seul ne suffit pas sous Windows — il faut
+        # un iconphoto. La référence est conservée pour éviter le ramasse-miettes.
+        try:
+            png = assets / "icon.png"
+            if png.exists():
+                self._icon_img = tk.PhotoImage(file=str(png))
+                self.iconphoto(True, self._icon_img)
         except Exception:
             pass
 
@@ -4715,6 +4727,14 @@ _CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
 
 
 def main():
+    # Windows : déclarer un AppUserModelID explicite pour que la barre des tâches
+    # regroupe l'app sous sa propre identité et affiche SON icône — sans ça, lancé
+    # depuis les sources, c'est l'icône de python.exe qui s'affiche.
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Ghisdiag.Diag.1")
+    except Exception:
+        pass
     if not is_admin() and "--no-uac" not in sys.argv:
         request_elevation()
     GhisdiagApp().mainloop()
