@@ -1426,6 +1426,169 @@ class GhisdiagApp(tk.Tk):
         )
         self.btn_dism_log.pack(anchor="w", pady=(6, 0))
 
+        tk.Frame(inner, height=1, bg=BORDER).pack(fill="x", padx=20, pady=(12, 0))
+
+        # ── Section Effacement des journaux ───────────────────────────────────
+        clr_sec = tk.Frame(inner, bg=BG, pady=12)
+        clr_sec.pack(fill="x", padx=28)
+
+        tk.Label(clr_sec, text="🗑  Vider les journaux Windows",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(clr_sec,
+                 text="Efface les journaux d'événements analysés par le diagnostic (System, Application,\n"
+                      "Setup…) pour repartir sur une base propre après réparation. Sinon, un crash ou\n"
+                      "une erreur d'avant la réparation reste visible jusqu'à 14-30 jours.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED, justify="left").pack(anchor="w", pady=(2, 8))
+
+        # Avertissement action destructive
+        warn = tk.Frame(clr_sec, bg=SURFACE, highlightbackground=RED,
+                        highlightthickness=1, bd=0)
+        warn.pack(fill="x", pady=(0, 8))
+        tk.Label(warn,
+                 text="⚠  Action irréversible : l'historique des événements effacés est définitivement perdu.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=RED, justify="left",
+                 padx=10, pady=6, wraplength=560).pack(anchor="w")
+
+        self._clearlogs_security_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            clr_sec,
+            text="Inclure aussi le journal de sécurité (échecs de connexion) — Windows y réécrit un événement 1102",
+            variable=self._clearlogs_security_var,
+            font=("Segoe UI", 9), bg=BG, fg=FG_DIM, activebackground=BG,
+            activeforeground=FG, selectcolor=SURFACE, anchor="w",
+            highlightthickness=0, bd=0, wraplength=560, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        clr_ctrl = tk.Frame(clr_sec, bg=BG)
+        clr_ctrl.pack(fill="x")
+        self.btn_clearlogs = tk.Button(
+            clr_ctrl, text="🗑  Vider les journaux Windows",
+            font=("Segoe UI", 10), bg=RED, fg=BG,
+            activebackground=RED_HOVER, activeforeground=BG,
+            relief="flat", cursor="hand2", padx=14, pady=7,
+            command=self._clearlogs_run,
+        )
+        self.btn_clearlogs.pack(side="left")
+        self._clearlogs_status_var = tk.StringVar(value="En attente")
+        tk.Label(clr_ctrl, textvariable=self._clearlogs_status_var,
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(side="left", padx=(14, 0))
+
+        self._clearlogs_bar_frame = tk.Frame(clr_sec, bg=BG)
+        self._clearlogs_bar_frame.pack(fill="x")
+        self._clearlogs_bar = ttk.Progressbar(
+            self._clearlogs_bar_frame, style="PD.Horizontal.TProgressbar", mode="indeterminate")
+        self._clearlogs_bar.pack(fill="x", ipady=3, pady=(4, 0))
+        self._clearlogs_bar_frame.pack_forget()
+
+        clr_log_wrap = tk.Frame(clr_sec, bg=SURFACE,
+                                highlightbackground=BORDER, highlightthickness=1, bd=0)
+        clr_log_wrap.pack(fill="x", pady=(8, 0))
+        self._clearlogs_log = tk.Text(
+            clr_log_wrap, bg=SURFACE, fg=FG_DIM,
+            font=("Consolas", 9), bd=0, padx=8, pady=8,
+            state="disabled", wrap="word", height=8,
+        )
+        clr_log_sb = ttk.Scrollbar(clr_log_wrap, command=self._clearlogs_log.yview, style="PD.Vertical.TScrollbar")
+        self._clearlogs_log.configure(yscrollcommand=clr_log_sb.set)
+        clr_log_sb.pack(side="right", fill="y")
+        self._clearlogs_log.pack(fill="both", expand=True)
+
+    def _clearlogs_run(self):
+        if self._repair_busy:
+            messagebox.showwarning(
+                "Opération en cours",
+                "Une opération de réparation est déjà en cours.\n"
+                "Attendez qu'elle se termine avant d'en lancer une autre.",
+            )
+            return
+
+        include_security = self._clearlogs_security_var.get()
+        extra = ("\n\nLe journal de sécurité sera également vidé."
+                 if include_security else "")
+        if not messagebox.askyesno(
+            "Vider les journaux Windows",
+            "Cette opération efface définitivement les journaux d'événements "
+            "analysés par le diagnostic (System, Application, Setup…).\n\n"
+            "L'historique effacé est irrécupérable." + extra + "\n\nContinuer ?",
+            icon="warning", default="no",
+        ):
+            return
+
+        log_w = self._clearlogs_log
+        status_var = self._clearlogs_status_var
+        bar_frame, bar = self._clearlogs_bar_frame, self._clearlogs_bar
+
+        self._repair_busy = True
+        self.btn_sfc.configure(state="disabled")
+        self.btn_dism.configure(state="disabled")
+        self.btn_clearlogs.configure(state="disabled")
+        status_var.set("En cours…")
+        bar_frame.pack(fill="x", pady=(4, 0))
+        bar.start(12)
+
+        log_w.configure(state="normal")
+        log_w.delete("1.0", "end")
+        log_w.configure(state="disabled")
+
+        def _on_line(line: str):
+            def _upd():
+                log_w.configure(state="normal")
+                log_w.insert("end", line + "\n")
+                log_w.see("end")
+                log_w.configure(state="disabled")
+            self.after(0, _upd)
+
+        args = ["-IncludeSecurity"] if include_security else []
+
+        def _worker():
+            try:
+                exit_code = run_ps_stream(
+                    "collectors/clear_logs.ps1",
+                    args,
+                    on_line=_on_line,
+                    timeout=120,
+                )
+                ok = (exit_code == 0)
+
+                def _done():
+                    bar.stop()
+                    bar_frame.pack_forget()
+                    self._repair_busy = False
+                    self.btn_sfc.configure(state="normal")
+                    self.btn_dism.configure(state="normal")
+                    self.btn_clearlogs.configure(state="normal")
+                    if ok:
+                        status_var.set("✓ Journaux vidés")
+                    else:
+                        status_var.set("✗ Échec (droits administrateur ?)")
+                        log_w.configure(state="normal")
+                        log_w.insert(
+                            "end",
+                            "\n✗ Aucun journal n'a pu être vidé. "
+                            "Vérifiez que l'application est lancée en administrateur.\n",
+                        )
+                        log_w.see("end")
+                        log_w.configure(state="disabled")
+                self.after(0, _done)
+
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    bar.stop()
+                    bar_frame.pack_forget()
+                    self._repair_busy = False
+                    self.btn_sfc.configure(state="normal")
+                    self.btn_dism.configure(state="normal")
+                    self.btn_clearlogs.configure(state="normal")
+                    status_var.set("✗ Erreur")
+                    log_w.configure(state="normal")
+                    log_w.insert("end", f"\n✗ Erreur : {e}\n")
+                    log_w.see("end")
+                    log_w.configure(state="disabled")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _repair_run(self, action: str):
         if self._repair_busy:
             messagebox.showwarning(
