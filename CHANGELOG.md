@@ -4,6 +4,28 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.1] — 2026-06-21
+
+### 🎨 Interface & branding
+
+- Le **logo chat** remplace l'ancienne planète stylisée dans l'en-tête de l'application
+  (image native Tk, sans dépendance PIL ajoutée ; repli sur la planète si l'asset manque).
+- Lien de soutien **« ☕ Offrez-moi un café »** (PayPal) ajouté dans l'en-tête de l'app,
+  le README et la notice d'utilisation.
+
+### 🧹 Maintenance
+
+- Nouvelle action **« Vider les journaux Windows »** (onglet Dépannage → Réparation
+  système) : efface les journaux d'événements lus par le diagnostic pour repartir d'un
+  historique vierge après une réparation.
+
+### 📖 Documentation
+
+- **Notice d'utilisation illustrée** au format PDF couvrant l'ensemble des fonctionnalités
+  (les onglets, le bench thermique, la configuration des clés API, le glossaire).
+
+---
+
 ## [1.6.0] — 2026-06-19
 
 ### 🤖 Analyse IA multi-fournisseurs

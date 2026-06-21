@@ -7,6 +7,7 @@ import subprocess
 import sys
 import gc
 import threading
+import webbrowser
 import logging
 import logging.handlers
 from pathlib import Path
@@ -92,6 +93,9 @@ ZONE_COOL = "#27314a"   # refroidissement (teinte froide)
 
 TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
+
+# Lien de soutien — pour ceux qui veulent récompenser le travail (« offrir un café »)
+PAYPAL_URL = "https://www.paypal.com/paypalme/spiriteom"
 
 
 class GhisdiagApp(tk.Tk):
@@ -250,23 +254,34 @@ class GhisdiagApp(tk.Tk):
         hdr_inner = tk.Frame(hdr, bg=BG)
         hdr_inner.pack()
 
-        # Planète stylisée (canvas 60×60)
-        planet_c = tk.Canvas(hdr_inner, width=60, height=60, bg=BG, highlightthickness=0)
-        planet_c.pack(side="left", padx=(0, 18))
-        # Demi-orbite arrière (couverte par le corps de la planète)
-        planet_c.create_arc(1, 22, 59, 38, start=0, extent=180,
-                            style="arc", outline=ACCENT, width=1)
-        # Corps de la planète
-        planet_c.create_oval(11, 8, 49, 52, outline=ACCENT, width=2, fill=SURFACE)
-        # Atmosphère intérieure (teinte violet)
-        planet_c.create_oval(16, 13, 44, 47, outline=PURPLE, width=1)
-        # Reflet lumineux
-        planet_c.create_oval(18, 13, 27, 22, fill=ACCENT, outline="")
-        # Demi-orbite avant (par-dessus la planète)
-        planet_c.create_arc(1, 22, 59, 38, start=180, extent=180,
-                            style="arc", outline=ACCENT, width=1)
-        # Lune sur l'orbite
-        planet_c.create_oval(53, 26, 59, 32, fill=PURPLE, outline=ACCENT, width=1)
+        # Logo chat (assets/icon.png, 256×256 → réduit en facteur entier).
+        # PhotoImage natif Tk 8.6 : pas de dépendance PIL, alpha PNG conservé.
+        logo_done = False
+        try:
+            assets = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "assets"
+            png = assets / "icon.png"
+            if png.exists():
+                img = tk.PhotoImage(file=str(png))
+                factor = max(1, min(img.width(), img.height()) // 60)  # 256 → /4 ≈ 64px
+                self._header_logo = img.subsample(factor, factor)
+                tk.Label(hdr_inner, image=self._header_logo, bg=BG).pack(
+                    side="left", padx=(0, 18))
+                logo_done = True
+        except Exception:
+            logo_done = False
+
+        # Repli : planète stylisée si le logo n'a pas pu être chargé.
+        if not logo_done:
+            planet_c = tk.Canvas(hdr_inner, width=60, height=60, bg=BG, highlightthickness=0)
+            planet_c.pack(side="left", padx=(0, 18))
+            planet_c.create_arc(1, 22, 59, 38, start=0, extent=180,
+                                style="arc", outline=ACCENT, width=1)
+            planet_c.create_oval(11, 8, 49, 52, outline=ACCENT, width=2, fill=SURFACE)
+            planet_c.create_oval(16, 13, 44, 47, outline=PURPLE, width=1)
+            planet_c.create_oval(18, 13, 27, 22, fill=ACCENT, outline="")
+            planet_c.create_arc(1, 22, 59, 38, start=180, extent=180,
+                                style="arc", outline=ACCENT, width=1)
+            planet_c.create_oval(53, 26, 59, 32, fill=PURPLE, outline=ACCENT, width=1)
 
         # Zone titre
         title_zone = tk.Frame(hdr_inner, bg=BG)
@@ -277,6 +292,17 @@ class GhisdiagApp(tk.Tk):
                  font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(anchor="w")
         tk.Label(title_zone, text=f"v{VERSION}  ·  {AUTHORS}",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
+
+        # Lien de soutien — « offrez-moi un café » (PayPal)
+        coffee = tk.Label(
+            title_zone,
+            text="☕  Ghisdiag vous est utile ? Offrez-moi un café",
+            font=("Segoe UI", 9, "underline"),
+            bg=BG, fg=ACCENT, cursor="hand2")
+        coffee.pack(anchor="w", pady=(4, 0))
+        coffee.bind("<Button-1>", lambda e: webbrowser.open(PAYPAL_URL))
+        coffee.bind("<Enter>", lambda e: coffee.config(fg=PURPLE))
+        coffee.bind("<Leave>", lambda e: coffee.config(fg=ACCENT))
 
         # Ligne décorative bicolore (remplace ttk.Separator)
         sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)

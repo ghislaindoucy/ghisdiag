@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.0)
+[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.1)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -129,6 +129,19 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.6.1 (Juin 2026)
+🎨 **Finitions interface & branding**
+- Le logo chat remplace l'ancienne planète dans l'en-tête de l'application
+- Lien de soutien « ☕ Offrez-moi un café » (PayPal) dans l'en-tête, le README et la notice
+
+🧹 **Base de test propre**
+- Nouvelle option « Vider les journaux Windows » (onglet Dépannage → Réparation système)
+
+📖 **Documentation**
+- Notice d'utilisation illustrée au format PDF (toutes les fonctionnalités, glossaire, clés API)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.6.1.md)
 
 ### v1.6.0 (Juin 2026)
 🤖 **Analyse IA multi-fournisseurs**
@@ -279,6 +292,16 @@ A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <
 - 🐛 **Bug trouvé?** → [Ouvre une issue GitHub](https://github.com/ghislaindoucy/ghisdiag/issues)
 - 💡 **Suggestion?** → [Ouvre une discussion](https://github.com/ghislaindoucy/ghisdiag/discussions)
 - 📖 **Question?** → Lis les docs d'abord 😉
+
+---
+
+## ☕ Soutenir le projet
+
+Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal :
+
+👉 **[paypal.me/spiriteom](https://www.paypal.com/paypalme/spiriteom)**
+
+Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 ---
 
