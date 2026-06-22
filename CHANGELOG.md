@@ -4,6 +4,20 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.3] — 2026-06-22
+
+### ⚖️ Conformité licences tierces
+
+- Ajout de **THIRD-PARTY-NOTICES.md** (attribution complète : smartmontools/GPL,
+  PawnIO/GPL, LibreHardwareMonitorLib + DiskInfoToolkit + BlackSharp.Core/MPL,
+  HidSharp/Apache, Microsoft .NET System.*/MIT) et du dossier `licenses/` avec
+  les textes officiels (MIT, Apache-2.0, MPL-2.0, GPL-2.0).
+- Nouveau dialogue **« Licences & mentions légales »** accessible depuis l'en-tête.
+- Licences embarquées dans l'exe (`build.bat`) et attachées automatiquement aux
+  releases (`finalize_release.ps1`).
+
+---
+
 ## [1.6.2] — 2026-06-22
 
 ### 🔗 Accès au projet
