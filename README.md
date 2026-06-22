@@ -17,21 +17,34 @@
 - **Performance** — Charge système, processus lourds, fragmentation
 - **Démarrage Windows** — Services auto, programmes de démarrage (lents!)
 - **Événements système** — Erreurs, avertissements (dernières 72h)
+- **Fiabilité** — Plantages (BSOD/BugCheck), erreurs matérielles WHEA, corruption NTFS, services en échec
 - **Réseau** — Connexion, DNS, pare-feu, VPN
 - **Sécurité** — Mises à jour, antivirus, UAC, historique login
 - **Logiciels & Drivers** — Drivers cassés, applications obsolètes
 - **Santé disques** — SMART monitoring (SSD/HDD)
 
-### 🤖 **NOUVEAU : Analyse IA Mistral**
+### 🌡️ Bench thermique avant / après maintenance
 
-Après ton diagnostic, active l'analyse IA pour obtenir :
-- ✅ **Audit complet** — ce qui va pas, ce qui peut s'améliorer
+- Protocole guidé : repos → charge CPU → refroidissement, courbes en temps réel
+- Températures fiables via LibreHardwareMonitor + driver PawnIO (CPU/GPU/disques/ventilateurs)
+- Détection de throttling, arrêt d'urgence à 95 °C, durée de charge personnalisable
+- Comparaison avant/après superposée + rapport HTML imprimable avec verdict client
+
+### 🛠️ Dépannage & PC Neuf
+
+- **Réparation système** — SFC, DISM, vidage des journaux Windows pour une base de test propre
+- **PC Neuf** — installation en 1 clic de logiciels essentiels (via winget), icônes du bureau
+
+### 🤖 Analyse IA multi-fournisseurs
+
+Après ton diagnostic, active l'analyse IA et choisis ton fournisseur — **Anthropic (Claude Opus 4.8)**, **Mistral (Large)**, **OpenAI (GPT-5.5)**, **Grok (xAI 4.3)** ou **Google (Gemini 2.5 Pro)** — pour obtenir :
+- ✅ **Audit complet** — ce qui va pas, ce qui peut s'améliorer (avec preuve par problème)
 - ✅ **Commandes exactes** — copie-colle direct dans PowerShell/CMD
 - ✅ **Plan de réparation** — étapes détaillées pour chaque problème
 - ✅ **Optimisations** — gagner en vitesse et stabilité
 - ✅ **Priorités claires** — critique → grave → moyen → faible
 
-**Tarif ?** ~€0.004 par diagnostic (grâce à Mistral Large)
+Clé API par fournisseur (chiffrée AES-128), bouton « Tester la clé », aucun SDK requis.
 
 ---
 
@@ -47,9 +60,9 @@ Après ton diagnostic, active l'analyse IA pour obtenir :
 - Attends ~3-5 minutes
 - Reçois un rapport HTML complet
 
-### 3️⃣ (Optionnel) Active l'IA Mistral
-- Génère une clé API gratuite : https://console.mistral.ai
-- Colle-la dans le panneau "🤖 Analyse IA Mistral"
+### 3️⃣ (Optionnel) Active l'analyse IA
+- Ouvre « 🤖 Configurer l'IA » et choisis ton fournisseur (Claude, Mistral, GPT, Grok ou Gemini)
+- Colle ta clé API et teste-la
 - Relance un diagnostic → rapport IA automatique
 
 **C'est tout!** 🎉
@@ -120,11 +133,13 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ## 🎨 Interface
 
-- **Ghost Protocol theme** — UI sombre, moderne, agréable à l'œil
+- **Thème Catppuccin Mocha** — UI sombre unifiée entre l'app et les rapports
+- **Logo chat & branding** — icône dédiée en en-tête et dans la barre des tâches
 - **Mode maximisé au démarrage** — tout le contenu visible
 - **Moniteur temps réel** — CPU/RAM/Disque/Température en direct
 - **Journal d'activité live** — suivi de chaque opération
 - **Rapport HTML interactif** — à partager, à archiver
+- **Notice d'utilisation PDF** — guide illustré, glossaire et configuration des clés API
 
 ---
 
@@ -239,7 +254,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ## 🛠️ Build l'exe toi-même
 
 ```batch
-cd D:\Projets\PlanetDIag
+cd D:\Projets\Ghisdiag
 build.bat
 ```
 
@@ -253,7 +268,7 @@ L'exe généré : `dist/Ghisdiag.exe`
 ## 🤝 Contributeurs
 
 - **Ghislain DOUCY** — Créateur principal
-- **Claude AI** — Intégration IA Mistral, refactoring qualité
+- **Claude AI** — Intégration IA multi-fournisseurs, bench thermique, refactoring qualité
 
 ---
 
@@ -261,10 +276,9 @@ L'exe généré : `dist/Ghisdiag.exe`
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.4.0.md](./RELEASE_NOTES_v1.4.0.md) | Notes détaillées release |
-| [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration Mistral (setup, tarif, dépannage) |
+| [RELEASE_NOTES_v1.6.1.md](./RELEASE_NOTES_v1.6.1.md) | Notes détaillées de la dernière release |
+| [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration des clés API IA (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
-| [RELEASE_CHECKLIST_v1.4.0.md](./RELEASE_CHECKLIST_v1.4.0.md) | Checklist build/release |
 
 ---
 
@@ -309,6 +323,6 @@ Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.4.0](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.4.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
+[⬇️ Télécharge v1.6.1](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.1) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>
