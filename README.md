@@ -3,7 +3,7 @@
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
 [![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.2)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
 
@@ -279,6 +279,18 @@ L'exe généré : `dist/Ghisdiag.exe`
 
 ---
 
+## 📄 Licence
+
+Ghisdiag est distribué sous licence **[PolyForm Noncommercial 1.0.0](./LICENSE)**.
+
+- ✅ **Usage libre et gratuit** pour les particuliers, l'éducation, la recherche, les associations et le secteur public
+- ✅ Tu peux l'utiliser, le modifier et le partager pour tout usage **non commercial**
+- ❌ **Usage commercial et revente interdits** sans autorisation écrite de l'auteur
+
+Pour un usage commercial (ex. intégration dans une offre payante), contacte l'auteur pour une licence dédiée.
+
+---
+
 ## 📚 Documentation
 
 | Doc | Contenu |
@@ -292,7 +304,7 @@ L'exe généré : `dist/Ghisdiag.exe`
 ## ❓ FAQ
 
 **Q: L'exe est sûr?**  
-A: Oui. Télécharge depuis les [releases GitHub officielles](https://github.com/ghislaindoucy/ghisdiag/releases). Code source open source.
+A: Oui. Télécharge depuis les [releases GitHub officielles](https://github.com/ghislaindoucy/ghisdiag/releases). Code source ouvert et consultable sur GitHub.
 
 **Q: Ça fonctionne sur Linux/Mac?**  
 A: Non, Windows uniquement. C'est spécifique à Windows (WMI, PowerShell, services Windows).
