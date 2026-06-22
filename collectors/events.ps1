@@ -387,7 +387,14 @@ $wheaEvents = Get-ProviderEvents 'System' 'Microsoft-Windows-WHEA-Logger' $null 
 $diskEvents = Get-ProviderEvents 'System' 'disk' @(7, 11, 51, 153) 14 20 250
 
 # ── Corruption du systeme de fichiers NTFS ───────────────────────────────────
-$ntfsEvents = Get-ProviderEvents 'System' 'Microsoft-Windows-Ntfs' @(55, 57, 98, 137) 14 20 250
+# IDs reellement lies a une corruption / un risque :
+#   55  = structure du systeme de fichiers corrompue (chkdsk requis) — Erreur
+#   57  = echec d'ecriture dans le journal de transactions (corruption possible) — Avert.
+#   137 = gestionnaire de ressources transactionnelles en erreur non recuperable — Erreur
+# L'ID 98 ("Volume X est sain. Aucune action n'est necessaire", niveau Info) est un
+# message de BONNE SANTE emis par l'auto-verification NTFS : il ne doit PAS etre
+# compte comme une corruption (sinon faux positif a chaque verification de routine).
+$ntfsEvents = Get-ProviderEvents 'System' 'Microsoft-Windows-Ntfs' @(55, 57, 137) 14 20 250
 
 # ── Services en echec (crash, timeout, demarrage impossible) ─────────────────
 $scmEvents = Get-ProviderEvents 'System' 'Service Control Manager' @(7000, 7001, 7009, 7011, 7022, 7023, 7024, 7031, 7034) 7 30 250

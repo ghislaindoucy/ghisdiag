@@ -1025,7 +1025,7 @@ class ReportGenerator:
 </table></div></details>
 
 <details><summary>🗂 Erreurs NTFS ({len(ntfs_events)} sur 14j)</summary>
-<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-Ntfs</code> — IDs 55/57/98/137 (corruption du système de fichiers)</p>
+<p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-Ntfs</code> — IDs 55/57/137 (corruption du système de fichiers)</p>
 <div class="table-wrap"><table>
 <tr><th>Date/heure</th><th>Niveau</th><th>ID</th><th>Message</th></tr>
 {simple_rows(ntfs_events) or '<tr><td colspan="4" class="ok">Aucune erreur NTFS ✅</td></tr>'}
