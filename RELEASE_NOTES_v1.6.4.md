@@ -35,5 +35,5 @@
 
 **Prérequis :** Windows 10/11. Aucune dépendance à installer (tout est embarqué dans l'exe).
 
-- **Sha256** : `(rempli automatiquement après le build)`
-- **Taille** : (remplie automatiquement après le build)
+- **Sha256** : `ca48855cc77b6c53041896394dc2e80f705773d191c75367e3a6c9c93eeb19f6`
+- **Taille** : 23.7 MB
