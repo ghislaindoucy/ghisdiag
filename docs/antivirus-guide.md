@@ -75,10 +75,10 @@ Bonjour,
 
 Je vous soumets un faux positif détecté par votre produit.
 
-Logiciel : Ghisdiag v1.2.0
+Logiciel : Ghisdiag v1.6.2
 Éditeur  : Ghislain DOUCY
 Usage    : Outil de diagnostic Windows (analyse matériel, réseau, sécurité)
-           Génère un rapport HTML/JSON exportable. Open source.
+           Génère un rapport HTML/JSON exportable. Code source ouvert.
 Hash SHA-256 : [collez le hash de dist\Ghisdiag.exe]
 VirusTotal   : [collez l'URL du rapport]
 
