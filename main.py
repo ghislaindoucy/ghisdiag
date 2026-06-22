@@ -98,6 +98,8 @@ _LOG_MAX_LINES = 500
 PAYPAL_URL = "https://www.paypal.com/paypalme/spiriteom"
 # Dépôt du projet (code source, releases, signalement de bugs)
 GITHUB_URL = "https://github.com/ghislaindoucy/ghisdiag"
+# Mentions légales des composants tiers (version en ligne, repli si fichier absent)
+LICENSES_URL = "https://github.com/ghislaindoucy/ghisdiag/blob/main/THIRD-PARTY-NOTICES.md"
 
 
 class GhisdiagApp(tk.Tk):
@@ -317,6 +319,17 @@ class GhisdiagApp(tk.Tk):
         github.bind("<Enter>", lambda e: github.config(fg=PURPLE))
         github.bind("<Leave>", lambda e: github.config(fg=ACCENT))
 
+        # Lien vers les licences & mentions légales des composants tiers
+        licences = tk.Label(
+            title_zone,
+            text="⚖  Licences & mentions légales",
+            font=("Segoe UI", 9, "underline"),
+            bg=BG, fg=ACCENT, cursor="hand2")
+        licences.pack(anchor="w", pady=(2, 0))
+        licences.bind("<Button-1>", lambda e: self._show_licenses())
+        licences.bind("<Enter>", lambda e: licences.config(fg=PURPLE))
+        licences.bind("<Leave>", lambda e: licences.config(fg=ACCENT))
+
         # Ligne décorative bicolore (remplace ttk.Separator)
         sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)
         sep_c.pack(fill="x", pady=(6, 0))
@@ -399,6 +412,55 @@ class GhisdiagApp(tk.Tk):
         self.after(800, self._monitor_start)
         self.after(1200, lambda: threading.Thread(
             target=self._smart_startup_check, daemon=True).start())
+
+    # ── Licences & mentions légales ───────────────────────────────────────────
+    def _show_licenses(self):
+        """Affiche les mentions légales des composants tiers (fichier embarqué)."""
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+        notices = base / "THIRD-PARTY-NOTICES.md"
+        try:
+            text = notices.read_text(encoding="utf-8")
+        except Exception:
+            # Repli : pas de fichier embarqué (ex. dev sans build) → version en ligne
+            webbrowser.open(LICENSES_URL)
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Ghisdiag — Licences & mentions légales")
+        win.configure(bg=BG)
+        win.geometry("760x620")
+        win.minsize(560, 420)
+        win.transient(self)
+
+        tk.Label(win, text="Licences & mentions légales",
+                 font=("Segoe UI Semibold", 15), bg=BG, fg=FG).pack(
+                     anchor="w", padx=16, pady=(14, 2))
+        tk.Label(win,
+                 text="Composants tiers redistribués par Ghisdiag et leurs licences respectives.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(anchor="w", padx=16)
+
+        body = tk.Frame(win, bg=BG)
+        body.pack(fill="both", expand=True, padx=16, pady=12)
+        sb = ttk.Scrollbar(body, orient="vertical", style="PD.Vertical.TScrollbar")
+        sb.pack(side="right", fill="y")
+        txt = tk.Text(body, wrap="word", bg=SURFACE, fg=FG,
+                      font=("Consolas", 9), relief="flat", padx=12, pady=10,
+                      yscrollcommand=sb.set, insertbackground=FG)
+        txt.pack(side="left", fill="both", expand=True)
+        sb.config(command=txt.yview)
+        txt.insert("1.0", text)
+        txt.config(state="disabled")
+
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(fill="x", padx=16, pady=(0, 14))
+        tk.Button(bar, text="Voir sur GitHub", font=("Segoe UI", 9),
+                  bg=SURFACE2, fg=FG, relief="flat", cursor="hand2",
+                  activebackground=SURFACE, activeforeground=ACCENT,
+                  command=lambda: webbrowser.open(LICENSES_URL)).pack(side="left")
+        tk.Button(bar, text="Fermer", font=("Segoe UI", 9),
+                  bg=SURFACE2, fg=FG, relief="flat", cursor="hand2",
+                  activebackground=SURFACE, activeforeground=ACCENT,
+                  command=win.destroy).pack(side="right")
 
     # ── Onglet Analyse ────────────────────────────────────────────────────────
     def _build_analyse_tab(self, parent: tk.Frame):

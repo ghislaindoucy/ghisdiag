@@ -102,6 +102,23 @@ if ($Release) {
     gh release upload $tag $ExePath --clobber
     if ($LASTEXITCODE -ne 0) { Write-Error "Echec de l'upload de l'exe"; exit 1 }
     Write-Host "  Exe attache."
+
+    # 1b) Conformite licences : attache les mentions legales + les textes de licence
+    #     (obligation d'attribution / mise a disposition des sources des composants tiers)
+    $notices = "THIRD-PARTY-NOTICES.md"
+    if (Test-Path $notices) {
+        $licZip = "THIRD-PARTY-LICENSES_v$Version.zip"
+        if (Test-Path $licZip) { Remove-Item $licZip -Force }
+        $toZip = @($notices)
+        if (Test-Path "licenses") { $toZip += "licenses" }
+        Compress-Archive -Path $toZip -DestinationPath $licZip -Force
+        gh release upload $tag $notices $licZip --clobber
+        if ($LASTEXITCODE -ne 0) { Write-Error "Echec de l'upload des mentions legales"; exit 1 }
+        Write-Host "  Mentions legales attachees ($notices + $licZip)."
+    } else {
+        Write-Warning "THIRD-PARTY-NOTICES.md introuvable -- mentions legales NON attachees."
+    }
+
     # 2) Met a jour les notes (hash desormais rempli) + passe en public
     gh release edit $tag --notes-file $notes --draft=false
     if ($LASTEXITCODE -ne 0) { Write-Error "Echec de la publication"; exit 1 }
