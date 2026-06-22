@@ -287,7 +287,7 @@ Ghisdiag est distribué sous licence **[PolyForm Noncommercial 1.0.0](./LICENSE)
 - ✅ Tu peux l'utiliser, le modifier et le partager pour tout usage **non commercial**
 - ❌ **Usage commercial et revente interdits** sans autorisation écrite de l'auteur
 
-Pour un usage commercial (ex. intégration dans une offre payante), contacte l'auteur pour une licence dédiée.
+Pour un usage commercial (ex. utilisation en atelier de réparation, intégration dans une offre payante), une licence dédiée est nécessaire : écris à **[ghisdiag@laposte.net](mailto:ghisdiag@laposte.net)**.
 
 ---
 
