@@ -31,7 +31,7 @@ echo [3/5] Création du manifest UAC...
 (
 echo ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
 echo ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
-echo   ^<assemblyIdentity version="1.6.3.0" processorArchitecture="X86"
+echo   ^<assemblyIdentity version="1.6.4.0" processorArchitecture="X86"
 echo     name="Ghisdiag" type="win32"/^>
 echo   ^<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"^>
 echo     ^<security^>^<requestedPrivileges^>

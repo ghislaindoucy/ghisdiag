@@ -4,6 +4,17 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.4] — 2026-06-22
+
+### 🐛 Correctif
+
+- **Faux positif « Corruption NTFS »** corrigé : l'événement `Microsoft-Windows-Ntfs`
+  **ID 98** (« volume sain », niveau Info), émis par l'auto-vérification de
+  routine, n'est plus compté comme une corruption. Seuls **55 / 57 / 137**
+  (corruption / risque réels) sont retenus.
+
+---
+
 ## [1.6.3] — 2026-06-22
 
 ### ⚖️ Conformité licences tierces
