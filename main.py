@@ -96,6 +96,8 @@ _LOG_MAX_LINES = 500
 
 # Lien de soutien — pour ceux qui veulent récompenser le travail (« offrir un café »)
 PAYPAL_URL = "https://www.paypal.com/paypalme/spiriteom"
+# Dépôt du projet (code source, releases, signalement de bugs)
+GITHUB_URL = "https://github.com/ghislaindoucy/ghisdiag"
 
 
 class GhisdiagApp(tk.Tk):
@@ -303,6 +305,17 @@ class GhisdiagApp(tk.Tk):
         coffee.bind("<Button-1>", lambda e: webbrowser.open(PAYPAL_URL))
         coffee.bind("<Enter>", lambda e: coffee.config(fg=PURPLE))
         coffee.bind("<Leave>", lambda e: coffee.config(fg=ACCENT))
+
+        # Lien vers le dépôt GitHub (code source, releases, bugs)
+        github = tk.Label(
+            title_zone,
+            text="⌨  Code source & releases sur GitHub",
+            font=("Segoe UI", 9, "underline"),
+            bg=BG, fg=ACCENT, cursor="hand2")
+        github.pack(anchor="w", pady=(2, 0))
+        github.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_URL))
+        github.bind("<Enter>", lambda e: github.config(fg=PURPLE))
+        github.bind("<Leave>", lambda e: github.config(fg=ACCENT))
 
         # Ligne décorative bicolore (remplace ttk.Separator)
         sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)
