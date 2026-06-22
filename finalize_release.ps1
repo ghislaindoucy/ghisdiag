@@ -115,6 +115,7 @@ if ($Release) {
         gh release upload $tag $notices $licZip --clobber
         if ($LASTEXITCODE -ne 0) { Write-Error "Echec de l'upload des mentions legales"; exit 1 }
         Write-Host "  Mentions legales attachees ($notices + $licZip)."
+        Remove-Item $licZip -Force   # artefact temporaire (ignore par git)
     } else {
         Write-Warning "THIRD-PARTY-NOTICES.md introuvable -- mentions legales NON attachees."
     }

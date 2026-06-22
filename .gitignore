@@ -45,3 +45,6 @@ Thumbs.db
 
 # Claude Code — réglages locaux (chemins/permissions propres à la machine)
 .claude/settings.local.json
+
+# Artefacts de release générés (zip des licences attaché aux releases)
+THIRD-PARTY-LICENSES_v*.zip
