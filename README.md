@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.1)
+[![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.2)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -145,6 +145,13 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ## 📝 Changelog
 
+### v1.6.2 (Juin 2026)
+🔗 **Accès au projet & documentation**
+- Lien « Code source & releases sur GitHub » dans l'en-tête de l'application
+- README à jour avec toutes les fonctionnalités actuelles (bench thermique, dépannage, fiabilité, IA multi-fournisseurs)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.6.2.md)
+
 ### v1.6.1 (Juin 2026)
 🎨 **Finitions interface & branding**
 - Le logo chat remplace l'ancienne planète dans l'en-tête de l'application
@@ -276,7 +283,7 @@ L'exe généré : `dist/Ghisdiag.exe`
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.6.1.md](./RELEASE_NOTES_v1.6.1.md) | Notes détaillées de la dernière release |
+| [RELEASE_NOTES_v1.6.2.md](./RELEASE_NOTES_v1.6.2.md) | Notes détaillées de la dernière release |
 | [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration des clés API IA (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
 
@@ -323,6 +330,6 @@ Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.6.1](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.1) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
+[⬇️ Télécharge v1.6.2](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.2) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>

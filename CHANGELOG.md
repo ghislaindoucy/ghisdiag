@@ -4,6 +4,22 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.2] — 2026-06-22
+
+### 🔗 Accès au projet
+
+- Lien **« Code source & releases sur GitHub »** ajouté dans l'en-tête de
+  l'application (sous le lien de soutien) : ouvre le dépôt GitHub.
+
+### 📖 Documentation
+
+- **README** mis à jour pour refléter toutes les fonctionnalités actuelles
+  (bench thermique, dépannage / PC Neuf, fiabilité, IA multi-fournisseurs).
+- Correction de références obsolètes (liens/badge en v1.4.0, chemin de build
+  `PlanetDIag`).
+
+---
+
 ## [1.6.1] — 2026-06-21
 
 ### 🎨 Interface & branding
