@@ -289,6 +289,10 @@ Ghisdiag est distribué sous licence **[PolyForm Noncommercial 1.0.0](./LICENSE)
 
 Pour un usage commercial (ex. utilisation en atelier de réparation, intégration dans une offre payante), une licence dédiée est nécessaire : écris à **[ghisdiag@laposte.net](mailto:ghisdiag@laposte.net)**.
 
+### Composants tiers
+
+Ghisdiag redistribue des composants tiers (mesure des températures, données SMART des disques) sous leurs licences respectives (MIT, Apache-2.0, MPL-2.0, GPL-2.0). Le détail des auteurs, licences et sources figure dans **[THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)** ; les textes de licence sont dans [`licenses/`](./licenses/).
+
 ---
 
 ## 📚 Documentation

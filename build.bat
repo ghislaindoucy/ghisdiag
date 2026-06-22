@@ -52,6 +52,8 @@ py -m PyInstaller ^
     --add-data "collectors;collectors" ^
     --add-data "assets;assets" ^
     --add-data "report;report" ^
+    --add-data "licenses;licenses" ^
+    --add-data "THIRD-PARTY-NOTICES.md;." ^
     --add-binary "tools\smartctl.exe;tools" ^
     --add-binary "tools\LibreHardwareMonitorLib.dll;tools" ^
     --add-binary "tools\HidSharp.dll;tools" ^
