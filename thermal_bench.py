@@ -51,6 +51,11 @@ RECOVERY_MARGIN_C = 5.0
 # disparait, le worker s'auto-arrete quand meme (garde-fou anti-charge infinie).
 LOAD_SAFETY_MARGIN_SEC = 30
 
+# Delai d'attente d'un premier echantillon CPU exploitable avant de lancer le
+# protocole. Si les capteurs ne repondent pas (backend fige, CPU non supporte),
+# on renonce proprement avec un message plutot que de bencher dans le vide.
+STREAM_WARMUP_SEC = 20.0
+
 # Detection de throttling : chute relative de frequence entre debut et fin de
 # charge, a temperature elevee.
 THROTTLE_CLOCK_DROP    = 0.05   # 5 %
@@ -380,6 +385,8 @@ class ThermalBench:
         self._load:   Optional[_LoadGenerator] = None
 
         self._cancel = threading.Event()
+        self._sensor_stalled = threading.Event()  # backend capteurs fige (watchdog)
+        self._stall_msg = ""
         self._emergency = False           # seuil franchi pendant la charge
         self._cooldown_truncated = False
         self._t0 = 0.0
@@ -420,15 +427,42 @@ class ThermalBench:
         self._t0 = time.monotonic()
         self._started_at = datetime.now().isoformat(timespec="seconds")
         try:
-            self._stream = SensorStream(cfg.sample_interval_ms, on_sample=self._record)
+            self._stream = SensorStream(cfg.sample_interval_ms,
+                                        on_sample=self._record,
+                                        on_stall=self._on_stall)
             if not self._stream.start():
                 self._error("Echec du demarrage des capteurs.")
                 return
 
+            # Verifier que les capteurs repondent AVANT le protocole : un premier
+            # echantillon avec temperature CPU exploitable. Sinon on renonce avec
+            # un message clair (backend fige, CPU recent non supporte...) plutot
+            # que de lancer 10 minutes de bench dans le vide.
+            if not self._stream.wait_first_sample(STREAM_WARMUP_SEC, require_cpu_temp=True):
+                self._stream.stop()
+                if self._stream.stalled:
+                    self._error("Capteurs figes : " + (self._stream.stall_reason
+                                or "backend bloque")
+                                + ". Lance diagnose_sensors.py pour la cause.")
+                elif self._stream.latest() is not None:
+                    self._error("Capteurs detectes mais aucune temperature CPU "
+                                "exploitable sur cette machine (cpu_ref absent) : "
+                                "bench impossible. Voir diagnose_sensors.py / "
+                                "diagnose_probe.py.")
+                else:
+                    self._error("Les capteurs ne repondent pas (aucune donnee en "
+                                f"{STREAM_WARMUP_SEC:.0f}s). Voir diagnose_sensors.py.")
+                return
+
             # Phase repos
             self._enter_phase(BenchPhase.IDLE)
-            if self._wait(cfg.idle_sec, watch_emergency=False) == "cancel":
+            r = self._wait(cfg.idle_sec, watch_emergency=False)
+            if r == "cancel":
                 self._finalize(aborted=True, reason="Annule pendant le repos")
+                return
+            if r == "stall":
+                self._finalize(aborted=True, reason="Capteurs figes pendant le repos : "
+                               + (self._stall_msg or "backend bloque"))
                 return
 
             # Phase charge
@@ -443,12 +477,18 @@ class ThermalBench:
             if reason == "cancel":
                 self._finalize(aborted=True, reason="Annule pendant la charge")
                 return
+            if reason == "stall":
+                # Plus de capteurs sous charge : la charge vient d'etre coupee, on
+                # renonce — impossible de surveiller la temperature en securite.
+                self._finalize(aborted=True, reason="Capteurs figes pendant la charge : "
+                               + (self._stall_msg or "backend bloque"))
+                return
             # En arret d'urgence on poursuit vers le refroidissement : la
             # remontee a froid est une donnee precieuse et c'est plus sur.
 
             # Phase refroidissement
             self._enter_phase(BenchPhase.COOLDOWN)
-            if self._wait(cfg.cooldown_sec, watch_emergency=False) == "cancel":
+            if self._wait(cfg.cooldown_sec, watch_emergency=False) in ("cancel", "stall"):
                 self._cooldown_truncated = True
 
             self._finalize(aborted=False, reason=None)
@@ -464,14 +504,23 @@ class ThermalBench:
             self._running = False
 
     def _wait(self, seconds: int, watch_emergency: bool) -> str:
-        """Attend `seconds`, interruptible. Retourne 'done' | 'cancel' | 'emergency'."""
+        """Attend `seconds`, interruptible.
+        Retourne 'done' | 'cancel' | 'emergency' | 'stall'."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             if self._cancel.wait(timeout=0.2):
                 return "cancel"
+            if self._sensor_stalled.is_set():
+                return "stall"
             if watch_emergency and self._emergency:
                 return "emergency"
         return "done"
+
+    def _on_stall(self, reason: str) -> None:
+        """Callback SensorStream : le backend capteurs s'est fige."""
+        self._stall_msg = reason
+        self._sensor_stalled.set()
+        logger.warning("ThermalBench : capteurs figes — %s", reason)
 
     def _enter_phase(self, phase: BenchPhase) -> None:
         self._phase = phase

@@ -16,15 +16,22 @@
 param(
     [switch]$Once,
     [int]$IntervalMs   = 2000,
-    [int]$DurationSec  = 0
+    [int]$DurationSec  = 0,
+    [string]$ToolsDir  = ""
 )
 
 $ErrorActionPreference = "SilentlyContinue"
 
 # ---------------------------------------------------------------------------
-# Resolution + chargement de la DLL et de ses dependances depuis ..\tools
+# Resolution + chargement de la DLL et de ses dependances.
+# -ToolsDir (impose par l'appelant Python) permet d'utiliser un jeu de DLL plus
+# recent depose ailleurs ; a defaut on charge l'embarque ..\tools.
 # ---------------------------------------------------------------------------
-$toolsDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\tools"))
+if ($ToolsDir -and (Test-Path (Join-Path $ToolsDir "LibreHardwareMonitorLib.dll"))) {
+    $toolsDir = [System.IO.Path]::GetFullPath($ToolsDir)
+} else {
+    $toolsDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\tools"))
+}
 $libPath  = Join-Path $toolsDir "LibreHardwareMonitorLib.dll"
 
 # Ecriture sur le handle stdout brut avec flush par ligne : indispensable pour
@@ -106,6 +113,11 @@ function Get-Sample {
     $cpuPkg = $null; $cpuMax = $null; $cpuAvg = $null; $cpuLoad = $null; $cpuClkMax = $null
     $gpuTemp = $null; $gpuHot = $null; $gpuLoad = $null; $gpuFan = $null
 
+    # Diagnostic : liste brute de TOUS les capteurs CPU vus (nom + type + valeur).
+    # Sert a identifier pourquoi un CPU ne remonte pas de temperature (Celeron,
+    # Ryzen recent, PawnIO absent...). Ignore par les consommateurs normaux.
+    $debugCpu = New-Object System.Collections.Generic.List[object]
+
     foreach ($hw in $computer.Hardware) {
         try { $hw.Update() } catch {}
         foreach ($sub in $hw.SubHardware) { try { $sub.Update() } catch {} }
@@ -116,6 +128,10 @@ function Get-Sample {
                 if ($null -eq $s.Value) { continue }
                 $v = [double]$s.Value
                 $n = [string]$s.Name
+
+                if ($hw.HardwareType.ToString() -eq "Cpu") {
+                    $debugCpu.Add(@{ name = $n; type = $s.SensorType.ToString(); value = (R1 $v) })
+                }
 
                 switch ($hw.HardwareType.ToString()) {
                     "Cpu" {
@@ -185,6 +201,9 @@ function Get-Sample {
     # ArgumentException en PowerShell 5.1 (quirk connu) ; ToArray est sur.
     $h['fans']          = $fans.ToArray()
     $h['disks']         = $disks.ToArray()
+    # debug_sensors seulement en lecture ponctuelle (-Once) : inutile dans le flux
+    # du bench, ou il alourdirait chaque ligne JSON.
+    if ($Once) { $h['debug_sensors'] = $debugCpu.ToArray() }
     $h
 }
 
