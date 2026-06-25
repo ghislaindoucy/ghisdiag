@@ -86,7 +86,10 @@ $computer = New-Object LibreHardwareMonitor.Hardware.Computer
 $computer.IsCpuEnabled         = $true
 $computer.IsGpuEnabled         = $true
 $computer.IsMotherboardEnabled = $true
-$computer.IsStorageEnabled     = $true
+# Storage desactive : le probing disque de LHM peut figer (ex. Intel J1900, cf.
+# diagnose_probe -> storage TIMEOUT) et bloquer toute la lecture, CPU compris.
+# Ghisdiag lit deja les disques via smartctl (collectors/disk_temp.py).
+$computer.IsStorageEnabled     = $false
 $computer.IsControllerEnabled  = $true
 
 try {
@@ -136,12 +139,21 @@ function Get-Sample {
                 switch ($hw.HardwareType.ToString()) {
                     "Cpu" {
                         if ($s.SensorType -eq "Temperature") {
-                            if ($n -eq "CPU Package")     { $cpuPkg = $v }
+                            # Intel : CPU Package / Core Max / Core Average / CPU Core #N
+                            if ($n -eq "CPU Package")      { $cpuPkg = $v }
                             elseif ($n -eq "Core Max")     { $cpuMax = $v }
                             elseif ($n -eq "Core Average") { $cpuAvg = $v }
                             elseif ($n -like "CPU Core #*" -and $n -notlike "*Distance*") { $cpuTemps.Add($v) }
+                            # AMD : "Core (Tctl/Tdie)" = temperature de reference ;
+                            # "CCDx (Tdie)" = temperature par die (utilisee comme coeur).
+                            elseif ($n -like "*Tctl*")     { if ($null -eq $cpuPkg) { $cpuPkg = $v } }
+                            elseif ($n -like "*Tdie*")     { $cpuTemps.Add($v) }
                         }
-                        elseif ($s.SensorType -eq "Clock" -and $n -like "CPU Core #*") { $cpuClocks.Add($v) }
+                        elseif ($s.SensorType -eq "Clock") {
+                            # Intel : "CPU Core #N" ; AMD : "Core #N" (hors "(Effective)"/"(SMU)").
+                            if ($n -like "CPU Core #*") { $cpuClocks.Add($v) }
+                            elseif ($n -like "Core #*" -and $n -notlike "*(*") { $cpuClocks.Add($v) }
+                        }
                         elseif ($s.SensorType -eq "Load" -and $n -eq "CPU Total") { $cpuLoad = $v }
                     }
                     { $_ -like "Gpu*" } {

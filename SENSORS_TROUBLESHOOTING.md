@@ -20,12 +20,20 @@ kernel : **PawnIO**. Voir [`collectors/pawnio.py`](collectors/pawnio.py) :
 > *Sans PawnIO : GPU, disques, ventilateur GPU et charge CPU remontent ; mais la
 > température CPU, la fréquence CPU et les ventilateurs carte mère restent N/A.*
 
-Les trois causes possibles, **par ordre de probabilité** :
+Les causes observées en atelier, **par ordre de fréquence** :
 
 1. **PawnIO non installé** (ou installation différée car l'app n'était pas élevée).
-2. **CPU trop récent pour la DLL LHM embarquée** (actuellement `0.9.6`). Un Zen 5
-   X3D peut ne pas être reconnu → LHM n'expose aucun capteur de température CPU.
-3. **Application non lancée en administrateur** → accès MSR bloqué.
+   → installer `tools\PawnIO_setup.exe -install -silent`. *(vu sur i7 150U)*
+2. **Application non lancée en administrateur** → accès MSR bloqué. *(vu sur i5-12400)*
+3. **Nommage de capteur non reconnu** : LHM expose bien la température, mais sous
+   un nom que le mapping ignorait. C'était le cas du **Zen 5** (`Core (Tctl/Tdie)`)
+   — désormais géré dans [`sensors.ps1`](collectors/sensors.ps1) (Intel *et* AMD).
+4. **Sous-système LHM qui fige** (pas le CPU) : le probing **Storage** pendait sur
+   certaines machines (Intel J1900) et bloquait toute la lecture. Storage est
+   maintenant **désactivé** côté LHM (les disques passent par smartctl). Utiliser
+   [`diagnose_probe.py`](diagnose_probe.py) pour isoler un éventuel autre coupable.
+5. **CPU réellement trop récent pour la DLL** `0.9.6` (rare) → remplacer le backend,
+   voir §c.
 
 > ⚠️ Un fallback WMI (`MSAcpi_ThermalZoneTemperature`) **ne convient pas** au bench
 > thermique : c'est une zone ACPI carte mère, pas la température de die CPU ; elle
@@ -64,10 +72,13 @@ tools\PawnIO_setup.exe -install -silent
 Puis relance le diagnostic. (Ghisdiag tente cette installation automatiquement
 via [`collectors/pawnio.py`](collectors/pawnio.py) quand il est élevé.)
 
-### c) « LHM n'expose AUCUN capteur CPU » / « LHM se fige » (CPU trop récent)
-La DLL embarquée (`0.9.6`) ne connaît pas ce processeur (cas du Zen 5). On peut
-**remplacer le backend sans recompiler** : Ghisdiag charge en priorité un jeu de
-DLL plus récent s'il en trouve un (override). Voir [`collectors/lhm_backend.py`](collectors/lhm_backend.py).
+### c) CPU réellement trop récent pour la DLL embarquée (rare)
+Si `diagnose_sensors.py` montre **zéro capteur de température** dans la liste [5]
+(que des Load/Power) alors que PawnIO est installé et la console élevée, c'est que
+la DLL `0.9.6` ne sait pas lire ce CPU. *(À ne pas confondre avec le Zen 5, qui
+expose bien `Core (Tctl/Tdie)` et est géré.)* On peut **remplacer le backend sans
+recompiler** : Ghisdiag charge en priorité un jeu de DLL plus récent s'il en trouve
+un (override). Voir [`collectors/lhm_backend.py`](collectors/lhm_backend.py).
 
 Mise à jour (console Administrateur) :
 ```bash
