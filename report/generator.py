@@ -400,6 +400,7 @@ class ReportGenerator:
             self._section_system(),
             self._section_performance(),
             self._section_smart(),
+            self._section_sensors(),
             self._section_startup(),
             self._section_events(),
             self._section_network(),
@@ -444,6 +445,7 @@ class ReportGenerator:
   <a href="#system">🖥 Système</a>
   <a href="#performance">📊 Performance</a>
   <a href="#smart">💾 Disques SMART</a>
+  <a href="#sensors">🌡 Capteurs</a>
   <a href="#startup">🚀 Démarrage</a>
   <a href="#events">📋 Événements</a>
   <a href="#network">🌐 Réseau</a>
@@ -723,6 +725,76 @@ class ReportGenerator:
 <div class="section-summary">smartctl v{_esc(version)} — {len(disks)} disque(s) analysé(s).</div>
 {''.join(disks_html_parts)}
 {errs_html}
+</section>"""
+
+    def _section_sensors(self) -> str:
+        """Santé capteurs : pourquoi la température CPU remonte (ou pas), et
+        couverture GPU (NVML) / disques (smartctl). Rend la cause d'un « N/A »
+        explicite au lieu de la laisser muette."""
+        d = self.data.get("sensors") or {}
+        if not d:
+            return ""  # sonde absente (vieux rapport) : on n'affiche rien
+        if d.get("_status") not in ("ok", None):
+            return self._err_section("sensors", "🌡 Capteurs (température)", d)
+
+        ok       = bool(d.get("ok"))
+        label    = d.get("label") or "—"
+        hint     = d.get("hint")
+        cpu_temp = d.get("cpu_temp")
+        error    = d.get("error")
+        cpu_val  = f"{cpu_temp}°C" if cpu_temp is not None else "N/A"
+
+        if ok:
+            badge = '<span class="badge badge-ok">✓ Temp CPU OK</span>'
+        else:
+            badge = f'<span class="badge badge-warn">⚠ {_esc(label)}</span>'
+
+        def yn(b):
+            if b is True:
+                return '<span class="ok">oui</span>'
+            if b is False:
+                return '<span class="warn">non</span>'
+            return '<span class="dim">?</span>'
+
+        version  = d.get("backend_version") or "?"
+        override = d.get("backend_override")
+
+        gpus  = _ensure_dicts(d.get("gpus"))
+        disks = _ensure_dicts(d.get("disks"))
+        gpu_str = ", ".join(
+            f"{_esc(g.get('name', 'GPU'))} {g.get('temp')}°C"
+            for g in gpus if g.get("temp") is not None
+        ) or "—"
+        disk_str = ", ".join(
+            f"{_esc(x.get('model', 'disque'))} {x.get('temp')}°C"
+            for x in disks if x.get("temp") is not None
+        ) or "—"
+
+        hint_html = f'<div class="card-sub">{_esc(hint)}</div>' if (hint and not ok) else ""
+        err_html = ""
+        if error and not ok:
+            err_html = (f'<details><summary>Message LibreHardwareMonitor</summary>'
+                        f'<p class="mono" style="font-size:11px">{_esc(error)}</p></details>')
+
+        summary = (f"Température CPU : <strong>{cpu_val}</strong> {badge}. "
+                   f"GPU (NVML) : {gpu_str} — Disques (smartctl) : {disk_str}.")
+
+        return f"""<section id="sensors" class="section">
+<h2 class="section-title">🌡 Capteurs (température)</h2>
+<div class="section-summary">{summary}</div>
+<div class="cards">
+  <div class="card"><div class="card-title">Température CPU</div>
+    <div class="card-value">{cpu_val}</div>{hint_html}</div>
+  <div class="card"><div class="card-title">Élévation (admin)</div>
+    <div class="card-value" style="font-size:14px">{yn(d.get("admin"))}</div></div>
+  <div class="card"><div class="card-title">Driver PawnIO</div>
+    <div class="card-value" style="font-size:14px">{yn(d.get("pawnio_installed"))}</div>
+    <div class="card-sub">accès MSR (temp/fréq CPU)</div></div>
+  <div class="card"><div class="card-title">Backend LHM</div>
+    <div class="card-value" style="font-size:14px">{yn(d.get("backend_available"))}</div>
+    <div class="card-sub">v{_esc(version)}{' · override' if override else ''}</div></div>
+</div>
+{err_html}
 </section>"""
 
     def _section_performance(self) -> str:

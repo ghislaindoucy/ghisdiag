@@ -19,13 +19,12 @@ Usage :
 Copie-colle la sortie complete pour analyse.
 """
 
-import json
-import subprocess
 import sys
 
-from collectors.sensors import (
-    _PS_EXE, _SCRIPT_PATH, _NO_WINDOW, _ps_args, lhm_available,
-)
+from collectors.sensors import _PS_EXE, _SCRIPT_PATH, lhm_available
+# La lecture LHM -Once (qui conserve les echecs ok=false) est centralisee dans
+# sensors_health, partagee avec le rapport et le moniteur de l'app.
+from collectors.sensors_health import _probe_once as _run_lhm_once
 
 try:
     from collectors import pawnio
@@ -33,28 +32,6 @@ try:
 except Exception:
     pawnio = None
     _HAS_PAWNIO_MOD = False
-
-
-def _run_lhm_once(timeout: float = 15.0) -> dict | None:
-    """Lance sensors.ps1 -Once et retourne le dict brut (ok=true OU ok=false avec
-    error), ou None si rien d'exploitable. Contrairement a read_once(), on garde
-    aussi les reponses ok=false pour voir le message d'erreur LHM."""
-    if not lhm_available():
-        return None
-    try:
-        proc = subprocess.run(
-            _ps_args(["-Once"]),
-            capture_output=True, timeout=timeout, shell=False,
-            creationflags=_NO_WINDOW,
-        )
-        out = proc.stdout.decode("utf-8", errors="replace").strip()
-        if not out:
-            err = proc.stderr.decode("utf-8", errors="replace").strip()
-            return {"ok": False, "error": err or "(aucune sortie)"}
-        line = [l for l in out.splitlines() if l.strip()][-1]
-        return json.loads(line)
-    except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _yn(b: bool) -> str:

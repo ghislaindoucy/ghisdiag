@@ -23,6 +23,15 @@ try:
 except Exception:
     _HAS_MONITOR = False
 
+# Verdict << pourquoi la temperature CPU est absente >> (PawnIO / elevation /
+# backend). Sert a afficher une raison a cote d'un CPU : N/A muet.
+try:
+    from collectors import sensors_health as _sensors_health
+    _HAS_SENSOR_HEALTH = True
+except Exception:
+    _sensors_health = None
+    _HAS_SENSOR_HEALTH = False
+
 try:
     from thermal_bench import (
         ThermalBench, BenchConfig, BenchPhase,
@@ -130,6 +139,7 @@ class GhisdiagApp(tk.Tk):
         self._temp_cache      = {"cpu": None, "gpu": None, "disks": []}
         self._temp_loading    = False
         self._temp_tick       = 0
+        self._sensor_reason   = None   # raison d'un CPU temp N/A (PawnIO/admin…)
 
         # Bench thermique
         self._bench           = None       # instance ThermalBench en cours
@@ -3058,7 +3068,13 @@ class GhisdiagApp(tk.Tk):
         gpu_t  = t.get("gpu")
         disks_t = t.get("disks") or []
 
-        self._mon_temp_cpu_var.set(f"CPU : {cpu_t}°C" if cpu_t is not None else "CPU : N/A")
+        if cpu_t is not None:
+            self._mon_temp_cpu_var.set(f"CPU : {cpu_t}°C")
+        elif self._sensor_reason:
+            # Pas de temp CPU : on dit pourquoi (PawnIO absent, non élevé…).
+            self._mon_temp_cpu_var.set(f"CPU : N/A — {self._sensor_reason}")
+        else:
+            self._mon_temp_cpu_var.set("CPU : N/A")
         self._mon_temp_gpu_var.set(f"GPU : {gpu_t}°C" if gpu_t is not None else "GPU : N/A")
         if disks_t:
             parts = [f"{d.get('model','?')[:12]} : {d.get('temp','?')}°C"
@@ -3073,6 +3089,15 @@ class GhisdiagApp(tk.Tk):
         try:
             if _HAS_MONITOR:
                 self._temp_cache = get_temperatures()
+            # Si le CPU ne remonte pas, calcule une raison bon marché (sans
+            # sous-processus) à afficher : élévation, PawnIO, backend LHM.
+            if _HAS_SENSOR_HEALTH and (self._temp_cache or {}).get("cpu") is None:
+                try:
+                    self._sensor_reason = _sensors_health.cpu_status(probe=False)["label"]
+                except Exception:
+                    self._sensor_reason = None
+            else:
+                self._sensor_reason = None
         except Exception as exc:
             logger.debug("Fetch températures : %s", exc)
         finally:
