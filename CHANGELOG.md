@@ -4,6 +4,41 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.5-beta.1] — 2026-06-27 · pré-release de test
+
+> Version **beta** destinée aux tests sur parc varié. Non marquée « Latest » :
+> la 1.6.4 reste la version stable. Objectif : valider la robustesse des
+> capteurs et du bench thermique sur un maximum de CPU différents.
+
+### 🌡️ Capteurs & bench thermique — robustesse tout-terrain
+
+- **Anti-freeze** : le flux de capteurs est surveillé par un watchdog qui tue un
+  backend figé (CPU non supporté, probing bloquant) au lieu de geler l'appli ; le
+  bench vérifie que la température CPU répond **avant** de démarrer.
+- **Backend LibreHardwareMonitor remplaçable** sans recompiler (dossier `tools`
+  override) — permet d'essayer une DLL plus récente pour un CPU très récent.
+- **GPU NVIDIA via NVML** et **disques via smartctl**, en mode utilisateur, sans
+  dépendre de LHM (plus tout-terrain).
+- **Mapping température AMD** (`Core (Tctl/Tdie)`, `CCDx (Tdie)`) — corrige
+  l'absence de température sur les Ryzen récents (ex. Zen 5).
+- **Probing disque LHM désactivé** (figeait sur certains Intel type J1900) ; les
+  disques passent par smartctl.
+
+### 🩺 Santé capteurs visible
+
+- Le moniteur affiche désormais **pourquoi** une température CPU est absente
+  (« PawnIO absent », « console non élevée », « CPU non supporté »…) au lieu d'un
+  « N/A » muet.
+- Nouvelle section **« 🌡 Capteurs »** dans le rapport HTML (température CPU,
+  élévation, PawnIO, version du backend, sources GPU/disque).
+
+### 🐛 Correctif
+
+- La version affichée dans le rapport HTML était restée bloquée à 1.6.0 ; elle
+  suit de nouveau la version réelle.
+
+---
+
 ## [1.6.4] — 2026-06-22
 
 ### 🐛 Correctif
