@@ -16,6 +16,9 @@ if errorlevel 1 (
 echo [1/5] Vérification des dépendances...
 py -m pip install pyinstaller --quiet
 py -m pip install psutil --quiet
+:: numpy : noyau de charge AVX du bench thermique (mode stabilite). Sans lui, le
+:: bench retombe automatiquement sur la charge Python (moins intensive).
+py -m pip install numpy --quiet
 :: Dépendances de la fonctionnalité Analyse IA (sinon désactivée à l'exécution)
 py -m pip install requests --quiet
 py -m pip install cryptography --quiet
@@ -68,6 +71,7 @@ py -m PyInstaller ^
     --hidden-import json ^
     --hidden-import threading ^
     --hidden-import psutil ^
+    --hidden-import numpy ^
     --hidden-import requests ^
     --hidden-import cryptography ^
     --hidden-import ai_analyzer ^

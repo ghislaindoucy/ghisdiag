@@ -79,6 +79,7 @@ class BenchConfig:
     cooldown_sec: int        = 300               # refroidissement
     intensity: int           = 100               # rapport cyclique 1..100
     threads: int             = 0                 # 0 = tous les coeurs logiques
+    kernel: str              = "python"          # python (FPU) | avx (stress numpy)
     sample_interval_ms: int  = 2000              # periode d'echantillonnage
     emergency_temp_c: float  = DEFAULT_EMERGENCY_TEMP_C
     output_dir: Optional[str] = None             # None = dossier standard
@@ -86,6 +87,7 @@ class BenchConfig:
     def normalized(self) -> "BenchConfig":
         """Retourne une copie aux valeurs bornees / validees."""
         label = self.label if self.label in VALID_LABELS else "libre"
+        kernel = self.kernel if self.kernel in ("python", "avx") else "python"
         return BenchConfig(
             label=label,
             idle_sec=max(0, int(self.idle_sec)),
@@ -93,6 +95,7 @@ class BenchConfig:
             cooldown_sec=max(0, int(self.cooldown_sec)),
             intensity=min(100, max(1, int(self.intensity))),
             threads=max(0, int(self.threads)),
+            kernel=kernel,
             sample_interval_ms=max(500, int(self.sample_interval_ms)),
             emergency_temp_c=float(self.emergency_temp_c),
             output_dir=self.output_dir,
@@ -137,10 +140,12 @@ def default_output_dir() -> Path:
 class _LoadGenerator:
     """Pilote collectors/cpu_load.py dans un processus dedie."""
 
-    def __init__(self, intensity: int, threads: int, max_duration_sec: int):
+    def __init__(self, intensity: int, threads: int, max_duration_sec: int,
+                 kernel: str = "python"):
         self.intensity        = intensity
         self.threads          = threads
         self.max_duration_sec = max_duration_sec
+        self.kernel           = kernel
         self._proc: Optional[subprocess.Popen] = None
 
     def available(self) -> bool:
@@ -158,6 +163,7 @@ class _LoadGenerator:
             "--threads", str(self.threads),
             "--intensity", str(self.intensity),
             "--duration", str(self.max_duration_sec),
+            "--kernel", self.kernel,
         ]
         try:
             self._proc = subprocess.Popen(
@@ -468,7 +474,8 @@ class ThermalBench:
             # Phase charge
             self._enter_phase(BenchPhase.LOAD)
             self._load = _LoadGenerator(
-                cfg.intensity, cfg.threads, cfg.load_sec + LOAD_SAFETY_MARGIN_SEC)
+                cfg.intensity, cfg.threads, cfg.load_sec + LOAD_SAFETY_MARGIN_SEC,
+                kernel=cfg.kernel)
             if not self._load.start():
                 self._finalize(aborted=True, reason="Echec du generateur de charge")
                 return

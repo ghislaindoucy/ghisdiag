@@ -3177,7 +3177,12 @@ class GhisdiagApp(tk.Tk):
 
     # Correspondances widget -> valeurs moteur
     _BENCH_LABELS   = (("Avant", "avant"), ("Après", "apres"), ("Libre", "libre"))
-    _BENCH_INTENS   = (("100 %", 100), ("50 %", 50))
+    # (libellé, intensité 1..100, noyau de charge). « Stabilité » = charge AVX
+    # (numpy) qui pousse bien plus fort — pour tester la stabilité, pas seulement
+    # une pâte thermique.
+    _BENCH_INTENS   = (("100 %", 100, "python"),
+                       ("50 %", 50, "python"),
+                       ("Stabilité (AVX max)", 100, "avx"))
     _BENCH_DURATION = (("Court (2 min)", 120), ("Standard (5 min)", 300),
                        ("Long (10 min)", 600))
     _BENCH_IDLE_SEC = 120
@@ -3218,7 +3223,8 @@ class GhisdiagApp(tk.Tk):
         self._bench_label_var, self._bench_label_cb = _combo(
             "Étiquette", [t for t, _ in self._BENCH_LABELS], "Avant")
         self._bench_intens_var, self._bench_intens_cb = _combo(
-            "Intensité", [t for t, _ in self._BENCH_INTENS], "100 %")
+            "Intensité", [t for t, _, _ in self._BENCH_INTENS], "100 %")
+        self._bench_intens_cb.config(width=20)  # « Stabilité (AVX max) » sans troncature
         self._bench_dur_var, self._bench_dur_cb = _combo(
             "Durée de charge",
             [t for t, _ in self._BENCH_DURATION] + ["Personnalisé…"],
@@ -3340,16 +3346,20 @@ class GhisdiagApp(tk.Tk):
             return
 
         label     = dict(self._BENCH_LABELS)[self._bench_label_var.get()]
-        intensity = dict(self._BENCH_INTENS)[self._bench_intens_var.get()]
+        _intens_map = {lbl: (i, k) for lbl, i, k in self._BENCH_INTENS}
+        intensity, kernel = _intens_map[self._bench_intens_var.get()]
         # Preset connu, sinon durée personnalisée (repli 300 s si non définie).
         load_sec  = dict(self._BENCH_DURATION).get(
             self._bench_dur_var.get(), self._bench_custom_load_sec or 300)
 
         total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
+        charge_desc = ("charge AVX MAXIMALE (mode stabilité — comparable à un "
+                       "torture-test, températures nettement plus élevées)"
+                       if kernel == "avx" else f"forte charge (intensité {intensity} %)")
         if not messagebox.askyesno(
                 "⚠ Avertissement — Test de charge thermique",
-                f"Ce test sollicite VOLONTAIREMENT le processeur à forte charge "
-                f"(intensité {intensity} %) pendant environ {total_min} min, afin de "
+                f"Ce test sollicite VOLONTAIREMENT le processeur à {charge_desc} "
+                f"pendant environ {total_min} min, afin de "
                 "mesurer son comportement thermique puis son refroidissement.\n\n"
                 "Des sécurités sont prévues — arrêt automatique au-delà de 95 °C et "
                 "arrêt manuel possible à tout moment. Elles réduisent le risque mais "
@@ -3369,7 +3379,7 @@ class GhisdiagApp(tk.Tk):
         out_dir = str(Path(self.out_dir_var.get()) / "thermal")
         cfg = BenchConfig(
             label=label, idle_sec=self._BENCH_IDLE_SEC, load_sec=load_sec,
-            cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity,
+            cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity, kernel=kernel,
             sample_interval_ms=2000, output_dir=out_dir,
         ).normalized()
 
