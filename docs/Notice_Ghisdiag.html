@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Exécutable autonome</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 1.6.2 — Document généré le 22 juin 2026</div>
+  <div class="version">Version 1.6.5 — Document généré le 28 juin 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -286,6 +286,8 @@ footer.pagefoot{
 
 <p>Cette fonctionnalité permet d'<b>objectiver le gain</b> d'un nettoyage, d'un changement de pâte thermique ou d'un remplacement de ventilateur, par des mesures reproductibles plutôt que par impression.</p>
 
+<p>Deux usages : un test <b>standard</b> (charge soutenue à 100&nbsp;% ou 50&nbsp;%) pour comparer un refroidissement avant / après, et un mode <b>« Stabilité (AVX&nbsp;max) »</b> qui sollicite le processeur bien plus fort (calcul vectoriel AVX) pour vérifier qu'une machine reste <b>stable</b> à pleine charge.</p>
+
 <h3>Le protocole en 3 phases</h3>
 <div class="diagram-wrap">
 <svg width="640" height="170" viewBox="0 0 640 170" xmlns="http://www.w3.org/2000/svg">
@@ -308,14 +310,18 @@ footer.pagefoot{
 </svg>
 </div>
 
-<p>Les températures sont lues via <b>LibreHardwareMonitor</b> (capteurs MSR du CPU, GPU, vitesses ventilateurs), avec un pilote signé installé automatiquement au premier lancement.</p>
+<p>Les températures proviennent de <b>plusieurs sources</b>, pour rester fiables sur tout type de machine : le <b>CPU</b> et les ventilateurs de carte mère via <b>LibreHardwareMonitor</b> (capteurs MSR, avec un pilote signé installé automatiquement au premier lancement) ; le <b>GPU NVIDIA</b> via NVML ; les <b>disques</b> via S.M.A.R.T. La température CPU est rafraîchie en continu dans le moniteur temps réel. Si elle n'apparaît pas, l'application en indique la raison (pilote de capteurs manquant, application non lancée en administrateur…).</p>
+
+<div class="callout">
+  <b>CPU très récent non reconnu ?</b> Le moteur de capteurs (LibreHardwareMonitor) est <b>remplaçable sans réinstaller Ghisdiag</b>. Placez une version plus récente de <code>LibreHardwareMonitorLib.dll</code> et de ses fichiers compagnons dans un dossier nommé <code>tools</code>, situé soit <b>à côté de <code>Ghisdiag.exe</code></b>, soit dans <code>%LOCALAPPDATA%\Ghisdiag\tools</code>. Au lancement suivant, Ghisdiag détecte et utilise automatiquement cette version ; en son absence, il revient à la version embarquée. Pratique pour prendre en charge un processeur sorti après cette version de l'outil, sans rien recompiler.
+</div>
 
 <h3>Métriques calculées</h3>
 <ul>
   <li>Température au repos, température maximale, température de plateau en charge ;</li>
   <li><b>ΔT</b> (max − repos), insensible à la température ambiante de la pièce ;</li>
   <li>Temps de retour au calme après l'arrêt de la charge ;</li>
-  <li>Détection de <b>throttling</b> (chute de fréquence CPU au-delà de 80&nbsp;°C) ;</li>
+  <li>Détection du <b>throttling thermique</b> (chute de fréquence à température élevée, proche du seuil critique ~90&nbsp;°C), distinguée de la simple <b>limite de puissance</b> (PL1/TDP) — normale, et qui explique qu'une température plafonne sans défaut de refroidissement ;</li>
   <li>Vitesses de ventilateurs relevées pendant le test.</li>
 </ul>
 
@@ -517,7 +523,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 1.6.2. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 1.6.5. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 
