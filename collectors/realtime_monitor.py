@@ -94,6 +94,24 @@ _TEMP_PS_CMD = (
     + _TEMP_PS_SCRIPT
 )
 
+# Repli CPU seul : zone thermique ACPI uniquement (pas de probing disque, qui
+# peut figer sur certaines machines). Rapide (~1s). Emet la temperature ou rien.
+_CPU_TEMP_PS_SCRIPT = r"""
+$c = $null
+try {
+    $z = Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace "root/wmi" -EA Stop
+    $c = ($z | ForEach-Object { [math]::Round($_.CurrentTemperature/10-273.15,1) } |
+          Measure-Object -Maximum).Maximum
+} catch {}
+if ($c -gt 0 -and $c -lt 120) { $c } else { "" }
+"""
+
+_CPU_TEMP_PS_CMD = (
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+    "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+    + _CPU_TEMP_PS_SCRIPT
+)
+
 
 def get_cpu_percent() -> float | None:
     if not _HAS_PSUTIL:
@@ -181,10 +199,37 @@ def get_temperatures() -> dict:
         disks = lhm.get("disks") or []
     result["disks"] = disks
 
-    # Tout vide : dernier recours, chaine WMI/OHM historique.
+    # Repli CPU independant : la temperature CPU peut venir de la zone thermique
+    # ACPI meme quand LHM ne la lit pas (PawnIO inactif, CPU non mappe...). On ne
+    # conditionne PAS ce repli a un vide total : sinon, des qu'un GPU ou un disque
+    # est detecte (NVML / smartctl), le CPU restait a None alors que l'ACPI
+    # l'aurait fourni — c'est la regression vs la chaine WMI historique (1.6.4).
+    if result["cpu"] is None:
+        result["cpu"] = _get_cpu_temp_wmi()
+
+    # Tout vide malgre tout : dernier recours, chaine WMI/OHM historique complete.
     if result["cpu"] is None and result["gpu"] is None and not result["disks"]:
         return _get_temperatures_wmi()
     return result
+
+
+def _get_cpu_temp_wmi() -> float | None:
+    """Temperature CPU via la zone thermique ACPI (repli leger, sans probing
+    disque). Acces admin requis sur la plupart des machines. None si indisponible."""
+    try:
+        proc = subprocess.run(
+            [_PS_EXE, "-NonInteractive", "-NoProfile",
+             "-ExecutionPolicy", "Bypass", "-Command", _CPU_TEMP_PS_CMD],
+            capture_output=True,
+            timeout=6,
+            shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        out = proc.stdout.decode("utf-8", errors="replace").strip()
+        return float(out) if out else None
+    except Exception as exc:
+        logger.debug("CPU temp ACPI/WMI : %s", exc)
+        return None
 
 
 def _get_temperatures_wmi() -> dict:
