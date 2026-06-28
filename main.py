@@ -3632,9 +3632,16 @@ class GhisdiagApp(tk.Tk):
         fans = f"{fanl} tr/min" if fanl else "—"
         line1 = (f"T repos {deg(m.get('idle_c'))}    •    T max {deg(m.get('load_max_c'))}"
                  f"    •    plateau {deg(m.get('load_plateau_c'))}    •    ΔT {dts}")
-        line2 = (f"Throttling : {thr}    •    Retour au calme : {cs}"
+        line2 = (f"Throttling thermique : {thr}    •    Retour au calme : {cs}"
                  f"    •    Ventilo en charge : {fans}")
         note = ""
+        # Limite de puissance (PL1/TDP) : la frequence a chute a temperature
+        # moderee. Explique pourquoi la temperature plafonne — ce n'est PAS un
+        # defaut de refroidissement (a distinguer du throttling thermique).
+        if m.get("power_limited") and not m.get("throttling"):
+            note += ("\nℹ Limite de puissance (PL1/TDP) atteinte : le CPU bride sa "
+                     "fréquence à charge soutenue. Normal — la température plafonne "
+                     "par conception, ce n'est pas un souci de refroidissement.")
         if session.get("emergency"):
             note = "\n⚠ Arrêt d'urgence à 95 °C — résultats partiels."
         elif session.get("aborted"):

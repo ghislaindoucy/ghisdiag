@@ -295,12 +295,20 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     clock_max_mhz = round(max(clock_vals)) if clock_vals else None
 
     throttling = False
+    power_limited = False
     clock_drop_pct = None
     if clock_early and clock_late:
         clock_drop_pct = round((clock_early - clock_late) / clock_early * 100, 1)
-        if (clock_late < clock_early * (1 - THROTTLE_CLOCK_DROP)
-                and (load_max_c or 0) >= THROTTLE_TEMP_FLOOR_C):
-            throttling = True
+        if clock_late < clock_early * (1 - THROTTLE_CLOCK_DROP):
+            # Chute de frequence soutenue. A haute temperature (proche du TjMax)
+            # = throttling THERMIQUE (vrai souci de refroidissement). A
+            # temperature moderee = limite de PUISSANCE (Intel PL1 / TDP, AMD
+            # PPT) : le CPU bride sa puissance soutenue, c'est NORMAL et ca
+            # explique pourquoi la temperature plafonne sans monter davantage.
+            if (load_max_c or 0) >= THROTTLE_TEMP_FLOOR_C:
+                throttling = True
+            else:
+                power_limited = True
 
     # Temps de retour au calme : depuis le debut du refroidissement, delai pour
     # repasser sous T_idle + marge. None si jamais atteint dans la fenetre.
@@ -326,6 +334,7 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "clock_max_mhz":   clock_max_mhz,
         "clock_drop_pct":  clock_drop_pct,
         "throttling":      throttling,
+        "power_limited":   power_limited,
         "cooldown_sec":    cooldown_sec,
         "recovery_margin_c": RECOVERY_MARGIN_C,
     }
