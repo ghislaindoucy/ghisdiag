@@ -4,6 +4,28 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.5-beta.2] — 2026-06-28 · pré-release de test
+
+> Correctifs de la beta.1 après tests : la température CPU mettait beaucoup de
+> temps à s'afficher / se rafraîchir. **Remplace la 1.6.5-beta.1.**
+
+### ⚡ Performance — moniteur temps réel
+
+- **Température CPU en continu** : le moniteur ouvrait LibreHardwareMonitor (et
+  rechargeait toutes les DLL) à *chaque* rafraîchissement, toutes les 10 s
+  seulement → première valeur très tardive et affichage en retard. Il utilise
+  désormais un **flux capteurs persistant** (LHM ouvert une seule fois, watchdog
+  anti-freeze) : la température CPU se rafraîchit toutes les ~2 s.
+- GPU (NVML) et disques (smartctl) restent lus en arrière-plan, sans relancer LHM.
+
+### 🐛 Correctif
+
+- **Repli température CPU via ACPI** rétabli indépendamment du GPU/disque : sur
+  une machine sans PawnIO, la température CPU (zone thermique ACPI) n'était plus
+  affichée dès qu'un GPU ou un disque était détecté (régression vs 1.6.4).
+
+---
+
 ## [1.6.5-beta.1] — 2026-06-27 · pré-release de test
 
 > Version **beta** destinée aux tests sur parc varié. Non marquée « Latest » :
