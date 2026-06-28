@@ -4,6 +4,32 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.5-beta.3] — 2026-06-28 · pré-release de test
+
+> Ajoute un vrai **test de stabilité (charge AVX)** et corrige plusieurs points
+> du bench thermique repérés en test réel. **Remplace la 1.6.5-beta.2.**
+
+### 🔥 Bench thermique — test de stabilité
+
+- **Mode « Stabilité (AVX max) »** (nouveau choix d'intensité) : charge AVX via
+  numpy/BLAS (~80 GFLOP/s/cœur, ~4400× plus de calcul vectoriel que la charge
+  Python) — pousse le CPU comme un torture-test. Repli automatique sur la charge
+  Python si numpy est absent.
+
+### 🐛 Correctifs bench
+
+- **La charge ne déborde plus sur le refroidissement** : à l'arrêt, on tue tout
+  l'arbre de processus (les sous-processus de calcul restaient actifs ~30 s,
+  faussant le refroidissement et le graphe).
+- **Plus de faux « throttling thermique »** : la baisse de fréquence de fin de
+  turbo Intel (PL2→PL1) à température modérée n'est plus prise pour du throttling
+  thermique (seuil relevé à 90 °C, proche du TjMax).
+- **Nouvel indicateur « limite de puissance (PL1/TDP) »** : explique pourquoi la
+  température plafonne à charge soutenue (le CPU bride sa puissance — normal, ce
+  n'est pas un défaut de refroidissement).
+
+---
+
 ## [1.6.5-beta.2] — 2026-06-28 · pré-release de test
 
 > Correctifs de la beta.1 après tests : la température CPU mettait beaucoup de
