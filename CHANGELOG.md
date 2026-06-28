@@ -4,6 +4,39 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.5] — 2026-06-28
+
+> Fiabilité des **capteurs** et du **bench thermique** sur tout type de machine,
+> et nouveau **test de stabilité (charge AVX)**. Validée sur parc réel (Intel
+> Coffee Lake, AMD Ryzen Zen 5) à l'issue des pré-releases 1.6.5-beta.1 à beta.3.
+
+### 🌡️ Capteurs — robustesse tout-terrain
+
+- Suivi de température **fiable sur n'importe quel CPU** : anti-freeze (watchdog
+  qui tue un backend figé), backend LibreHardwareMonitor remplaçable sans
+  recompiler, **GPU via NVML** et **disques via smartctl** (sans dépendre de LHM).
+- **Mapping température AMD** (Tctl/Tdie) — corrige les Ryzen récents (Zen 5).
+- **Température CPU fluide** dans le moniteur temps réel (flux capteurs persistant
+  au lieu d'une relecture complète toutes les 10 s) ; repli ACPI conservé.
+- **Santé capteurs visible** : raison affichée quand la température CPU manque
+  (PawnIO absent, console non élevée…) + section **« Capteurs »** dans le rapport.
+
+### 🔥 Bench thermique — test de stabilité
+
+- **Mode « Stabilité (AVX max) »** : charge AVX (numpy/BLAS) qui pousse le CPU
+  comme un torture-test ; repli automatique sur la charge Python si numpy absent.
+- La charge **ne déborde plus** sur le refroidissement (arrêt de tout l'arbre de
+  processus).
+- Distinction **throttling thermique** (vrai souci de refroidissement) vs
+  **limite de puissance (PL1/TDP)** (normal — explique pourquoi la température
+  plafonne).
+
+### 🐛 Correctif
+
+- Version affichée dans le rapport HTML de nouveau correcte (était figée à 1.6.0).
+
+---
+
 ## [1.6.5-beta.3] — 2026-06-28 · pré-release de test
 
 > Ajoute un vrai **test de stabilité (charge AVX)** et corrige plusieurs points
