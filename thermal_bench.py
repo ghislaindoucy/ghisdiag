@@ -56,10 +56,17 @@ LOAD_SAFETY_MARGIN_SEC = 30
 # on renonce proprement avec un message plutot que de bencher dans le vide.
 STREAM_WARMUP_SEC = 20.0
 
-# Detection de throttling : chute relative de frequence entre debut et fin de
-# charge, a temperature elevee.
+# Detection de throttling THERMIQUE : chute relative de frequence entre debut et
+# fin de charge, a temperature elevee.
+#
+# Le plancher de temperature doit rester PROCHE du TjMax (~100 C sur Intel/AMD
+# recents) : sinon on confond le throttling thermique (vrai probleme de
+# refroidissement) avec la baisse de frequence NORMALE de fin de turbo court
+# (Intel PL2->PL1, "Tau"), qui survient apres ~30 s de charge a n'importe quelle
+# temperature. A 75-85 C un CPU n'est pas thermiquement limite : il applique sa
+# limite de puissance soutenue, ce n'est pas un defaut.
 THROTTLE_CLOCK_DROP    = 0.05   # 5 %
-THROTTLE_TEMP_FLOOR_C  = 80.0
+THROTTLE_TEMP_FLOOR_C  = 90.0   # en-dessous : limite de puissance, pas thermique
 
 VALID_LABELS = ("avant", "apres", "libre")
 
