@@ -51,10 +51,22 @@ RECOVERY_MARGIN_C = 5.0
 # disparait, le worker s'auto-arrete quand meme (garde-fou anti-charge infinie).
 LOAD_SAFETY_MARGIN_SEC = 30
 
-# Detection de throttling : chute relative de frequence entre debut et fin de
-# charge, a temperature elevee.
+# Delai d'attente d'un premier echantillon CPU exploitable avant de lancer le
+# protocole. Si les capteurs ne repondent pas (backend fige, CPU non supporte),
+# on renonce proprement avec un message plutot que de bencher dans le vide.
+STREAM_WARMUP_SEC = 20.0
+
+# Detection de throttling THERMIQUE : chute relative de frequence entre debut et
+# fin de charge, a temperature elevee.
+#
+# Le plancher de temperature doit rester PROCHE du TjMax (~100 C sur Intel/AMD
+# recents) : sinon on confond le throttling thermique (vrai probleme de
+# refroidissement) avec la baisse de frequence NORMALE de fin de turbo court
+# (Intel PL2->PL1, "Tau"), qui survient apres ~30 s de charge a n'importe quelle
+# temperature. A 75-85 C un CPU n'est pas thermiquement limite : il applique sa
+# limite de puissance soutenue, ce n'est pas un defaut.
 THROTTLE_CLOCK_DROP    = 0.05   # 5 %
-THROTTLE_TEMP_FLOOR_C  = 80.0
+THROTTLE_TEMP_FLOOR_C  = 90.0   # en-dessous : limite de puissance, pas thermique
 
 VALID_LABELS = ("avant", "apres", "libre")
 
@@ -74,6 +86,7 @@ class BenchConfig:
     cooldown_sec: int        = 300               # refroidissement
     intensity: int           = 100               # rapport cyclique 1..100
     threads: int             = 0                 # 0 = tous les coeurs logiques
+    kernel: str              = "python"          # python (FPU) | avx (stress numpy)
     sample_interval_ms: int  = 2000              # periode d'echantillonnage
     emergency_temp_c: float  = DEFAULT_EMERGENCY_TEMP_C
     output_dir: Optional[str] = None             # None = dossier standard
@@ -81,6 +94,7 @@ class BenchConfig:
     def normalized(self) -> "BenchConfig":
         """Retourne une copie aux valeurs bornees / validees."""
         label = self.label if self.label in VALID_LABELS else "libre"
+        kernel = self.kernel if self.kernel in ("python", "avx") else "python"
         return BenchConfig(
             label=label,
             idle_sec=max(0, int(self.idle_sec)),
@@ -88,6 +102,7 @@ class BenchConfig:
             cooldown_sec=max(0, int(self.cooldown_sec)),
             intensity=min(100, max(1, int(self.intensity))),
             threads=max(0, int(self.threads)),
+            kernel=kernel,
             sample_interval_ms=max(500, int(self.sample_interval_ms)),
             emergency_temp_c=float(self.emergency_temp_c),
             output_dir=self.output_dir,
@@ -121,6 +136,16 @@ _LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.py"
 _NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _resolve_taskkill() -> str:
+    """Chemin absolu verifie de taskkill.exe (evite le PATH hijacking)."""
+    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
+    candidate = Path(sysroot) / "System32" / "taskkill.exe"
+    return str(candidate) if candidate.is_file() else "taskkill"
+
+
+_TASKKILL_EXE = _resolve_taskkill()
+
+
 def default_output_dir() -> Path:
     """Dossier standard des sessions de bench."""
     return (Path(os.path.expanduser("~")) / "Documents"
@@ -132,10 +157,12 @@ def default_output_dir() -> Path:
 class _LoadGenerator:
     """Pilote collectors/cpu_load.py dans un processus dedie."""
 
-    def __init__(self, intensity: int, threads: int, max_duration_sec: int):
+    def __init__(self, intensity: int, threads: int, max_duration_sec: int,
+                 kernel: str = "python"):
         self.intensity        = intensity
         self.threads          = threads
         self.max_duration_sec = max_duration_sec
+        self.kernel           = kernel
         self._proc: Optional[subprocess.Popen] = None
 
     def available(self) -> bool:
@@ -153,6 +180,7 @@ class _LoadGenerator:
             "--threads", str(self.threads),
             "--intensity", str(self.intensity),
             "--duration", str(self.max_duration_sec),
+            "--kernel", self.kernel,
         ]
         try:
             self._proc = subprocess.Popen(
@@ -167,12 +195,25 @@ class _LoadGenerator:
     def stop(self, timeout: float = 5.0) -> None:
         if self._proc is None:
             return
+        pid = self._proc.pid
         try:
-            self._proc.terminate()
+            # Tuer tout l'ARBRE de processus. Le worker a lance N sous-processus
+            # multiprocessing (les vrais calculateurs) : terminer le seul parent
+            # les laisse orphelins, et ils continuent a chauffer le CPU jusqu'a
+            # leur echeance (la charge deborderait sur le refroidissement et
+            # fausserait les mesures). taskkill /T tue le parent ET ses enfants.
+            if os.name == "nt":
+                subprocess.run(
+                    [_TASKKILL_EXE, "/F", "/T", "/PID", str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=timeout, creationflags=_NO_WINDOW,
+                )
+            else:
+                self._proc.terminate()
             self._proc.wait(timeout=timeout)
         except Exception:
             try:
-                self._proc.kill()
+                self._proc.kill()   # ultime recours (ne tue que le parent)
             except Exception:
                 pass
         finally:
@@ -254,12 +295,20 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     clock_max_mhz = round(max(clock_vals)) if clock_vals else None
 
     throttling = False
+    power_limited = False
     clock_drop_pct = None
     if clock_early and clock_late:
         clock_drop_pct = round((clock_early - clock_late) / clock_early * 100, 1)
-        if (clock_late < clock_early * (1 - THROTTLE_CLOCK_DROP)
-                and (load_max_c or 0) >= THROTTLE_TEMP_FLOOR_C):
-            throttling = True
+        if clock_late < clock_early * (1 - THROTTLE_CLOCK_DROP):
+            # Chute de frequence soutenue. A haute temperature (proche du TjMax)
+            # = throttling THERMIQUE (vrai souci de refroidissement). A
+            # temperature moderee = limite de PUISSANCE (Intel PL1 / TDP, AMD
+            # PPT) : le CPU bride sa puissance soutenue, c'est NORMAL et ca
+            # explique pourquoi la temperature plafonne sans monter davantage.
+            if (load_max_c or 0) >= THROTTLE_TEMP_FLOOR_C:
+                throttling = True
+            else:
+                power_limited = True
 
     # Temps de retour au calme : depuis le debut du refroidissement, delai pour
     # repasser sous T_idle + marge. None si jamais atteint dans la fenetre.
@@ -285,6 +334,7 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "clock_max_mhz":   clock_max_mhz,
         "clock_drop_pct":  clock_drop_pct,
         "throttling":      throttling,
+        "power_limited":   power_limited,
         "cooldown_sec":    cooldown_sec,
         "recovery_margin_c": RECOVERY_MARGIN_C,
     }
@@ -380,6 +430,8 @@ class ThermalBench:
         self._load:   Optional[_LoadGenerator] = None
 
         self._cancel = threading.Event()
+        self._sensor_stalled = threading.Event()  # backend capteurs fige (watchdog)
+        self._stall_msg = ""
         self._emergency = False           # seuil franchi pendant la charge
         self._cooldown_truncated = False
         self._t0 = 0.0
@@ -420,21 +472,49 @@ class ThermalBench:
         self._t0 = time.monotonic()
         self._started_at = datetime.now().isoformat(timespec="seconds")
         try:
-            self._stream = SensorStream(cfg.sample_interval_ms, on_sample=self._record)
+            self._stream = SensorStream(cfg.sample_interval_ms,
+                                        on_sample=self._record,
+                                        on_stall=self._on_stall)
             if not self._stream.start():
                 self._error("Echec du demarrage des capteurs.")
                 return
 
+            # Verifier que les capteurs repondent AVANT le protocole : un premier
+            # echantillon avec temperature CPU exploitable. Sinon on renonce avec
+            # un message clair (backend fige, CPU recent non supporte...) plutot
+            # que de lancer 10 minutes de bench dans le vide.
+            if not self._stream.wait_first_sample(STREAM_WARMUP_SEC, require_cpu_temp=True):
+                self._stream.stop()
+                if self._stream.stalled:
+                    self._error("Capteurs figes : " + (self._stream.stall_reason
+                                or "backend bloque")
+                                + ". Lance diagnose_sensors.py pour la cause.")
+                elif self._stream.latest() is not None:
+                    self._error("Capteurs detectes mais aucune temperature CPU "
+                                "exploitable sur cette machine (cpu_ref absent) : "
+                                "bench impossible. Voir diagnose_sensors.py / "
+                                "diagnose_probe.py.")
+                else:
+                    self._error("Les capteurs ne repondent pas (aucune donnee en "
+                                f"{STREAM_WARMUP_SEC:.0f}s). Voir diagnose_sensors.py.")
+                return
+
             # Phase repos
             self._enter_phase(BenchPhase.IDLE)
-            if self._wait(cfg.idle_sec, watch_emergency=False) == "cancel":
+            r = self._wait(cfg.idle_sec, watch_emergency=False)
+            if r == "cancel":
                 self._finalize(aborted=True, reason="Annule pendant le repos")
+                return
+            if r == "stall":
+                self._finalize(aborted=True, reason="Capteurs figes pendant le repos : "
+                               + (self._stall_msg or "backend bloque"))
                 return
 
             # Phase charge
             self._enter_phase(BenchPhase.LOAD)
             self._load = _LoadGenerator(
-                cfg.intensity, cfg.threads, cfg.load_sec + LOAD_SAFETY_MARGIN_SEC)
+                cfg.intensity, cfg.threads, cfg.load_sec + LOAD_SAFETY_MARGIN_SEC,
+                kernel=cfg.kernel)
             if not self._load.start():
                 self._finalize(aborted=True, reason="Echec du generateur de charge")
                 return
@@ -443,12 +523,18 @@ class ThermalBench:
             if reason == "cancel":
                 self._finalize(aborted=True, reason="Annule pendant la charge")
                 return
+            if reason == "stall":
+                # Plus de capteurs sous charge : la charge vient d'etre coupee, on
+                # renonce — impossible de surveiller la temperature en securite.
+                self._finalize(aborted=True, reason="Capteurs figes pendant la charge : "
+                               + (self._stall_msg or "backend bloque"))
+                return
             # En arret d'urgence on poursuit vers le refroidissement : la
             # remontee a froid est une donnee precieuse et c'est plus sur.
 
             # Phase refroidissement
             self._enter_phase(BenchPhase.COOLDOWN)
-            if self._wait(cfg.cooldown_sec, watch_emergency=False) == "cancel":
+            if self._wait(cfg.cooldown_sec, watch_emergency=False) in ("cancel", "stall"):
                 self._cooldown_truncated = True
 
             self._finalize(aborted=False, reason=None)
@@ -464,14 +550,23 @@ class ThermalBench:
             self._running = False
 
     def _wait(self, seconds: int, watch_emergency: bool) -> str:
-        """Attend `seconds`, interruptible. Retourne 'done' | 'cancel' | 'emergency'."""
+        """Attend `seconds`, interruptible.
+        Retourne 'done' | 'cancel' | 'emergency' | 'stall'."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             if self._cancel.wait(timeout=0.2):
                 return "cancel"
+            if self._sensor_stalled.is_set():
+                return "stall"
             if watch_emergency and self._emergency:
                 return "emergency"
         return "done"
+
+    def _on_stall(self, reason: str) -> None:
+        """Callback SensorStream : le backend capteurs s'est fige."""
+        self._stall_msg = reason
+        self._sensor_stalled.set()
+        logger.warning("ThermalBench : capteurs figes — %s", reason)
 
     def _enter_phase(self, phase: BenchPhase) -> None:
         self._phase = phase

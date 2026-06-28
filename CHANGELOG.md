@@ -4,6 +4,122 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.5] — 2026-06-28
+
+> Fiabilité des **capteurs** et du **bench thermique** sur tout type de machine,
+> et nouveau **test de stabilité (charge AVX)**. Validée sur parc réel (Intel
+> Coffee Lake, AMD Ryzen Zen 5) à l'issue des pré-releases 1.6.5-beta.1 à beta.3.
+
+### 🌡️ Capteurs — robustesse tout-terrain
+
+- Suivi de température **fiable sur n'importe quel CPU** : anti-freeze (watchdog
+  qui tue un backend figé), backend LibreHardwareMonitor remplaçable sans
+  recompiler, **GPU via NVML** et **disques via smartctl** (sans dépendre de LHM).
+- **Mapping température AMD** (Tctl/Tdie) — corrige les Ryzen récents (Zen 5).
+- **Température CPU fluide** dans le moniteur temps réel (flux capteurs persistant
+  au lieu d'une relecture complète toutes les 10 s) ; repli ACPI conservé.
+- **Santé capteurs visible** : raison affichée quand la température CPU manque
+  (PawnIO absent, console non élevée…) + section **« Capteurs »** dans le rapport.
+
+### 🔥 Bench thermique — test de stabilité
+
+- **Mode « Stabilité (AVX max) »** : charge AVX (numpy/BLAS) qui pousse le CPU
+  comme un torture-test ; repli automatique sur la charge Python si numpy absent.
+- La charge **ne déborde plus** sur le refroidissement (arrêt de tout l'arbre de
+  processus).
+- Distinction **throttling thermique** (vrai souci de refroidissement) vs
+  **limite de puissance (PL1/TDP)** (normal — explique pourquoi la température
+  plafonne).
+
+### 🐛 Correctif
+
+- Version affichée dans le rapport HTML de nouveau correcte (était figée à 1.6.0).
+
+---
+
+## [1.6.5-beta.3] — 2026-06-28 · pré-release de test
+
+> Ajoute un vrai **test de stabilité (charge AVX)** et corrige plusieurs points
+> du bench thermique repérés en test réel. **Remplace la 1.6.5-beta.2.**
+
+### 🔥 Bench thermique — test de stabilité
+
+- **Mode « Stabilité (AVX max) »** (nouveau choix d'intensité) : charge AVX via
+  numpy/BLAS (~80 GFLOP/s/cœur, ~4400× plus de calcul vectoriel que la charge
+  Python) — pousse le CPU comme un torture-test. Repli automatique sur la charge
+  Python si numpy est absent.
+
+### 🐛 Correctifs bench
+
+- **La charge ne déborde plus sur le refroidissement** : à l'arrêt, on tue tout
+  l'arbre de processus (les sous-processus de calcul restaient actifs ~30 s,
+  faussant le refroidissement et le graphe).
+- **Plus de faux « throttling thermique »** : la baisse de fréquence de fin de
+  turbo Intel (PL2→PL1) à température modérée n'est plus prise pour du throttling
+  thermique (seuil relevé à 90 °C, proche du TjMax).
+- **Nouvel indicateur « limite de puissance (PL1/TDP) »** : explique pourquoi la
+  température plafonne à charge soutenue (le CPU bride sa puissance — normal, ce
+  n'est pas un défaut de refroidissement).
+
+---
+
+## [1.6.5-beta.2] — 2026-06-28 · pré-release de test
+
+> Correctifs de la beta.1 après tests : la température CPU mettait beaucoup de
+> temps à s'afficher / se rafraîchir. **Remplace la 1.6.5-beta.1.**
+
+### ⚡ Performance — moniteur temps réel
+
+- **Température CPU en continu** : le moniteur ouvrait LibreHardwareMonitor (et
+  rechargeait toutes les DLL) à *chaque* rafraîchissement, toutes les 10 s
+  seulement → première valeur très tardive et affichage en retard. Il utilise
+  désormais un **flux capteurs persistant** (LHM ouvert une seule fois, watchdog
+  anti-freeze) : la température CPU se rafraîchit toutes les ~2 s.
+- GPU (NVML) et disques (smartctl) restent lus en arrière-plan, sans relancer LHM.
+
+### 🐛 Correctif
+
+- **Repli température CPU via ACPI** rétabli indépendamment du GPU/disque : sur
+  une machine sans PawnIO, la température CPU (zone thermique ACPI) n'était plus
+  affichée dès qu'un GPU ou un disque était détecté (régression vs 1.6.4).
+
+---
+
+## [1.6.5-beta.1] — 2026-06-27 · pré-release de test
+
+> Version **beta** destinée aux tests sur parc varié. Non marquée « Latest » :
+> la 1.6.4 reste la version stable. Objectif : valider la robustesse des
+> capteurs et du bench thermique sur un maximum de CPU différents.
+
+### 🌡️ Capteurs & bench thermique — robustesse tout-terrain
+
+- **Anti-freeze** : le flux de capteurs est surveillé par un watchdog qui tue un
+  backend figé (CPU non supporté, probing bloquant) au lieu de geler l'appli ; le
+  bench vérifie que la température CPU répond **avant** de démarrer.
+- **Backend LibreHardwareMonitor remplaçable** sans recompiler (dossier `tools`
+  override) — permet d'essayer une DLL plus récente pour un CPU très récent.
+- **GPU NVIDIA via NVML** et **disques via smartctl**, en mode utilisateur, sans
+  dépendre de LHM (plus tout-terrain).
+- **Mapping température AMD** (`Core (Tctl/Tdie)`, `CCDx (Tdie)`) — corrige
+  l'absence de température sur les Ryzen récents (ex. Zen 5).
+- **Probing disque LHM désactivé** (figeait sur certains Intel type J1900) ; les
+  disques passent par smartctl.
+
+### 🩺 Santé capteurs visible
+
+- Le moniteur affiche désormais **pourquoi** une température CPU est absente
+  (« PawnIO absent », « console non élevée », « CPU non supporté »…) au lieu d'un
+  « N/A » muet.
+- Nouvelle section **« 🌡 Capteurs »** dans le rapport HTML (température CPU,
+  élévation, PawnIO, version du backend, sources GPU/disque).
+
+### 🐛 Correctif
+
+- La version affichée dans le rapport HTML était restée bloquée à 1.6.0 ; elle
+  suit de nouveau la version réelle.
+
+---
+
 ## [1.6.4] — 2026-06-22
 
 ### 🐛 Correctif

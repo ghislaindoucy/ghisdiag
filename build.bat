@@ -16,6 +16,9 @@ if errorlevel 1 (
 echo [1/5] Vérification des dépendances...
 py -m pip install pyinstaller --quiet
 py -m pip install psutil --quiet
+:: numpy : noyau de charge AVX du bench thermique (mode stabilite). Sans lui, le
+:: bench retombe automatiquement sur la charge Python (moins intensive).
+py -m pip install numpy --quiet
 :: Dépendances de la fonctionnalité Analyse IA (sinon désactivée à l'exécution)
 py -m pip install requests --quiet
 py -m pip install cryptography --quiet
@@ -31,7 +34,7 @@ echo [3/5] Création du manifest UAC...
 (
 echo ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
 echo ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
-echo   ^<assemblyIdentity version="1.6.4.0" processorArchitecture="X86"
+echo   ^<assemblyIdentity version="1.6.5.0" processorArchitecture="X86"
 echo     name="Ghisdiag" type="win32"/^>
 echo   ^<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"^>
 echo     ^<security^>^<requestedPrivileges^>
@@ -68,6 +71,7 @@ py -m PyInstaller ^
     --hidden-import json ^
     --hidden-import threading ^
     --hidden-import psutil ^
+    --hidden-import numpy ^
     --hidden-import requests ^
     --hidden-import cryptography ^
     --hidden-import ai_analyzer ^

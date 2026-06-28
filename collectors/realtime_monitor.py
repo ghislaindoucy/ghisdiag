@@ -31,6 +31,22 @@ except Exception:
     _HAS_LHM = False
     logger.debug("collectors.sensors (LHM) indisponible — fallback WMI")
 
+# Sources maison (sans LHM) : GPU NVIDIA via NVML, disques via smartctl. On les
+# prefere a LHM la ou elles s'appliquent ; LHM reste le repli (GPU AMD/Intel...).
+try:
+    from collectors import gpu as _gpu
+    _HAS_GPU = True
+except Exception:
+    _gpu = None
+    _HAS_GPU = False
+
+try:
+    from collectors import disk_temp as _disk
+    _HAS_DISK = True
+except Exception:
+    _disk = None
+    _HAS_DISK = False
+
 
 def _ps_exe() -> str:
     sysroot = os.environ.get("SystemRoot", r"C:\Windows")
@@ -78,6 +94,24 @@ _TEMP_PS_CMD = (
     + _TEMP_PS_SCRIPT
 )
 
+# Repli CPU seul : zone thermique ACPI uniquement (pas de probing disque, qui
+# peut figer sur certaines machines). Rapide (~1s). Emet la temperature ou rien.
+_CPU_TEMP_PS_SCRIPT = r"""
+$c = $null
+try {
+    $z = Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace "root/wmi" -EA Stop
+    $c = ($z | ForEach-Object { [math]::Round($_.CurrentTemperature/10-273.15,1) } |
+          Measure-Object -Maximum).Maximum
+} catch {}
+if ($c -gt 0 -and $c -lt 120) { $c } else { "" }
+"""
+
+_CPU_TEMP_PS_CMD = (
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+    "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+    + _CPU_TEMP_PS_SCRIPT
+)
+
 
 def get_cpu_percent() -> float | None:
     if not _HAS_PSUTIL:
@@ -122,22 +156,108 @@ def get_disk_io_percent() -> float | None:
 
 
 def get_temperatures() -> dict:
-    """Temperatures CPU/GPU/disques. Tente d'abord LibreHardwareMonitor (fiable),
-    puis retombe sur la chaine WMI/OHM historique.
-    Retourne {"cpu": float|None, "gpu": float|None, "disks": [{"model": str, "temp": float}]}
+    """Temperatures CPU/GPU/disques.
+
+    CPU via LibreHardwareMonitor (seul a lire la die CPU) ; GPU via NVML maison ;
+    disques via smartctl maison ; repli LHM puis WMI/OHM historique si une source
+    manque.
+    Retourne {"cpu": float|None, "gpu": float|None, "disks": [{"model", "temp"}]}
     """
+    result: dict = {"cpu": None, "gpu": None, "disks": []}
+
+    lhm = None
     if _HAS_LHM and _sensors is not None:
         try:
             lhm = _sensors.get_temperatures()
-            # On accepte le resultat LHM des qu'il fournit une temperature
-            # exploitable (CPU ou GPU). Sinon on tente le fallback WMI.
-            if lhm is not None and (lhm.get("cpu") is not None
-                                    or lhm.get("gpu") is not None
-                                    or lhm.get("disks")):
-                return lhm
         except Exception as exc:
             logger.debug("Temperatures LHM : %s", exc)
-    return _get_temperatures_wmi()
+
+    # CPU : LHM uniquement (NVML/smartctl ne lisent pas le CPU).
+    if lhm is not None:
+        result["cpu"] = lhm.get("cpu")
+
+    # GPU : NVML maison d'abord, sinon ce qu'a vu LHM.
+    gpu_c = None
+    if _HAS_GPU and _gpu is not None:
+        try:
+            gpu_c = _gpu.hottest_temp()
+        except Exception as exc:
+            logger.debug("Temperatures GPU NVML : %s", exc)
+    if gpu_c is None and lhm is not None:
+        gpu_c = lhm.get("gpu")
+    result["gpu"] = gpu_c
+
+    # Disques : smartctl maison d'abord, sinon ce qu'a vu LHM.
+    disks: list = []
+    if _HAS_DISK and _disk is not None:
+        try:
+            disks = [{"model": d["model"], "temp": d["temp"]}
+                     for d in _disk.read_all() if d.get("temp") is not None]
+        except Exception as exc:
+            logger.debug("Temperatures disques smartctl : %s", exc)
+    if not disks and lhm is not None:
+        disks = lhm.get("disks") or []
+    result["disks"] = disks
+
+    # Repli CPU independant : la temperature CPU peut venir de la zone thermique
+    # ACPI meme quand LHM ne la lit pas (PawnIO inactif, CPU non mappe...). On ne
+    # conditionne PAS ce repli a un vide total : sinon, des qu'un GPU ou un disque
+    # est detecte (NVML / smartctl), le CPU restait a None alors que l'ACPI
+    # l'aurait fourni — c'est la regression vs la chaine WMI historique (1.6.4).
+    if result["cpu"] is None:
+        result["cpu"] = _get_cpu_temp_wmi()
+
+    # Tout vide malgre tout : dernier recours, chaine WMI/OHM historique complete.
+    if result["cpu"] is None and result["gpu"] is None and not result["disks"]:
+        return _get_temperatures_wmi()
+    return result
+
+
+def _get_cpu_temp_wmi() -> float | None:
+    """Temperature CPU via la zone thermique ACPI (repli leger, sans probing
+    disque). Acces admin requis sur la plupart des machines. None si indisponible."""
+    try:
+        proc = subprocess.run(
+            [_PS_EXE, "-NonInteractive", "-NoProfile",
+             "-ExecutionPolicy", "Bypass", "-Command", _CPU_TEMP_PS_CMD],
+            capture_output=True,
+            timeout=6,
+            shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        out = proc.stdout.decode("utf-8", errors="replace").strip()
+        return float(out) if out else None
+    except Exception as exc:
+        logger.debug("CPU temp ACPI/WMI : %s", exc)
+        return None
+
+
+def get_gpu_disk_temps() -> dict:
+    """GPU (NVML) + disques (smartctl) uniquement, SANS lecture LHM (rapide).
+
+    Pour le moniteur live, qui lit le CPU via un SensorStream persistant : on
+    evite ainsi de relancer un process LHM a chaque rafraichissement.
+    Retourne {"gpu": float|None, "disks": [{"model", "temp"}]}.
+    """
+    result: dict = {"gpu": None, "disks": []}
+    if _HAS_GPU and _gpu is not None:
+        try:
+            result["gpu"] = _gpu.hottest_temp()
+        except Exception as exc:
+            logger.debug("GPU NVML : %s", exc)
+    if _HAS_DISK and _disk is not None:
+        try:
+            result["disks"] = [{"model": d["model"], "temp": d["temp"]}
+                               for d in _disk.read_all() if d.get("temp") is not None]
+        except Exception as exc:
+            logger.debug("Disques smartctl : %s", exc)
+    return result
+
+
+def get_cpu_temp_acpi() -> float | None:
+    """Temperature CPU via la zone thermique ACPI (repli pour les machines sans
+    PawnIO, ou quand le flux LHM ne donne pas de temperature CPU)."""
+    return _get_cpu_temp_wmi()
 
 
 def _get_temperatures_wmi() -> dict:

@@ -18,10 +18,31 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 try:
     from collectors.realtime_monitor import (
         get_cpu_percent, get_ram_percent, get_disk_io_percent, get_temperatures,
+        get_gpu_disk_temps, get_cpu_temp_acpi,
     )
     _HAS_MONITOR = True
 except Exception:
     _HAS_MONITOR = False
+
+# Flux capteurs persistant (LibreHardwareMonitor ouvert une seule fois) pour le
+# moniteur temps reel : evite le cout d'un read_once a chaque tick et rafraichit
+# la temperature CPU en continu, au lieu d'un process relance toutes les 10 s.
+try:
+    from collectors.sensors import SensorStream as _SensorStream, lhm_available as _lhm_available
+    _HAS_STREAM = True
+except Exception:
+    _SensorStream = None
+    _lhm_available = None
+    _HAS_STREAM = False
+
+# Verdict << pourquoi la temperature CPU est absente >> (PawnIO / elevation /
+# backend). Sert a afficher une raison a cote d'un CPU : N/A muet.
+try:
+    from collectors import sensors_health as _sensors_health
+    _HAS_SENSOR_HEALTH = True
+except Exception:
+    _sensors_health = None
+    _HAS_SENSOR_HEALTH = False
 
 try:
     from thermal_bench import (
@@ -130,6 +151,8 @@ class GhisdiagApp(tk.Tk):
         self._temp_cache      = {"cpu": None, "gpu": None, "disks": []}
         self._temp_loading    = False
         self._temp_tick       = 0
+        self._sensor_reason   = None   # raison d'un CPU temp N/A (PawnIO/admin…)
+        self._temp_stream     = None   # SensorStream persistant (temp CPU continue)
 
         # Bench thermique
         self._bench           = None       # instance ThermalBench en cours
@@ -3012,6 +3035,41 @@ class GhisdiagApp(tk.Tk):
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le dossier : {e}")
 
     # ── Moniteur Temps Réel ───────────────────────────────────────────────────
+    def _temp_stream_ensure(self):
+        """(Re)démarre le flux capteurs persistant pour la température CPU.
+
+        LibreHardwareMonitor est ouvert une seule fois et pousse un échantillon
+        par tick : la température CPU se rafraîchit en continu, sans relancer un
+        process à chaque cycle. Recrée le flux s'il s'est figé (le watchdog du
+        SensorStream l'aura tué)."""
+        if not _HAS_STREAM or _lhm_available is None or not _lhm_available():
+            return
+        st = self._temp_stream
+        if st is not None and st.running and not st.stalled:
+            return
+        if st is not None:
+            try:
+                st.stop()
+            except Exception:
+                pass
+            self._temp_stream = None
+        try:
+            st = _SensorStream(interval_ms=2000)
+            if st.start():
+                self._temp_stream = st
+        except Exception as exc:
+            logger.debug("Flux capteurs moniteur : %s", exc)
+            self._temp_stream = None
+
+    def _temp_stream_stop(self):
+        """Arrête le flux capteurs (libère LHM pour le diagnostic / à la fermeture)."""
+        if self._temp_stream is not None:
+            try:
+                self._temp_stream.stop()
+            except Exception:
+                pass
+            self._temp_stream = None
+
     def _monitor_start(self):
         self._monitor_paused = False
         self._monitor_tick()
@@ -3021,6 +3079,8 @@ class GhisdiagApp(tk.Tk):
         if self._monitor_tick_id is not None:
             self.after_cancel(self._monitor_tick_id)
             self._monitor_tick_id = None
+        # Libère LHM pendant le diagnostic (qui le sonde aussi) ; il repartira au resume.
+        self._temp_stream_stop()
         self._mon_status_var.set("(en pause pendant le diagnostic)")
 
     def _monitor_resume(self):
@@ -3046,19 +3106,32 @@ class GhisdiagApp(tk.Tk):
                 self._mon_vals[key].set("N/A")
                 self._mon_bars[key]["value"] = 0
 
-        # Températures : mise à jour depuis le cache, fetch toutes les 10s
+        # Températures. CPU = flux LHM persistant (continu, ~2s) ; GPU/disques =
+        # NVML/smartctl rafraîchis en arrière-plan toutes les 10s (peu coûteux).
+        self._temp_stream_ensure()
+
         self._temp_tick += 1
         if self._temp_tick >= 5 and not self._temp_loading:
             self._temp_tick = 0
             self._temp_loading = True
             threading.Thread(target=self._monitor_fetch_temps, daemon=True).start()
 
-        t = self._temp_cache
-        cpu_t  = t.get("cpu")
-        gpu_t  = t.get("gpu")
-        disks_t = t.get("disks") or []
+        sample = self._temp_stream.latest() if self._temp_stream is not None else None
+        cpu_t  = sample.get("cpu_ref") if sample else None
+        if cpu_t is None:
+            cpu_t = self._temp_cache.get("cpu")      # repli ACPI (fetch périodique)
+        gpu_t  = self._temp_cache.get("gpu")
+        if gpu_t is None and sample is not None:
+            gpu_t = sample.get("gpu_temp")           # repli GPU via LHM (AMD/Intel)
+        disks_t = self._temp_cache.get("disks") or []
 
-        self._mon_temp_cpu_var.set(f"CPU : {cpu_t}°C" if cpu_t is not None else "CPU : N/A")
+        if cpu_t is not None:
+            self._mon_temp_cpu_var.set(f"CPU : {cpu_t}°C")
+        elif self._sensor_reason:
+            # Pas de temp CPU : on dit pourquoi (PawnIO absent, non élevé…).
+            self._mon_temp_cpu_var.set(f"CPU : N/A — {self._sensor_reason}")
+        else:
+            self._mon_temp_cpu_var.set("CPU : N/A")
         self._mon_temp_gpu_var.set(f"GPU : {gpu_t}°C" if gpu_t is not None else "GPU : N/A")
         if disks_t:
             parts = [f"{d.get('model','?')[:12]} : {d.get('temp','?')}°C"
@@ -3070,9 +3143,31 @@ class GhisdiagApp(tk.Tk):
         self._monitor_tick_id = self.after(2000, self._monitor_tick)
 
     def _monitor_fetch_temps(self):
+        """Rafraîchit GPU + disques (NVML/smartctl, rapide) en arrière-plan. Le
+        CPU vient du flux LHM persistant ; on ne calcule un repli ACPI que si ce
+        flux ne fournit pas de température CPU (machine sans PawnIO)."""
         try:
-            if _HAS_MONITOR:
-                self._temp_cache = get_temperatures()
+            if not _HAS_MONITOR:
+                return
+            gd = get_gpu_disk_temps()
+            cache = {"cpu": None, "gpu": gd.get("gpu"), "disks": gd.get("disks") or []}
+
+            sample = self._temp_stream.latest() if self._temp_stream is not None else None
+            stream_cpu = sample.get("cpu_ref") if sample else None
+            if stream_cpu is None:
+                # Le flux LHM ne donne pas de temp CPU : repli zone thermique ACPI.
+                cache["cpu"] = get_cpu_temp_acpi()
+            self._temp_cache = cache
+
+            # Raison à afficher si aucune temp CPU (ni flux, ni ACPI).
+            has_cpu = stream_cpu is not None or cache["cpu"] is not None
+            if _HAS_SENSOR_HEALTH and not has_cpu:
+                try:
+                    self._sensor_reason = _sensors_health.cpu_status(probe=False)["label"]
+                except Exception:
+                    self._sensor_reason = None
+            else:
+                self._sensor_reason = None
         except Exception as exc:
             logger.debug("Fetch températures : %s", exc)
         finally:
@@ -3082,7 +3177,12 @@ class GhisdiagApp(tk.Tk):
 
     # Correspondances widget -> valeurs moteur
     _BENCH_LABELS   = (("Avant", "avant"), ("Après", "apres"), ("Libre", "libre"))
-    _BENCH_INTENS   = (("100 %", 100), ("50 %", 50))
+    # (libellé, intensité 1..100, noyau de charge). « Stabilité » = charge AVX
+    # (numpy) qui pousse bien plus fort — pour tester la stabilité, pas seulement
+    # une pâte thermique.
+    _BENCH_INTENS   = (("100 %", 100, "python"),
+                       ("50 %", 50, "python"),
+                       ("Stabilité (AVX max)", 100, "avx"))
     _BENCH_DURATION = (("Court (2 min)", 120), ("Standard (5 min)", 300),
                        ("Long (10 min)", 600))
     _BENCH_IDLE_SEC = 120
@@ -3123,7 +3223,8 @@ class GhisdiagApp(tk.Tk):
         self._bench_label_var, self._bench_label_cb = _combo(
             "Étiquette", [t for t, _ in self._BENCH_LABELS], "Avant")
         self._bench_intens_var, self._bench_intens_cb = _combo(
-            "Intensité", [t for t, _ in self._BENCH_INTENS], "100 %")
+            "Intensité", [t for t, _, _ in self._BENCH_INTENS], "100 %")
+        self._bench_intens_cb.config(width=20)  # « Stabilité (AVX max) » sans troncature
         self._bench_dur_var, self._bench_dur_cb = _combo(
             "Durée de charge",
             [t for t, _ in self._BENCH_DURATION] + ["Personnalisé…"],
@@ -3245,16 +3346,20 @@ class GhisdiagApp(tk.Tk):
             return
 
         label     = dict(self._BENCH_LABELS)[self._bench_label_var.get()]
-        intensity = dict(self._BENCH_INTENS)[self._bench_intens_var.get()]
+        _intens_map = {lbl: (i, k) for lbl, i, k in self._BENCH_INTENS}
+        intensity, kernel = _intens_map[self._bench_intens_var.get()]
         # Preset connu, sinon durée personnalisée (repli 300 s si non définie).
         load_sec  = dict(self._BENCH_DURATION).get(
             self._bench_dur_var.get(), self._bench_custom_load_sec or 300)
 
         total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
+        charge_desc = ("charge AVX MAXIMALE (mode stabilité — comparable à un "
+                       "torture-test, températures nettement plus élevées)"
+                       if kernel == "avx" else f"forte charge (intensité {intensity} %)")
         if not messagebox.askyesno(
                 "⚠ Avertissement — Test de charge thermique",
-                f"Ce test sollicite VOLONTAIREMENT le processeur à forte charge "
-                f"(intensité {intensity} %) pendant environ {total_min} min, afin de "
+                f"Ce test sollicite VOLONTAIREMENT le processeur à {charge_desc} "
+                f"pendant environ {total_min} min, afin de "
                 "mesurer son comportement thermique puis son refroidissement.\n\n"
                 "Des sécurités sont prévues — arrêt automatique au-delà de 95 °C et "
                 "arrêt manuel possible à tout moment. Elles réduisent le risque mais "
@@ -3274,7 +3379,7 @@ class GhisdiagApp(tk.Tk):
         out_dir = str(Path(self.out_dir_var.get()) / "thermal")
         cfg = BenchConfig(
             label=label, idle_sec=self._BENCH_IDLE_SEC, load_sec=load_sec,
-            cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity,
+            cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity, kernel=kernel,
             sample_interval_ms=2000, output_dir=out_dir,
         ).normalized()
 
@@ -3527,9 +3632,16 @@ class GhisdiagApp(tk.Tk):
         fans = f"{fanl} tr/min" if fanl else "—"
         line1 = (f"T repos {deg(m.get('idle_c'))}    •    T max {deg(m.get('load_max_c'))}"
                  f"    •    plateau {deg(m.get('load_plateau_c'))}    •    ΔT {dts}")
-        line2 = (f"Throttling : {thr}    •    Retour au calme : {cs}"
+        line2 = (f"Throttling thermique : {thr}    •    Retour au calme : {cs}"
                  f"    •    Ventilo en charge : {fans}")
         note = ""
+        # Limite de puissance (PL1/TDP) : la frequence a chute a temperature
+        # moderee. Explique pourquoi la temperature plafonne — ce n'est PAS un
+        # defaut de refroidissement (a distinguer du throttling thermique).
+        if m.get("power_limited") and not m.get("throttling"):
+            note += ("\nℹ Limite de puissance (PL1/TDP) atteinte : le CPU bride sa "
+                     "fréquence à charge soutenue. Normal — la température plafonne "
+                     "par conception, ce n'est pas un souci de refroidissement.")
         if session.get("emergency"):
             note = "\n⚠ Arrêt d'urgence à 95 °C — résultats partiels."
         elif session.get("aborted"):
@@ -3690,10 +3802,15 @@ class GhisdiagApp(tk.Tk):
                            dashes=[(6, 3), None])
 
     def _on_app_close(self):
-        """Arrêt propre : coupe le bench (et son worker de charge) avant de fermer."""
+        """Arrêt propre : coupe le bench (et son worker de charge) + le flux
+        capteurs du moniteur avant de fermer (évite un process LHM orphelin)."""
         try:
             if getattr(self, "_bench", None) is not None:
                 self._bench.stop()
+        except Exception:
+            pass
+        try:
+            self._temp_stream_stop()
         except Exception:
             pass
         self.destroy()

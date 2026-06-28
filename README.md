@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.6.4-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.4)
+[![Version](https://img.shields.io/badge/version-1.6.5-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.5)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -144,6 +144,14 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.6.5 (Juin 2026)
+🌡️ **Capteurs & bench thermique fiables sur tout-terrain**
+- Suivi de température **robuste sur n'importe quel CPU** (anti-freeze, GPU NVML + disques smartctl, mapping AMD Zen 5) ; température CPU **fluide** dans le moniteur temps réel
+- Section **« Capteurs »** dans le rapport + raison affichée quand la température CPU manque (PawnIO/élévation)
+- Bench thermique : **mode « Stabilité (AVX max) »** (vrai test de stress), distinction **throttling thermique** vs **limite de puissance (PL1/TDP)**, et corrections de fidélité
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.6.5.md)
 
 ### v1.6.4 (Juin 2026)
 🐛 **Correctif diagnostic**
@@ -313,7 +321,7 @@ Ghisdiag redistribue des composants tiers (mesure des températures, données SM
 
 | Doc | Contenu |
 |-----|---------|
-| [RELEASE_NOTES_v1.6.4.md](./RELEASE_NOTES_v1.6.4.md) | Notes détaillées de la dernière release |
+| [RELEASE_NOTES_v1.6.5.md](./RELEASE_NOTES_v1.6.5.md) | Notes détaillées de la dernière release |
 | [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md) | Composants tiers, licences et sources |
 | [MISTRAL_SETUP.md](./MISTRAL_SETUP.md) | Configuration des clés API IA (setup, tarif, dépannage) |
 | [CHANGELOG.md](./CHANGELOG.md) | Historique complet du projet |
@@ -361,6 +369,6 @@ Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.6.4](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.4) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
+[⬇️ Télécharge v1.6.5](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.5) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>

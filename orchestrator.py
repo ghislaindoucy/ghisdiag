@@ -28,7 +28,7 @@ COLLECTORS = [
     ("smart",        "Santé disques (SMART)", "collectors/smart.ps1",         75),
 ]
 
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 
 # Limite de taille de sortie d'un collecteur PowerShell (protection mémoire/DoS)
@@ -312,6 +312,16 @@ class DiagnosticOrchestrator:
                     notify_status = "warn" if ps_errs else "running"
                     self._notify(f"✓ {label}  ({elapsed:.1f}s)", current, total,
                                  status=notify_status, elapsed=elapsed, ps_errors=ps_errs)
+
+        # Sonde << sante capteurs >> (cote Python : PawnIO + LibreHardwareMonitor)
+        # ajoutee au rapport pour expliquer une temperature CPU absente plutot
+        # que de la laisser muette. Best-effort : un echec ne bloque rien.
+        try:
+            from collectors import sensors_health
+            self.results["sensors"] = sensors_health.collect()
+        except Exception as exc:
+            logger.debug("Sonde sante capteurs : %s", exc)
+            self.results["sensors"] = {"_status": "error", "error": str(exc)}
 
         self.collection_time = datetime.now()
         elapsed_total = round((self.collection_time - start_time).total_seconds(), 1)

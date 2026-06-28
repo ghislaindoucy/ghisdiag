@@ -16,15 +16,22 @@
 param(
     [switch]$Once,
     [int]$IntervalMs   = 2000,
-    [int]$DurationSec  = 0
+    [int]$DurationSec  = 0,
+    [string]$ToolsDir  = ""
 )
 
 $ErrorActionPreference = "SilentlyContinue"
 
 # ---------------------------------------------------------------------------
-# Resolution + chargement de la DLL et de ses dependances depuis ..\tools
+# Resolution + chargement de la DLL et de ses dependances.
+# -ToolsDir (impose par l'appelant Python) permet d'utiliser un jeu de DLL plus
+# recent depose ailleurs ; a defaut on charge l'embarque ..\tools.
 # ---------------------------------------------------------------------------
-$toolsDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\tools"))
+if ($ToolsDir -and (Test-Path (Join-Path $ToolsDir "LibreHardwareMonitorLib.dll"))) {
+    $toolsDir = [System.IO.Path]::GetFullPath($ToolsDir)
+} else {
+    $toolsDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\tools"))
+}
 $libPath  = Join-Path $toolsDir "LibreHardwareMonitorLib.dll"
 
 # Ecriture sur le handle stdout brut avec flush par ligne : indispensable pour
@@ -79,7 +86,10 @@ $computer = New-Object LibreHardwareMonitor.Hardware.Computer
 $computer.IsCpuEnabled         = $true
 $computer.IsGpuEnabled         = $true
 $computer.IsMotherboardEnabled = $true
-$computer.IsStorageEnabled     = $true
+# Storage desactive : le probing disque de LHM peut figer (ex. Intel J1900, cf.
+# diagnose_probe -> storage TIMEOUT) et bloquer toute la lecture, CPU compris.
+# Ghisdiag lit deja les disques via smartctl (collectors/disk_temp.py).
+$computer.IsStorageEnabled     = $false
 $computer.IsControllerEnabled  = $true
 
 try {
@@ -106,6 +116,11 @@ function Get-Sample {
     $cpuPkg = $null; $cpuMax = $null; $cpuAvg = $null; $cpuLoad = $null; $cpuClkMax = $null
     $gpuTemp = $null; $gpuHot = $null; $gpuLoad = $null; $gpuFan = $null
 
+    # Diagnostic : liste brute de TOUS les capteurs CPU vus (nom + type + valeur).
+    # Sert a identifier pourquoi un CPU ne remonte pas de temperature (Celeron,
+    # Ryzen recent, PawnIO absent...). Ignore par les consommateurs normaux.
+    $debugCpu = New-Object System.Collections.Generic.List[object]
+
     foreach ($hw in $computer.Hardware) {
         try { $hw.Update() } catch {}
         foreach ($sub in $hw.SubHardware) { try { $sub.Update() } catch {} }
@@ -117,15 +132,28 @@ function Get-Sample {
                 $v = [double]$s.Value
                 $n = [string]$s.Name
 
+                if ($hw.HardwareType.ToString() -eq "Cpu") {
+                    $debugCpu.Add(@{ name = $n; type = $s.SensorType.ToString(); value = (R1 $v) })
+                }
+
                 switch ($hw.HardwareType.ToString()) {
                     "Cpu" {
                         if ($s.SensorType -eq "Temperature") {
-                            if ($n -eq "CPU Package")     { $cpuPkg = $v }
+                            # Intel : CPU Package / Core Max / Core Average / CPU Core #N
+                            if ($n -eq "CPU Package")      { $cpuPkg = $v }
                             elseif ($n -eq "Core Max")     { $cpuMax = $v }
                             elseif ($n -eq "Core Average") { $cpuAvg = $v }
                             elseif ($n -like "CPU Core #*" -and $n -notlike "*Distance*") { $cpuTemps.Add($v) }
+                            # AMD : "Core (Tctl/Tdie)" = temperature de reference ;
+                            # "CCDx (Tdie)" = temperature par die (utilisee comme coeur).
+                            elseif ($n -like "*Tctl*")     { if ($null -eq $cpuPkg) { $cpuPkg = $v } }
+                            elseif ($n -like "*Tdie*")     { $cpuTemps.Add($v) }
                         }
-                        elseif ($s.SensorType -eq "Clock" -and $n -like "CPU Core #*") { $cpuClocks.Add($v) }
+                        elseif ($s.SensorType -eq "Clock") {
+                            # Intel : "CPU Core #N" ; AMD : "Core #N" (hors "(Effective)"/"(SMU)").
+                            if ($n -like "CPU Core #*") { $cpuClocks.Add($v) }
+                            elseif ($n -like "Core #*" -and $n -notlike "*(*") { $cpuClocks.Add($v) }
+                        }
                         elseif ($s.SensorType -eq "Load" -and $n -eq "CPU Total") { $cpuLoad = $v }
                     }
                     { $_ -like "Gpu*" } {
@@ -185,6 +213,9 @@ function Get-Sample {
     # ArgumentException en PowerShell 5.1 (quirk connu) ; ToArray est sur.
     $h['fans']          = $fans.ToArray()
     $h['disks']         = $disks.ToArray()
+    # debug_sensors seulement en lecture ponctuelle (-Once) : inutile dans le flux
+    # du bench, ou il alourdirait chaque ligne JSON.
+    if ($Once) { $h['debug_sensors'] = $debugCpu.ToArray() }
     $h
 }
 
