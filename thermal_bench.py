@@ -129,6 +129,16 @@ _LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.py"
 _NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _resolve_taskkill() -> str:
+    """Chemin absolu verifie de taskkill.exe (evite le PATH hijacking)."""
+    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
+    candidate = Path(sysroot) / "System32" / "taskkill.exe"
+    return str(candidate) if candidate.is_file() else "taskkill"
+
+
+_TASKKILL_EXE = _resolve_taskkill()
+
+
 def default_output_dir() -> Path:
     """Dossier standard des sessions de bench."""
     return (Path(os.path.expanduser("~")) / "Documents"
@@ -178,12 +188,25 @@ class _LoadGenerator:
     def stop(self, timeout: float = 5.0) -> None:
         if self._proc is None:
             return
+        pid = self._proc.pid
         try:
-            self._proc.terminate()
+            # Tuer tout l'ARBRE de processus. Le worker a lance N sous-processus
+            # multiprocessing (les vrais calculateurs) : terminer le seul parent
+            # les laisse orphelins, et ils continuent a chauffer le CPU jusqu'a
+            # leur echeance (la charge deborderait sur le refroidissement et
+            # fausserait les mesures). taskkill /T tue le parent ET ses enfants.
+            if os.name == "nt":
+                subprocess.run(
+                    [_TASKKILL_EXE, "/F", "/T", "/PID", str(pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=timeout, creationflags=_NO_WINDOW,
+                )
+            else:
+                self._proc.terminate()
             self._proc.wait(timeout=timeout)
         except Exception:
             try:
-                self._proc.kill()
+                self._proc.kill()   # ultime recours (ne tue que le parent)
             except Exception:
                 pass
         finally:
