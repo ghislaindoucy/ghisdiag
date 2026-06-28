@@ -232,6 +232,34 @@ def _get_cpu_temp_wmi() -> float | None:
         return None
 
 
+def get_gpu_disk_temps() -> dict:
+    """GPU (NVML) + disques (smartctl) uniquement, SANS lecture LHM (rapide).
+
+    Pour le moniteur live, qui lit le CPU via un SensorStream persistant : on
+    evite ainsi de relancer un process LHM a chaque rafraichissement.
+    Retourne {"gpu": float|None, "disks": [{"model", "temp"}]}.
+    """
+    result: dict = {"gpu": None, "disks": []}
+    if _HAS_GPU and _gpu is not None:
+        try:
+            result["gpu"] = _gpu.hottest_temp()
+        except Exception as exc:
+            logger.debug("GPU NVML : %s", exc)
+    if _HAS_DISK and _disk is not None:
+        try:
+            result["disks"] = [{"model": d["model"], "temp": d["temp"]}
+                               for d in _disk.read_all() if d.get("temp") is not None]
+        except Exception as exc:
+            logger.debug("Disques smartctl : %s", exc)
+    return result
+
+
+def get_cpu_temp_acpi() -> float | None:
+    """Temperature CPU via la zone thermique ACPI (repli pour les machines sans
+    PawnIO, ou quand le flux LHM ne donne pas de temperature CPU)."""
+    return _get_cpu_temp_wmi()
+
+
 def _get_temperatures_wmi() -> dict:
     """Fallback historique : temperatures via PowerShell WMI (bloquant ~3-5s)."""
     result: dict = {"cpu": None, "gpu": None, "disks": []}

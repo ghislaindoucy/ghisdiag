@@ -18,10 +18,22 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 try:
     from collectors.realtime_monitor import (
         get_cpu_percent, get_ram_percent, get_disk_io_percent, get_temperatures,
+        get_gpu_disk_temps, get_cpu_temp_acpi,
     )
     _HAS_MONITOR = True
 except Exception:
     _HAS_MONITOR = False
+
+# Flux capteurs persistant (LibreHardwareMonitor ouvert une seule fois) pour le
+# moniteur temps reel : evite le cout d'un read_once a chaque tick et rafraichit
+# la temperature CPU en continu, au lieu d'un process relance toutes les 10 s.
+try:
+    from collectors.sensors import SensorStream as _SensorStream, lhm_available as _lhm_available
+    _HAS_STREAM = True
+except Exception:
+    _SensorStream = None
+    _lhm_available = None
+    _HAS_STREAM = False
 
 # Verdict << pourquoi la temperature CPU est absente >> (PawnIO / elevation /
 # backend). Sert a afficher une raison a cote d'un CPU : N/A muet.
@@ -140,6 +152,7 @@ class GhisdiagApp(tk.Tk):
         self._temp_loading    = False
         self._temp_tick       = 0
         self._sensor_reason   = None   # raison d'un CPU temp N/A (PawnIO/admin…)
+        self._temp_stream     = None   # SensorStream persistant (temp CPU continue)
 
         # Bench thermique
         self._bench           = None       # instance ThermalBench en cours
@@ -3022,6 +3035,41 @@ class GhisdiagApp(tk.Tk):
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le dossier : {e}")
 
     # ── Moniteur Temps Réel ───────────────────────────────────────────────────
+    def _temp_stream_ensure(self):
+        """(Re)démarre le flux capteurs persistant pour la température CPU.
+
+        LibreHardwareMonitor est ouvert une seule fois et pousse un échantillon
+        par tick : la température CPU se rafraîchit en continu, sans relancer un
+        process à chaque cycle. Recrée le flux s'il s'est figé (le watchdog du
+        SensorStream l'aura tué)."""
+        if not _HAS_STREAM or _lhm_available is None or not _lhm_available():
+            return
+        st = self._temp_stream
+        if st is not None and st.running and not st.stalled:
+            return
+        if st is not None:
+            try:
+                st.stop()
+            except Exception:
+                pass
+            self._temp_stream = None
+        try:
+            st = _SensorStream(interval_ms=2000)
+            if st.start():
+                self._temp_stream = st
+        except Exception as exc:
+            logger.debug("Flux capteurs moniteur : %s", exc)
+            self._temp_stream = None
+
+    def _temp_stream_stop(self):
+        """Arrête le flux capteurs (libère LHM pour le diagnostic / à la fermeture)."""
+        if self._temp_stream is not None:
+            try:
+                self._temp_stream.stop()
+            except Exception:
+                pass
+            self._temp_stream = None
+
     def _monitor_start(self):
         self._monitor_paused = False
         self._monitor_tick()
@@ -3031,6 +3079,8 @@ class GhisdiagApp(tk.Tk):
         if self._monitor_tick_id is not None:
             self.after_cancel(self._monitor_tick_id)
             self._monitor_tick_id = None
+        # Libère LHM pendant le diagnostic (qui le sonde aussi) ; il repartira au resume.
+        self._temp_stream_stop()
         self._mon_status_var.set("(en pause pendant le diagnostic)")
 
     def _monitor_resume(self):
@@ -3056,17 +3106,24 @@ class GhisdiagApp(tk.Tk):
                 self._mon_vals[key].set("N/A")
                 self._mon_bars[key]["value"] = 0
 
-        # Températures : mise à jour depuis le cache, fetch toutes les 10s
+        # Températures. CPU = flux LHM persistant (continu, ~2s) ; GPU/disques =
+        # NVML/smartctl rafraîchis en arrière-plan toutes les 10s (peu coûteux).
+        self._temp_stream_ensure()
+
         self._temp_tick += 1
         if self._temp_tick >= 5 and not self._temp_loading:
             self._temp_tick = 0
             self._temp_loading = True
             threading.Thread(target=self._monitor_fetch_temps, daemon=True).start()
 
-        t = self._temp_cache
-        cpu_t  = t.get("cpu")
-        gpu_t  = t.get("gpu")
-        disks_t = t.get("disks") or []
+        sample = self._temp_stream.latest() if self._temp_stream is not None else None
+        cpu_t  = sample.get("cpu_ref") if sample else None
+        if cpu_t is None:
+            cpu_t = self._temp_cache.get("cpu")      # repli ACPI (fetch périodique)
+        gpu_t  = self._temp_cache.get("gpu")
+        if gpu_t is None and sample is not None:
+            gpu_t = sample.get("gpu_temp")           # repli GPU via LHM (AMD/Intel)
+        disks_t = self._temp_cache.get("disks") or []
 
         if cpu_t is not None:
             self._mon_temp_cpu_var.set(f"CPU : {cpu_t}°C")
@@ -3086,12 +3143,25 @@ class GhisdiagApp(tk.Tk):
         self._monitor_tick_id = self.after(2000, self._monitor_tick)
 
     def _monitor_fetch_temps(self):
+        """Rafraîchit GPU + disques (NVML/smartctl, rapide) en arrière-plan. Le
+        CPU vient du flux LHM persistant ; on ne calcule un repli ACPI que si ce
+        flux ne fournit pas de température CPU (machine sans PawnIO)."""
         try:
-            if _HAS_MONITOR:
-                self._temp_cache = get_temperatures()
-            # Si le CPU ne remonte pas, calcule une raison bon marché (sans
-            # sous-processus) à afficher : élévation, PawnIO, backend LHM.
-            if _HAS_SENSOR_HEALTH and (self._temp_cache or {}).get("cpu") is None:
+            if not _HAS_MONITOR:
+                return
+            gd = get_gpu_disk_temps()
+            cache = {"cpu": None, "gpu": gd.get("gpu"), "disks": gd.get("disks") or []}
+
+            sample = self._temp_stream.latest() if self._temp_stream is not None else None
+            stream_cpu = sample.get("cpu_ref") if sample else None
+            if stream_cpu is None:
+                # Le flux LHM ne donne pas de temp CPU : repli zone thermique ACPI.
+                cache["cpu"] = get_cpu_temp_acpi()
+            self._temp_cache = cache
+
+            # Raison à afficher si aucune temp CPU (ni flux, ni ACPI).
+            has_cpu = stream_cpu is not None or cache["cpu"] is not None
+            if _HAS_SENSOR_HEALTH and not has_cpu:
                 try:
                     self._sensor_reason = _sensors_health.cpu_status(probe=False)["label"]
                 except Exception:
@@ -3715,10 +3785,15 @@ class GhisdiagApp(tk.Tk):
                            dashes=[(6, 3), None])
 
     def _on_app_close(self):
-        """Arrêt propre : coupe le bench (et son worker de charge) avant de fermer."""
+        """Arrêt propre : coupe le bench (et son worker de charge) + le flux
+        capteurs du moniteur avant de fermer (évite un process LHM orphelin)."""
         try:
             if getattr(self, "_bench", None) is not None:
                 self._bench.stop()
+        except Exception:
+            pass
+        try:
+            self._temp_stream_stop()
         except Exception:
             pass
         self.destroy()
