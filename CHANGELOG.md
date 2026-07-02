@@ -4,6 +4,29 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.6.6] — 2026-07-02
+
+> Correctif d'**accessibilité de l'interface** sur les laptops à petit écran et
+> en **mise à l'échelle Windows 125 %/150 %** : plus aucun bouton ni contrôle
+> coupé hors de la fenêtre. Suite au signalement du bouton « Ajouter les icônes
+> du bureau » invisible à l'installation d'un PC neuf.
+
+### 🐛 Correctifs — accessibilité / affichage
+
+- **Setup › PC Neuf** : le panneau devient défilable. Le bouton « Ajouter les
+  icônes du bureau » et le journal restaient coupés hors écran sur petit écran
+  ou en forte mise à l'échelle.
+- **Bench thermique** : les contrôles du bas (« Comparer avant/après », liste des
+  sessions) sont réservés en premier — c'est désormais le graphe qui rétrécit,
+  plus eux qui disparaissent.
+- **Fenêtres Configuration IA, mise à jour winget et attente d'analyse** : taille
+  dictée par leur contenu au lieu d'une taille figée — elles restent entièrement
+  visibles quelle que soit la mise à l'échelle de l'écran.
+- **Fenêtre Licences** : le bouton « Fermer » reste toujours accessible même
+  fenêtre très rétrécie.
+
+---
+
 ## [1.6.5] — 2026-06-28
 
 > Fiabilité des **capteurs** et du **bench thermique** sur tout type de machine,

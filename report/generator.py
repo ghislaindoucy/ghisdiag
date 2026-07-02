@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "Ghisdiag_Reports"
 
