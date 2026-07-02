@@ -462,6 +462,11 @@ class GhisdiagApp(tk.Tk):
                  text="Composants tiers redistribués par Ghisdiag et leurs licences respectives.",
                  font=("Segoe UI", 9), bg=BG, fg=FG_DIM).pack(anchor="w", padx=16)
 
+        # Barre de boutons réservée (side="bottom") AVANT le corps scrollable :
+        # « Fermer » reste toujours visible, même fenêtre très rétrécie.
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=16, pady=(0, 14))
+
         body = tk.Frame(win, bg=BG)
         body.pack(fill="both", expand=True, padx=16, pady=12)
         sb = ttk.Scrollbar(body, orient="vertical", style="PD.Vertical.TScrollbar")
@@ -474,8 +479,6 @@ class GhisdiagApp(tk.Tk):
         txt.insert("1.0", text)
         txt.config(state="disabled")
 
-        bar = tk.Frame(win, bg=BG)
-        bar.pack(fill="x", padx=16, pady=(0, 14))
         tk.Button(bar, text="Voir sur GitHub", font=("Segoe UI", 9),
                   bg=SURFACE2, fg=FG, relief="flat", cursor="hand2",
                   activebackground=SURFACE, activeforeground=ACCENT,
@@ -2778,12 +2781,6 @@ class GhisdiagApp(tk.Tk):
         win.transient(self)
         self._ai_cfg_win = win
 
-        self.update_idletasks()
-        w, h = 520, 360
-        px = self.winfo_x() + (self.winfo_width()  - w) // 2
-        py = self.winfo_y() + (self.winfo_height() - h) // 2
-        win.geometry(f"{w}x{h}+{max(px, 0)}+{max(py, 0)}")
-
         def _on_close():
             self._ai_cfg_win = None
             win.destroy()
@@ -2863,6 +2860,13 @@ class GhisdiagApp(tk.Tk):
 
         self._ai_cfg_bind_provider()
 
+        # Taille dictée par le contenu (pas de hauteur figée) : le formulaire
+        # reste entièrement visible même en mise à l'échelle Windows 125/150 %.
+        win.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - win.winfo_reqwidth())  // 2
+        py = self.winfo_y() + (self.winfo_height() - win.winfo_reqheight()) // 2
+        win.geometry(f"+{max(px, 0)}+{max(py, 0)}")
+
     def _ai_cfg_on_combo(self, _event=None):
         """Sélection d'un fournisseur dans le Combobox → met à jour la variable active."""
         pid = self._ai_cfg_label_to_id.get(self._ai_cfg_combo.get())
@@ -2916,19 +2920,13 @@ class GhisdiagApp(tk.Tk):
         popup.resizable(False, False)
         popup.grab_set()   # garde le focus mais ne bloque pas le thread principal
 
-        # Centrer sur la fenêtre principale
-        self.update_idletasks()
-        px = self.winfo_x() + (self.winfo_width()  - 460) // 2
-        py = self.winfo_y() + (self.winfo_height() - 180) // 2
-        popup.geometry(f"460x180+{px}+{py}")
-
         # Empêcher la fermeture manuelle pendant l'analyse
         popup.protocol("WM_DELETE_WINDOW", lambda: None)
 
         tk.Label(
             popup, text="🤖  Analyse IA en cours…",
             font=("Segoe UI", 13, "bold"), bg=SURFACE, fg=ACCENT,
-        ).pack(pady=(24, 8))
+        ).pack(padx=28, pady=(24, 8))
 
         tk.Label(
             popup,
@@ -2937,7 +2935,13 @@ class GhisdiagApp(tk.Tk):
                  "Merci de patienter, la fenêtre se fermera automatiquement.",
             font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
             justify="center",
-        ).pack(pady=(0, 20))
+        ).pack(padx=28, pady=(0, 20))
+
+        # Taille dictée par le contenu, puis centrage sur la fenêtre principale.
+        popup.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - popup.winfo_reqwidth())  // 2
+        py = self.winfo_y() + (self.winfo_height() - popup.winfo_reqheight()) // 2
+        popup.geometry(f"+{max(px, 0)}+{max(py, 0)}")
 
         self._ai_popup = popup
 
@@ -3259,14 +3263,17 @@ class GhisdiagApp(tk.Tk):
         # Graphe temps réel
         chart_box = tk.Frame(parent, bg=SURFACE,
                              highlightbackground=BORDER, highlightthickness=1, bd=0)
-        chart_box.pack(fill="both", expand=True, padx=28, pady=(6, 6))
         self._bench_canvas = tk.Canvas(chart_box, bg=BG, highlightthickness=0)
         self._bench_canvas.pack(fill="both", expand=True)
         self._bench_canvas.bind("<Configure>", lambda e: self._bench_redraw())
 
-        # Bas : résultats (gauche) + sessions enregistrées (droite)
+        # Bas : résultats (gauche) + sessions enregistrées (droite).
+        # Packé (side="bottom") AVANT le graphe : cette zone est réservée en
+        # premier, donc sur un petit écran c'est le graphe qui rétrécit — jamais
+        # les boutons « Comparer » / la liste des sessions qui se retrouvent coupés.
         bottom = tk.Frame(parent, bg=BG)
-        bottom.pack(fill="x", padx=28, pady=(0, 12))
+        bottom.pack(side="bottom", fill="x", padx=28, pady=(0, 12))
+        chart_box.pack(side="top", fill="both", expand=True, padx=28, pady=(6, 6))
 
         res = tk.Frame(bottom, bg=BG)
         res.pack(side="left", fill="x", expand=True, anchor="n")
@@ -4343,7 +4350,6 @@ class GhisdiagApp(tk.Tk):
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.grab_set()
-        dlg.geometry("480x220")
 
         tk.Label(dlg, text="winget obsolète ou absent",
                  font=("Segoe UI", 12, "bold"), bg=BG, fg=YELLOW).pack(pady=(22, 4))
@@ -4376,7 +4382,14 @@ class GhisdiagApp(tk.Tk):
         tk.Button(dlg, text="Annuler",
                   font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
                   activebackground=SURFACE2, relief="flat", cursor="hand2",
-                  padx=8, pady=4, command=dlg.destroy).pack(pady=(14, 0))
+                  padx=8, pady=4, command=dlg.destroy).pack(pady=(14, 18))
+
+        # Taille dictée par le contenu (pas de hauteur figée) : reste correct
+        # quelle que soit la mise à l'échelle Windows. On ne fixe que la position.
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width()  - dlg.winfo_reqwidth())  // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def _maj_update_winget_store(self):
         try:
@@ -4506,8 +4519,22 @@ class GhisdiagApp(tk.Tk):
     ]
 
     def _build_pcneuf_panel(self, parent: tk.Frame):
-        sec = tk.Frame(parent, bg=BG, pady=16)
-        sec.pack(fill="both", expand=True, padx=28)
+        # Conteneur scrollable : sur les petits écrans (laptop, mise à l'échelle
+        # Windows à 125/150 %), la hauteur logique disponible ne suffit pas à
+        # afficher toute la liste + les icônes du bureau + le log. Sans scroll,
+        # le bas du panneau (bouton « Ajouter les icônes du bureau ») était coupé.
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=BG)
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+
+        sec = tk.Frame(inner, bg=BG, pady=16)
+        sec.pack(fill="x", padx=28)
 
         tk.Label(sec, text="💻  Installation PC Neuf",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
@@ -4568,7 +4595,7 @@ class GhisdiagApp(tk.Tk):
         log_wrap.pack(fill="both", expand=True, pady=(12, 0))
         self._pcneuf_log = tk.Text(log_wrap, bg=SURFACE, fg=FG_DIM,
                                     font=("Consolas", 9), bd=0, padx=10, pady=8,
-                                    state="disabled", wrap="word",
+                                    state="disabled", wrap="word", height=10,
                                     selectbackground=SURFACE2)
         pcn_sb = ttk.Scrollbar(log_wrap, command=self._pcneuf_log.yview, style="PD.Vertical.TScrollbar")
         self._pcneuf_log.configure(yscrollcommand=pcn_sb.set)
