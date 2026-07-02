@@ -38,5 +38,5 @@
 
 **Prérequis :** Windows 10/11. Aucune dépendance à installer (tout est embarqué dans l'exe).
 
-- **Sha256** : `à compléter par finalize_release.ps1`
-- **Taille** : à compléter par finalize_release.ps1
+- **Sha256** : `6e2556bef9ebb12aaaac3fcc906698d91e49edfebe741e5904d26315fcde8fa2`
+- **Taille** : 33.8 MB
