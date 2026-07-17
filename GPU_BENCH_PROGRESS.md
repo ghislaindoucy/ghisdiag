@@ -179,8 +179,16 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       bench GPU complet, repli LHM sans NVML, refus sans adaptateur / sans temp GPU,
       urgence (seuil dynamique, throttle confirmé, bit parasite à froid ignoré),
       throttling vs power-limit dans les métriques. `py -m unittest discover -s tests`.
-- [ ] **Validation atelier** : session GPU réelle complète sur dGPU (NVIDIA + si
-      possible AMD discret), vérifier urgence jamais déclenchée à tort.
+- [x] **Validation dev (Quadro P2000)** — `atelier_thermal_bench_gpu.py` (pilote
+      `ThermalBench(target="gpu")` de bout en bout, même chemin que l'UI M4) :
+      44→70 °C (Δ23 °C), 99 % charge soutenue, clock NVML stable 1721 MHz
+      (aucune chute), aucune urgence, session JSON standard écrite. Bout-en-bout
+      validé sur materiel reel.
+- [ ] **Validation atelier multi-machines** : idem sur dGPU NVIDIA autre que la
+      P2000 + si possible AMD discret. Outil prêt :
+      [atelier_thermal_bench_gpu.py](atelier_thermal_bench_gpu.py) +
+      [test_thermal_bench_gpu_atelier.bat](test_thermal_bench_gpu_atelier.bat)
+      (double-clic, ~1min45, rapport JSON horodaté à côté du script).
 
 ### M4 — UI onglet bench ⬜
 - [ ] Sélecteur **cible CPU / GPU** (radio) dans l'onglet bench.
@@ -339,3 +347,17 @@ sur tous (utilisation ou clock/power qui montent).
 - **Prochaine étape : M4** (UI onglet bench : radio CPU/GPU, dropdown adaptateur,
   griser si pas de temp GPU, courbe GPU au premier plan) + valider M3 en atelier
   (session GPU réelle complète). Le moteur est prêt : `BenchConfig(target="gpu")`.
+
+### 2026-07-17 — Session 7 (validation dev + script atelier M3)
+- Créé `atelier_thermal_bench_gpu.py` + `.bat` : pilote le moteur GÉNÉRALISÉ
+  complet (`ThermalBench(target="gpu")`), pas juste le générateur de charge
+  (contrairement à `atelier_gpu_load.py` de M2) — même chemin que prendra l'UI M4.
+- **Testé sur la machine de dev (Quadro P2000)** : bout-en-bout OK. 44→70 °C,
+  99 % charge soutenue 60 s, clock NVML 1721 MHz stable (aucune chute), aucune
+  urgence ni abandon, session JSON standard écrite dans le dossier habituel.
+  Bug cosmétique corrigé (tiret cadratin illisible sur certaines pages de code
+  console Windows — remplacé par un tiret simple).
+- **Reste à faire avant M4** : passer ce script sur d'autres machines d'atelier
+  (au moins un 2e dGPU NVIDIA, AMD discret si dispo) pour confirmer que la
+  résolution d'adaptateur et l'absence de faux-positifs d'urgence tiennent
+  au-delà de la machine de dev.
