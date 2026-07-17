@@ -223,8 +223,12 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
 - [x] Test fonctionnel + visuel sur machine dev (hybride Quadro P2000 + UHD 630) :
       bascule CPU↔GPU OK, iGPU exclu de la liste, capture d'écran vérifiée
       (barre compacte, ligne 90 °C, légende GPU en premier).
-- [ ] Validation atelier via l'exe compilé (parcours réel : avertissement,
-      bench GPU complet, urgence jamais à tort, session dans la liste).
+- [x] **Retour atelier (exe) : moteur GPU nickel.** Ajusté suite au test : les
+      sessions CPU et GPU cohabitaient dans la même liste → **segment « CPU | GPU »**
+      au-dessus de la liste (indépendant de la cible, suit la cible par défaut et
+      après un test ; consultation des rapports GPU possible même sans dGPU). La
+      liste, la sélection et la comparaison ne portent que sur une famille à la fois.
+- [ ] Validation atelier via l'exe : refaire un tour avec le filtre CPU/GPU.
 
 ### M5 — Rapport & comparaison GPU ⬜
 - [ ] Étendre `thermal_compare.py` + `report/generator.py` aux métriques/séries GPU.

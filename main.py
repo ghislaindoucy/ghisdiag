@@ -3309,6 +3309,20 @@ class GhisdiagApp(tk.Tk):
                   activebackground=SURFACE2, activeforeground=FG, relief="flat",
                   cursor="hand2", padx=6, pady=0,
                   command=self._bench_refresh_sessions).pack(side="right")
+        # Filtre CPU / GPU : les sessions des deux cibles cohabitent dans le même
+        # dossier ; ce segment n'affiche qu'une famille à la fois (sélection et
+        # comparaison plus simples). Indépendant de la cible du test — on peut
+        # consulter des rapports GPU sur une machine sans carte dédiée.
+        seg = tk.Frame(sess_hdr, bg=BG)
+        seg.pack(side="right", padx=(0, 8))
+        self._bench_sess_filter = "cpu"
+        self._bench_sess_filter_btns = {}
+        for val, txt in (("cpu", "CPU"), ("gpu", "GPU")):
+            b = tk.Button(seg, text=txt, font=("Segoe UI", 8, "bold"),
+                          relief="flat", cursor="hand2", padx=9, pady=1, bd=0,
+                          command=lambda v=val: self._bench_set_sess_filter(v))
+            b.pack(side="left", padx=(0, 2))
+            self._bench_sess_filter_btns[val] = b
         self._bench_sessions_list = tk.Listbox(
             sess, height=5, width=48, bg=SURFACE, fg=FG,
             selectbackground=ACCENT, selectforeground=BG,
@@ -3334,8 +3348,28 @@ class GhisdiagApp(tk.Tk):
         self._bench_compare_data = None    # (avant_samples, apres_samples)
         self._bench_target = "cpu"         # cible du test en cours / affiché
         self._bench_gpu_detect = None      # None = détection en cours ; dict sinon
+        self._bench_sess_filter_style()
         threading.Thread(target=self._bench_detect_gpus, daemon=True).start()
         self.after(500, self._bench_refresh_sessions)
+
+    # -- Filtre CPU / GPU de la liste des sessions -----------------------------
+
+    def _bench_sess_filter_style(self):
+        """Reflète le filtre actif sur le segment CPU|GPU (bouton actif accentué)."""
+        for val, btn in self._bench_sess_filter_btns.items():
+            active = (val == self._bench_sess_filter)
+            btn.config(bg=ACCENT if active else SURFACE,
+                       fg=BG if active else FG_DIM,
+                       activebackground=ACCENT_HOVER if active else SURFACE2,
+                       activeforeground=BG if active else FG)
+
+    def _bench_set_sess_filter(self, value: str, refresh: bool = True):
+        if value not in ("cpu", "gpu"):
+            return
+        self._bench_sess_filter = value
+        self._bench_sess_filter_style()
+        if refresh:
+            self._bench_refresh_sessions()
 
     # -- Cible CPU / GPU -------------------------------------------------------
 
@@ -3413,6 +3447,10 @@ class GhisdiagApp(tk.Tk):
                                         before=self._bench_intens_holder)
         else:
             self._bench_gpu_holder.pack_forget()
+        # Aligner le filtre de la liste sur la cible choisie (on veut voir ses
+        # propres benchs de la même famille pour comparer avant/après). L'inverse
+        # reste libre : basculer le filtre ne touche pas la cible du test.
+        self._bench_set_sess_filter(self._bench_target)
 
     # -- Pilotage du test ------------------------------------------------------
 
@@ -3623,6 +3661,10 @@ class GhisdiagApp(tk.Tk):
             self._bench_phase_var.set("Terminé")
             self._bench_phase_lbl.config(fg=GREEN)
         self._bench_draw_chart()
+        # Basculer le filtre sur la famille du test qui vient de finir, pour que
+        # sa session fraîchement enregistrée soit visible dans la liste.
+        target = (session.get("config") or {}).get("target", "cpu")
+        self._bench_set_sess_filter(target, refresh=False)
         self._bench_refresh_sessions()
         if session.get("emergency"):
             if (session.get("config") or {}).get("target") == "gpu":
@@ -3653,8 +3695,13 @@ class GhisdiagApp(tk.Tk):
             sessions = bench_list_sessions(out)
         except Exception:
             sessions = []
+        # N'afficher que la famille (CPU ou GPU) du filtre actif.
+        want = self._bench_sess_filter
+        sessions = [s for s in sessions
+                    if (s.get("target") or "cpu") == want]
         if not sessions:
-            self._bench_sessions_list.insert("end", "  (aucune session)")
+            self._bench_sessions_list.insert(
+                "end", f"  (aucune session {want.upper()})")
             return
         for s in sessions[:50]:
             lab = self._BENCH_LABELS_FR.get(s.get("label"), s.get("label") or "?")
@@ -3664,16 +3711,16 @@ class GhisdiagApp(tk.Tk):
             except Exception:
                 pass
             m = s.get("metrics") or {}
-            # Sessions GPU : métriques gpu_* + tag distinctif dans la liste.
-            if s.get("target") == "gpu":
-                d = m.get("gpu_delta_c"); mx = m.get("gpu_max_c"); tag = "GPU "
+            # Métriques selon la cible (la famille est déjà donnée par le filtre).
+            if want == "gpu":
+                d = m.get("gpu_delta_c"); mx = m.get("gpu_max_c")
             else:
-                d = m.get("delta_c"); mx = m.get("load_max_c"); tag = ""
+                d = m.get("delta_c"); mx = m.get("load_max_c")
             dt = f"ΔT {d:+.0f}°C" if d is not None else "ΔT —"
             mxs = f"max {mx:.0f}°C" if mx is not None else "max —"
             flag = " (interrompu)" if s.get("aborted") else ""
             self._bench_sessions_list.insert(
-                "end", f"[{lab:5}] {when}  {tag}{dt}  {mxs}{flag}")
+                "end", f"[{lab:5}] {when}  {dt}  {mxs}{flag}")
             self._bench_session_files.append(s["file"])
 
     def _bench_open_session(self, _event=None):
