@@ -61,5 +61,5 @@ de pâte/pads thermiques :
 
 **Prérequis :** Windows 10/11. Aucune dépendance à installer (tout est embarqué dans l'exe).
 
-- **Sha256** : `[à remplir après le build]`
-- **Taille** : [à remplir après le build]
+- **Sha256** : `593964db439d06f87fd3a6e661df7b46551a9b97b81f0df0d5a7d7dd2d319b50`
+- **Taille** : 33.8 MB
