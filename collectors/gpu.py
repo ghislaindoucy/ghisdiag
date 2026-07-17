@@ -246,6 +246,141 @@ def read() -> list[dict]:
     return out
 
 
+# --- Session NVML persistante (echantillonnage du bench) --------------------
+
+class NvmlDevice:
+    """Session NVML persistante sur UN GPU, pour un echantillonnage periodique.
+
+    `read()` (module) recharge nvml.dll + nvmlInit/nvmlShutdown et enumere TOUS
+    les GPU a chaque appel : correct pour une enumeration ponctuelle, trop lourd
+    pour le bench thermique qui lit toutes les ~2 s pendant des minutes depuis
+    le thread capteurs. Ici : init UNE fois, handle du GPU cible resolu une
+    fois (jointure par nom, sous-chaine insensible a la casse), puis seulement
+    les getters utiles a chaque sample(). NVML est thread-safe (doc NVIDIA).
+
+        dev = NvmlDevice.open_matching("NVIDIA Quadro P2000")
+        if dev: s = dev.sample()  # {temp, load, clock_sm_mhz, power_w, ...}
+        dev.close()
+    """
+
+    def __init__(self, lib, handle, index: int, name: str,
+                 slowdown_c: Optional[float]):
+        self._lib = lib
+        self._handle = handle
+        self.index = index
+        self.name = name
+        self.temp_slowdown_c = slowdown_c    # fixe : lu une fois a l'ouverture
+        self._closed = False
+        self._get_temp  = _fn(lib, "nvmlDeviceGetTemperature")
+        self._get_util  = _fn(lib, "nvmlDeviceGetUtilizationRates")
+        self._get_power = _fn(lib, "nvmlDeviceGetPowerUsage")
+        self._get_clock = _fn(lib, "nvmlDeviceGetClockInfo")
+        self._get_thr   = _fn(lib, "nvmlDeviceGetCurrentClocksThrottleReasons",
+                              "nvmlDeviceGetCurrentClocksEventReasons")
+
+    @classmethod
+    def open_matching(cls, name_selector: str) -> Optional["NvmlDevice"]:
+        """Ouvre le GPU NVML dont le nom matche `name_selector` (sous-chaine,
+        dans un sens ou l'autre). Un seul GPU present = pris d'office.
+        None si NVML absent ou aucun match (le shutdown est alors fait)."""
+        lib = _load_nvml()
+        if lib is None:
+            return None
+        init       = _fn(lib, "nvmlInit_v2", "nvmlInit")
+        shutdown   = _fn(lib, "nvmlShutdown")
+        get_count  = _fn(lib, "nvmlDeviceGetCount_v2", "nvmlDeviceGetCount")
+        get_handle = _fn(lib, "nvmlDeviceGetHandleByIndex_v2",
+                         "nvmlDeviceGetHandleByIndex")
+        get_name   = _fn(lib, "nvmlDeviceGetName")
+        get_thresh = _fn(lib, "nvmlDeviceGetTemperatureThreshold")
+        if not (init and shutdown and get_count and get_handle):
+            return None
+        try:
+            if init() != NVML_SUCCESS:
+                return None
+        except Exception:
+            return None
+        try:
+            count = c_uint(0)
+            if get_count(byref(count)) != NVML_SUCCESS:
+                raise LookupError
+            sel = (name_selector or "").lower()
+            candidates = []
+            for i in range(count.value):
+                handle = c_void_p()
+                if get_handle(c_uint(i), byref(handle)) != NVML_SUCCESS:
+                    continue
+                name = f"GPU {i}"
+                if get_name is not None:
+                    buf = ctypes.create_string_buffer(96)
+                    if get_name(handle, buf, c_uint(96)) == NVML_SUCCESS:
+                        name = buf.value.decode("utf-8", "replace") or name
+                candidates.append((i, handle, name))
+                n = name.lower()
+                if sel and (n in sel or sel in n):
+                    candidates = [(i, handle, name)]
+                    break
+            else:
+                if len(candidates) != 1:   # 0 ou ambigu sans match par nom
+                    raise LookupError
+            i, handle, name = candidates[0]
+            t_slow = _u_get(get_thresh, handle,
+                            c_uint(NVML_TEMPERATURE_THRESHOLD_SLOWDOWN))
+            return cls(lib, handle, i, name,
+                       float(t_slow) if t_slow is not None else None)
+        except Exception:
+            try:
+                shutdown()
+            except Exception:
+                pass
+            return None
+
+    def sample(self) -> dict:
+        """Lecture legere du GPU ouvert (memes cles que read(), sous-ensemble)."""
+        h = self._handle
+        temp = c_uint(0)
+        t = (float(temp.value)
+             if (self._get_temp is not None
+                 and self._get_temp(h, NVML_TEMPERATURE_GPU,
+                                    byref(temp)) == NVML_SUCCESS) else None)
+        load = None
+        if self._get_util is not None:
+            u = _Utilization()
+            if self._get_util(h, byref(u)) == NVML_SUCCESS:
+                load = float(u.gpu)
+        power_mw = _u_get(self._get_power, h)
+        clk_sm = _u_get(self._get_clock, h, c_uint(NVML_CLOCK_SM))
+        throttle = {"throttle_reasons": [], "throttle_thermal": None,
+                    "throttle_power": None}
+        if self._get_thr is not None:
+            mask = c_ulonglong(0)
+            try:
+                if self._get_thr(h, byref(mask)) == NVML_SUCCESS:
+                    throttle = _decode_throttle(int(mask.value))
+            except Exception:
+                pass
+        out = {
+            "name": self.name, "index": self.index,
+            "temp": t, "load": load,
+            "power_w": round(power_mw / 1000.0, 1) if power_mw is not None else None,
+            "clock_sm_mhz": clk_sm,
+            "temp_slowdown_c": self.temp_slowdown_c,
+        }
+        out.update(throttle)
+        return out
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        shutdown = _fn(self._lib, "nvmlShutdown")
+        try:
+            if shutdown is not None:
+                shutdown()
+        except Exception:
+            pass
+
+
 # --- Repli / identite fabricant ---------------------------------------------
 
 def _vendor_from_name(name: Optional[str]) -> str:

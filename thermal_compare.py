@@ -45,8 +45,13 @@ def _metric(session: dict, key: str):
 
 
 def _protocol(session: dict) -> tuple:
+    # `target` (cpu|gpu, absent = cpu sur les anciennes sessions) fait partie du
+    # protocole : comparer un bench CPU a un bench GPU n'a aucun sens — le
+    # verdict porterait sur des temperatures CPU relevees incidemment pendant
+    # une chauffe GPU. La comparaison GPU<->GPU complete arrive avec M5.
     c = _cfg(session)
-    return (int(c.get("idle_sec", 0)), int(c.get("load_sec", 0)),
+    return (c.get("target", "cpu"),
+            int(c.get("idle_sec", 0)), int(c.get("load_sec", 0)),
             int(c.get("cooldown_sec", 0)), int(c.get("intensity", 0)))
 
 
@@ -271,7 +276,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
 
     machine = html.escape(str((after.get("machine") or {}).get("hostname", "?")))
     cpu_name = html.escape(str((after.get("machine") or {}).get("cpu", "?")))
-    pidle, pload, pcool, pintens = cmp["protocol_after"]
+    _ptarget, pidle, pload, pcool, pintens = cmp["protocol_after"]
 
     lvl = cmp["verdict_level"]
     verdict = cmp["verdict"]

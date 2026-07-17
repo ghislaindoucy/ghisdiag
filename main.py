@@ -3571,8 +3571,9 @@ class GhisdiagApp(tk.Tk):
         if not cmp["compatible"]:
             messagebox.showwarning(
                 "Comparaison impossible",
-                "Les deux sessions n'ont pas le même protocole (durée ou intensité "
-                "de charge différente). Ne comparez que des tests identiques.")
+                "Les deux sessions n'ont pas le même protocole (cible CPU/GPU, "
+                "durée ou intensité de charge différente). Ne comparez que des "
+                "tests identiques.")
             return
 
         before, after = cmp["before"], cmp["after"]

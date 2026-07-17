@@ -150,16 +150,37 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       d'adaptateur correcte partout. Détail : section « Résultats charge GPU atelier ».
 - [ ] Intégration au moteur = **M3**.
 
-### M3 — Généralisation du moteur ⬜
-- [ ] `BenchConfig` : ajouter `target` (`cpu` | `gpu`) + choix d'adaptateur GPU.
-- [ ] Abstraction du générateur : choisir `_LoadGenerator` (CPU) ou nouveau
-      `_GpuLoadGenerator` selon `target`.
-- [ ] `_record` / arrêt d'urgence : surveiller la temp/raison-throttle **GPU** quand
-      `target=gpu` (seuil GPU configurable + raison NVML si dispo).
-- [ ] `compute_metrics` : métriques GPU (idle, max, plateau, ΔT, chute de clock,
-      throttling+raison, power, hotspot, ventilo) en réutilisant les helpers de
-      découpage existants.
-- [ ] Test : session GPU complète repos→charge→refroidissement, JSON cohérent.
+### M3 — Généralisation du moteur ✅ *(fait 2026-07-17, à valider atelier)*
+- [x] `BenchConfig` : `target` (`cpu` | `gpu`), `gpu_adapter` (index/nom/None=auto),
+      `gpu_emergency_temp_c` (défaut 90 °C). Défauts = comportement CPU inchangé.
+- [x] Abstraction : interface `_ILoadGenerator` (Popen + taskkill /T communs) ;
+      `_CpuLoadGenerator` (= ancien `_LoadGenerator`, alias conservé) +
+      `_GpuLoadGenerator` (relance exe/script avec `--ghisdiag-gpu-load-worker`,
+      `--adapter <index DXGI résolu>` pour stresser exactement le GPU mesuré).
+      Fabrique `_make_generator(cfg)` choisie dans `_run()`.
+- [x] Cible GPU : `_resolve_gpu_adapter()` (DXGI, échec immédiat si WARP only) +
+      `_NvmlGpuSampler` (jointure par nom, clock/power/throttle NVML prioritaires
+      sur LHM à chaque échantillon — leçon RTX 4060). Refus propre si aucune
+      température GPU (iGPU non benchable).
+- [x] Urgence GPU : temp ≥ min(seuil config, slowdown NVML − 3 °C) OU
+      (`throttle_thermal` ET temp ≥ slowdown − 10 °C) — jamais le bit seul
+      (faux positif au repos vu en atelier).
+- [x] `compute_metrics` : bloc GPU (`gpu_plateau_c`, `gpu_delta_c`, `gpu_load_avg`,
+      `gpu_power_max_w`, `gpu_hotspot_max_c`, `gpu_clock_max_mhz/drop_pct`,
+      `gpu_slowdown_c`, `gpu_throttling`/`gpu_power_limited`, `gpu_cooldown_sec`)
+      émis SEULEMENT si `target=gpu` → sortie des benches CPU strictement identique.
+- [x] Échantillons enrichis (toutes cibles) : `gpu_hotspot`, `gpu_clock`,
+      `gpu_power` (+ `gpu_throttle`/`gpu_slowdown_c` quand NVML). `gpu_fan` reste
+      LHM/RPM — le % NVML n'est pas mélangé (unités hétérogènes).
+- [x] Session JSON : `gpu_adapter` (index/nom/vendor/vram) quand cible GPU ;
+      `list_sessions()` expose `target`.
+- [x] Tests : `tests/test_thermal_bench.py` (unittest, 15 tests, fakes stream /
+      générateur / NVML) — bench CPU rétro-compat strict (mêmes clés de métriques),
+      bench GPU complet, repli LHM sans NVML, refus sans adaptateur / sans temp GPU,
+      urgence (seuil dynamique, throttle confirmé, bit parasite à froid ignoré),
+      throttling vs power-limit dans les métriques. `py -m unittest discover -s tests`.
+- [ ] **Validation atelier** : session GPU réelle complète sur dGPU (NVIDIA + si
+      possible AMD discret), vérifier urgence jamais déclenchée à tort.
 
 ### M4 — UI onglet bench ⬜
 - [ ] Sélecteur **cible CPU / GPU** (radio) dans l'onglet bench.
@@ -306,3 +327,15 @@ sur tous (utilisation ou clock/power qui montent).
 - **Prochaine étape : M3** (généraliser `thermal_bench` : cible CPU/GPU, worker GPU avec
   relance figée + `taskkill /T`, urgence sur temp GPU, métriques GPU). Rappel : clock
   NVIDIA via NVML, pas LHM ; urgence GPU = throttle NVML + temp proche du seuil.
+
+### 2026-07-17 — Session 6 (M3 : généralisation du moteur)
+- ⚠️ Découverte : le travail M1/M2 n'était **pas commité** (worktree précédent).
+  Importé et commité sur la branche `claude/thermal-bench-gpu-support-c8478f`
+  (commit « base M1+M2 »), M3 par-dessus.
+- `thermal_bench.py` généralisé CPU/GPU : voir la section M3 ci-dessus (cases cochées).
+- Vérifié sur la machine de dev (Quadro P2000) : résolution DXGI → jointure NVML OK
+  (slowdown 101 °C lu), args worker corrects, générateur disponible.
+- 15 tests unitaires (`tests/test_thermal_bench.py`), tous verts.
+- **Prochaine étape : M4** (UI onglet bench : radio CPU/GPU, dropdown adaptateur,
+  griser si pas de temp GPU, courbe GPU au premier plan) + valider M3 en atelier
+  (session GPU réelle complète). Le moteur est prêt : `BenchConfig(target="gpu")`.
