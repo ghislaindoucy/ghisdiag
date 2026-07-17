@@ -3772,23 +3772,21 @@ class GhisdiagApp(tk.Tk):
         if not s1 or not s2:
             messagebox.showerror("Comparaison", "Impossible de charger les sessions.")
             return
-        # La comparaison avant/après GPU (métriques gpu_*, rapport dédié) arrive
-        # avec la prochaine étape du chantier (M5) — en attendant, on refuse
-        # honnêtement plutôt que de comparer sur les températures CPU.
-        if any((s.get("config") or {}).get("target") == "gpu" for s in (s1, s2)):
-            messagebox.showinfo(
-                "Comparaison",
-                "La comparaison avant / après des benchs GPU arrive dans une "
-                "prochaine version. Les sessions GPU restent consultables "
-                "individuellement (double-clic).")
-            return
         cmp = compare_sessions(s1, s2)
         if not cmp["compatible"]:
-            messagebox.showwarning(
-                "Comparaison impossible",
-                "Les deux sessions n'ont pas le même protocole (cible CPU/GPU, "
-                "durée ou intensité de charge différente). Ne comparez que des "
-                "tests identiques.")
+            if cmp.get("adapter_mismatch"):
+                messagebox.showwarning(
+                    "Comparaison impossible",
+                    "Les deux sessions ne portent pas sur la même carte "
+                    f"graphique ({cmp.get('adapter_before')} vs "
+                    f"{cmp.get('adapter_after')}). Un avant / après n'a de "
+                    "sens que sur le même matériel.")
+            else:
+                messagebox.showwarning(
+                    "Comparaison impossible",
+                    "Les deux sessions n'ont pas le même protocole (cible "
+                    "CPU/GPU, durée ou intensité de charge différente). Ne "
+                    "comparez que des tests identiques.")
             return
 
         before, after = cmp["before"], cmp["after"]
@@ -3798,6 +3796,9 @@ class GhisdiagApp(tk.Tk):
             return c.get("idle_sec", 0) + c.get("load_sec", 0) + c.get("cooldown_sec", 0)
 
         cfg = after.get("config", {})
+        # Cible de la comparaison : pilote la série tracée (cpu|gpu) et la
+        # ligne de seuil du graphe.
+        self._bench_target = cmp.get("target", "cpu")
         b1 = cfg.get("idle_sec", 0)
         b2 = b1 + cfg.get("load_sec", 0)
         self._bench_total_sec = max(1, total_of(before), total_of(after))
@@ -4086,11 +4087,14 @@ class GhisdiagApp(tk.Tk):
         if geom is None:
             return
         c, x0, y0, x1, y1, X, Y = geom
-        get = lambda s, k: s.get("cpu")
-        self._bench_polyline(c, before_samples, "cpu", ORANGE, X, Y, get, dash=(6, 3))
-        self._bench_polyline(c, after_samples, "cpu", GREEN, X, Y, get)
+        key = "gpu" if self._bench_target == "gpu" else "cpu"
+        subject = key.upper()
+        get = lambda s, k: s.get(key)
+        self._bench_polyline(c, before_samples, key, ORANGE, X, Y, get, dash=(6, 3))
+        self._bench_polyline(c, after_samples, key, GREEN, X, Y, get)
         self._bench_legend(c, x0, y0,
-                           [(ORANGE, "Avant (CPU)"), (GREEN, "Après (CPU)")],
+                           [(ORANGE, f"Avant ({subject})"),
+                            (GREEN, f"Après ({subject})")],
                            dashes=[(6, 3), None])
 
     def _on_app_close(self):

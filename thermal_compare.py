@@ -1,12 +1,14 @@
 """
-Ghisdiag - Comparaison de deux sessions de bench thermique (Phase 3)
+Ghisdiag - Comparaison de deux sessions de bench thermique
 
 Confronte une session « avant » et une session « après » intervention
-(nettoyage, changement de pâte thermique) :
+(nettoyage, changement de pâte thermique / pads) — cible CPU ou GPU :
 
-  - controle que les deux suivent le MEME protocole (sinon comparaison invalide) ;
-  - calcule la carte des gains (ΔT repos / max / plateau, Δ retour au calme,
-    throttling eliminé) ;
+  - controle que les deux suivent le MEME protocole, y compris la cible
+    cpu|gpu et, pour un bench GPU, le MEME adaptateur (sinon invalide) ;
+  - calcule la carte des gains sur les metriques de la cible (ΔT repos / max /
+    plateau, Δ retour au calme, throttling elimine ; + hotspot / chute de
+    clock / power pour le GPU) ;
   - rend un verdict clair pour le client ;
   - genere un rapport HTML autonome (CSS + courbes SVG superposees en ligne),
     hors-ligne et imprimable.
@@ -21,6 +23,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from thermal_bench import DEFAULT_EMERGENCY_TEMP_C, DEFAULT_GPU_EMERGENCY_TEMP_C
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,27 @@ def _cfg(session: dict) -> dict:
 
 def _metric(session: dict, key: str):
     return (session.get("metrics") or {}).get(key)
+
+
+def _target(session: dict) -> str:
+    return _cfg(session).get("target", "cpu")
+
+
+def _adapter_name(session: dict) -> Optional[str]:
+    return (session.get("gpu_adapter") or {}).get("name")
+
+
+# Metriques de la cible -> cles reelles dans metrics{}. Les gains gardent des
+# cles GENERIQUES (idle_c, load_max_c...) quelle que soit la cible : verdict,
+# cartes du rapport et resume UI fonctionnent a l'identique pour CPU et GPU.
+_METRIC_KEYS = {
+    "cpu": {"idle_c": "idle_c", "load_max_c": "load_max_c",
+            "load_plateau_c": "load_plateau_c", "delta_c": "delta_c",
+            "cooldown_sec": "cooldown_sec", "throttling": "throttling"},
+    "gpu": {"idle_c": "gpu_idle_c", "load_max_c": "gpu_max_c",
+            "load_plateau_c": "gpu_plateau_c", "delta_c": "gpu_delta_c",
+            "cooldown_sec": "gpu_cooldown_sec", "throttling": "gpu_throttling"},
+}
 
 
 def _protocol(session: dict) -> tuple:
@@ -81,31 +106,61 @@ def _gain(before, after):
 # --- Comparaison ------------------------------------------------------------
 
 def compare_sessions(s1: dict, s2: dict) -> dict:
-    """Compare deux sessions. Retourne un dict avec compatibilité, gains, verdict."""
+    """Compare deux sessions (CPU ou GPU). Retourne un dict avec compatibilité,
+    gains (clés génériques, sourcées sur les métriques de la cible), verdict."""
     before, after = _assign_roles(s1, s2)
+    target = _target(before)
     compatible = _protocol(before) == _protocol(after)
 
+    # Garde-fou honnêteté GPU : comparer deux cartes DIFFERENTES n'a aucun sens
+    # (l'avant/après doit porter sur le même matériel). Adaptateur inconnu
+    # (vieille session) : on laisse passer.
+    adapter_before = _adapter_name(before)
+    adapter_after = _adapter_name(after)
+    adapter_mismatch = (target == "gpu" and bool(adapter_before and adapter_after)
+                        and adapter_before != adapter_after)
+    if adapter_mismatch:
+        compatible = False
+
+    kmap = _METRIC_KEYS["gpu" if target == "gpu" else "cpu"]
     keys = ("idle_c", "load_max_c", "load_plateau_c", "delta_c", "cooldown_sec")
     gains = {}
     for k in keys:
-        b, a = _metric(before, k), _metric(after, k)
+        b, a = _metric(before, kmap[k]), _metric(after, kmap[k])
         gains[k] = {"before": b, "after": a, "gain": _gain(b, a)}
 
-    thr_b = bool(_metric(before, "throttling"))
-    thr_a = bool(_metric(after, "throttling"))
+    thr_b = bool(_metric(before, kmap["throttling"]))
+    thr_a = bool(_metric(after, kmap["throttling"]))
     throttling = {"before": thr_b, "after": thr_a,
                   "eliminated": thr_b and not thr_a,
                   "appeared": (not thr_b) and thr_a}
+
+    # Complements propres au GPU (affichage rapport ; pas dans le verdict).
+    gpu_extras = None
+    if target == "gpu":
+        def pair(key):
+            b, a = _metric(before, key), _metric(after, key)
+            return {"before": b, "after": a, "gain": _gain(b, a)}
+        gpu_extras = {
+            "hotspot_max_c":  pair("gpu_hotspot_max_c"),
+            "clock_drop_pct": pair("gpu_clock_drop_pct"),
+            "power_max_w":    pair("gpu_power_max_w"),
+        }
 
     verdict_text, verdict_level = _verdict(gains, throttling)
 
     return {
         "compatible": compatible,
+        "target": target,
+        "adapter_before": adapter_before,
+        "adapter_after": adapter_after,
+        "adapter_mismatch": adapter_mismatch,
         "protocol_before": _protocol(before),
         "protocol_after": _protocol(after),
         "before": before,
         "after": after,
         "gains": gains,
+        "gpu_extras": gpu_extras,
         "throttling": throttling,
         "verdict": verdict_text,
         "verdict_level": verdict_level,
@@ -145,12 +200,12 @@ def _verdict(gains: dict, throttling: dict) -> tuple:
 
 # --- Courbes SVG ------------------------------------------------------------
 
-def _cpu_series(session: dict) -> list:
-    return [(s.get("t", 0), s.get("cpu")) for s in (session.get("samples") or [])
-            if s.get("cpu") is not None]
+def _series(session: dict, key: str) -> list:
+    return [(s.get("t", 0), s.get(key)) for s in (session.get("samples") or [])
+            if s.get(key) is not None]
 
 
-def _svg_compare(before: dict, after: dict) -> str:
+def _svg_compare(before: dict, after: dict, target: str = "cpu") -> str:
     W, H = 920, 380
     ml, mr, mt, mb = 48, 16, 26, 30
     x0, y0, x1, y1 = ml, mt, W - mr, H - mb
@@ -183,12 +238,14 @@ def _svg_compare(before: dict, after: dict) -> str:
         p.append(f'<text x="{x0 - 6}" y="{yy + 4}" fill="{_FG_MUTED}" '
                  f'font-size="11" text-anchor="end">{temp}</text>')
 
-    # Ligne d'arrêt d'urgence
-    ye = Y(95)
+    # Ligne d'arrêt d'urgence (95 °C CPU ; plafond 90 °C pour un bench GPU)
+    limit = (DEFAULT_GPU_EMERGENCY_TEMP_C if target == "gpu"
+             else DEFAULT_EMERGENCY_TEMP_C)
+    ye = Y(limit)
     p.append(f'<line x1="{x0}" y1="{ye}" x2="{x1}" y2="{ye}" stroke="{_RED}" '
              f'stroke-width="1" stroke-dasharray="5,3"/>')
     p.append(f'<text x="{x1 - 2}" y="{ye - 5}" fill="{_RED}" font-size="11" '
-             f'text-anchor="end">95 °C</text>')
+             f'text-anchor="end">{limit:.0f} °C</text>')
 
     # Repères de temps
     for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
@@ -211,17 +268,19 @@ def _svg_compare(before: dict, after: dict) -> str:
         p.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
                  f'stroke-width="2"{d}/>')
 
-    polyline(_cpu_series(before), _ORANGE, dash="6,3")
-    polyline(_cpu_series(after), _GREEN)
+    key = "gpu" if target == "gpu" else "cpu"
+    subject = key.upper()
+    polyline(_series(before, key), _ORANGE, dash="6,3")
+    polyline(_series(after, key), _GREEN)
 
     # Légende
     lx, ly = x0 + 10, y0 + 14
     p.append(f'<line x1="{lx}" y1="{ly}" x2="{lx + 22}" y2="{ly}" stroke="{_ORANGE}" '
              f'stroke-width="2" stroke-dasharray="6,3"/>')
-    p.append(f'<text x="{lx + 28}" y="{ly + 4}" fill="{_FG_DIM}" font-size="12">Avant (CPU)</text>')
+    p.append(f'<text x="{lx + 28}" y="{ly + 4}" fill="{_FG_DIM}" font-size="12">Avant ({subject})</text>')
     p.append(f'<line x1="{lx + 120}" y1="{ly}" x2="{lx + 142}" y2="{ly}" stroke="{_GREEN}" '
              f'stroke-width="2"/>')
-    p.append(f'<text x="{lx + 148}" y="{ly + 4}" fill="{_FG_DIM}" font-size="12">Après (CPU)</text>')
+    p.append(f'<text x="{lx + 148}" y="{ly + 4}" fill="{_FG_DIM}" font-size="12">Après ({subject})</text>')
 
     p.append("</svg>")
     return "".join(p)
@@ -262,11 +321,15 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
     before, after = cmp["before"], cmp["after"]
     g = cmp["gains"]
     thr = cmp["throttling"]
+    target = cmp.get("target", "cpu")
+    gpu = (target == "gpu")
+    subject = "GPU" if gpu else "CPU"
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = out / f"Ghisdiag_bench_comparaison_{ts}.html"
+    suffix = "_gpu" if gpu else ""
+    path = out / f"Ghisdiag_bench_comparaison{suffix}_{ts}.html"
 
     def when(s):
         try:
@@ -275,13 +338,19 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
             return "?"
 
     machine = html.escape(str((after.get("machine") or {}).get("hostname", "?")))
-    cpu_name = html.escape(str((after.get("machine") or {}).get("cpu", "?")))
+    if gpu:
+        hw_label = "GPU"
+        hw_name = html.escape(str(cmp.get("adapter_after")
+                                  or cmp.get("adapter_before") or "?"))
+    else:
+        hw_label = "CPU"
+        hw_name = html.escape(str((after.get("machine") or {}).get("cpu", "?")))
     _ptarget, pidle, pload, pcool, pintens = cmp["protocol_after"]
 
     lvl = cmp["verdict_level"]
     verdict = cmp["verdict"]
 
-    # Cartes de gains
+    # Cartes de gains (mêmes clés génériques pour les deux cibles)
     cards = [
         ("ΔT en charge (clé)", _gain_html(g["delta_c"]),
          "Écart à la température de repos — insensible à la température ambiante."),
@@ -291,6 +360,26 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
         ("Retour au calme", _gain_html(g["cooldown_sec"], unit="s"),
          "Temps pour redescendre au repos après la charge."),
     ]
+    extras = cmp.get("gpu_extras") or {}
+    if gpu and extras:
+        if extras["hotspot_max_c"]["after"] is not None or \
+                extras["hotspot_max_c"]["before"] is not None:
+            cards.append(("Hotspot max", _gain_html(extras["hotspot_max_c"]),
+                          "Point le plus chaud du die — révélateur du contact "
+                          "pâte/pads."))
+        if extras["clock_drop_pct"]["after"] is not None or \
+                extras["clock_drop_pct"]["before"] is not None:
+            cards.append(("Chute de clock", _gain_html(extras["clock_drop_pct"],
+                                                       unit="%"),
+                          "Baisse de fréquence en fin de charge (source NVML)."))
+        pw = extras["power_max_w"]
+        if pw["after"] is not None or pw["before"] is not None:
+            b = f"{pw['before']:.0f} W" if pw["before"] is not None else "n/a"
+            a = f"{pw['after']:.0f} W" if pw["after"] is not None else "n/a"
+            cards.append(("Power max", f'<div class="card-value">{a}</div>'
+                          f'<div class="card-sub">avant {b}</div>',
+                          "Puissance absorbée en charge (indicatif — pas un "
+                          "gain)."))
     cards_html = "\n".join(
         f'<div class="card"><div class="card-title">{html.escape(t)}</div>'
         f'{v}<div class="card-note">{html.escape(note)}</div></div>'
@@ -306,27 +395,36 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
         thr_html = '<span class="badge badge-warn">Toujours présent</span>'
     else:
         thr_html = '<span class="badge badge-ok">Absent dans les deux cas</span>'
+    thr_label = ("Throttling GPU (confirmé par le pilote)" if gpu
+                 else "Throttling thermique")
 
     incompat_html = ""
-    if not cmp["compatible"]:
+    if cmp.get("adapter_mismatch"):
+        ab = html.escape(str(cmp.get("adapter_before") or "?"))
+        aa = html.escape(str(cmp.get("adapter_after") or "?"))
+        incompat_html = (
+            f'<div class="alert alert-crit"><b>Cartes graphiques différentes.</b> '
+            f'La session « avant » porte sur {ab}, la session « après » sur {aa} : '
+            f'un avant/après n\'a de sens que sur le même matériel.</div>')
+    elif not cmp["compatible"]:
         incompat_html = (
             '<div class="alert alert-crit"><b>Protocoles différents.</b> '
-            'Les deux sessions n\'utilisent pas la même durée ou intensité de charge : '
-            'la comparaison n\'est pas fiable.</div>')
+            'Les deux sessions n\'utilisent pas la même cible, durée ou intensité '
+            'de charge : la comparaison n\'est pas fiable.</div>')
 
-    svg = _svg_compare(before, after)
+    svg = _svg_compare(before, after, target)
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ghisdiag — Comparaison bench thermique</title>
+<title>Ghisdiag — Comparaison bench thermique {subject}</title>
 <style>{_CSS}</style></head>
 <body>
 <header class="header">
-  <h1>🌡️ Bench thermique — Avant / Après</h1>
+  <h1>🌡️ Bench thermique {subject} — Avant / Après</h1>
   <div class="header-meta">
     <span><b>Machine&nbsp;:</b> {machine}</span>
-    <span><b>CPU&nbsp;:</b> {cpu_name}</span>
+    <span><b>{hw_label}&nbsp;:</b> {hw_name}</span>
     <span><b>Avant&nbsp;:</b> {when(before)}</span>
     <span><b>Après&nbsp;:</b> {when(after)}</span>
   </div>
@@ -339,18 +437,19 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
   <section class="section">
     <h2 class="section-title">Carte des gains</h2>
     <div class="cards">{cards_html}</div>
-    <p class="line"><b>Throttling thermique&nbsp;:</b> {thr_html}</p>
+    <p class="line"><b>{thr_label}&nbsp;:</b> {thr_html}</p>
   </section>
 
   <section class="section">
-    <h2 class="section-title">Courbes superposées (température CPU)</h2>
+    <h2 class="section-title">Courbes superposées (température {subject})</h2>
     <div class="chart">{svg}</div>
   </section>
 
   <section class="section">
     <h2 class="section-title">Protocole &amp; honnêteté</h2>
-    <p class="line">Protocole identique pour les deux sessions&nbsp;:
-      repos {pidle}&nbsp;s → charge {pload}&nbsp;s à {pintens}&nbsp;% → refroidissement {pcool}&nbsp;s.</p>
+    <p class="line">Protocole identique pour les deux sessions ({"charge GPU" if gpu else "charge CPU"})&nbsp;:
+      repos {pidle}&nbsp;s → charge {pload}&nbsp;s à {pintens}&nbsp;% → refroidissement {pcool}&nbsp;s.{
+      f' Carte testée&nbsp;: {hw_name}.' if gpu else ''}</p>
     <div class="alert alert-info">
       La <b>température ambiante n'est pas contrôlée</b>. La mesure la plus fiable est le
       <b>ΔT</b> (écart à la température de repos)&nbsp;: il reflète l'efficacité du

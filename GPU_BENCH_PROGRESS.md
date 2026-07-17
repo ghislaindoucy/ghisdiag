@@ -230,10 +230,35 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       liste, la sélection et la comparaison ne portent que sur une famille à la fois.
 - [ ] Validation atelier via l'exe : refaire un tour avec le filtre CPU/GPU.
 
-### M5 — Rapport & comparaison GPU ⬜
-- [ ] Étendre `thermal_compare.py` + `report/generator.py` aux métriques/séries GPU.
-- [ ] Verdict clair avant/après GPU (« −8 °C en charge, throttling éliminé »).
-- [ ] Garde-fou honnêteté : même protocole + même adaptateur pour comparer.
+### M5 — Rapport & comparaison GPU ✅ *(fait 2026-07-17, à valider atelier)*
+- [x] `thermal_compare.py` généralisé (note : `report/generator.py` = rapport de
+      diagnostic, rien à y toucher — toute la comparaison vit dans thermal_compare) :
+      - `compare_sessions` cible-aware : gains sourcés sur les métriques `gpu_*`
+        via `_METRIC_KEYS`, mais **clés génériques en sortie** (`idle_c`,
+        `load_plateau_c`…) → verdict, cartes du rapport et résumé UI identiques
+        pour les deux cibles. Throttling sur `gpu_throttling`.
+      - Extras GPU (`gpu_extras`) : hotspot max (révélateur du contact
+        pâte/pads), chute de clock (source NVML), power max (indicatif).
+      - Résultat enrichi : `target`, `adapter_before/after`, `adapter_mismatch`.
+- [x] Verdict avant/après GPU inchangé dans sa forme (« −14 °C en charge —
+      intervention efficace (throttling éliminé) ») — calculé sur le plateau GPU.
+- [x] **Garde-fou honnêteté** : cible dans le protocole (déjà M3) + **adaptateur
+      différent = incompatible** (avant/après sur le même matériel uniquement ;
+      toléré si adaptateur inconnu — vieilles sessions). Message UI + alerte
+      dédiée dans le rapport.
+- [x] Rapport HTML : titre/en-tête « Bench thermique GPU » + nom de la carte,
+      fichier suffixé `_gpu`, courbes `gpu` superposées avec seuil 90 °C,
+      3 cartes GPU en plus, « Throttling GPU (confirmé par le pilote) »,
+      protocole avec carte testée. Rendu vérifié (capture Edge headless).
+- [x] UI : blocage M4 levé ; courbes de comparaison sur la série `gpu` (légende
+      « Avant/Après (GPU) », seuil 90 °C) ; messages d'incompatibilité enrichis
+      (carte différente vs protocole différent).
+- [x] Tests : `tests/test_thermal_compare.py` (8 tests) — rétro-compat CPU,
+      gains GPU (pas les métriques CPU ambiantes), extras, mismatch adaptateur,
+      adaptateur inconnu toléré, rapports CPU/GPU. Total : **23 tests verts**.
+      + test fonctionnel UI bout-en-bout (2 sessions GPU → verdict + rapport).
+- [ ] Validation atelier : une vraie comparaison avant/après GPU (même carte,
+      dépoussiérage entre les deux) via l'exe.
 
 ### M6 — Build & release ⬜
 - [ ] Vérifier qu'aucun binaire n'est ajouté (d3d11.dll/dxgi.dll = composants OS ;
@@ -460,3 +485,23 @@ confondre avec du thermique.
   et `report/generator.py` aux métriques/séries `gpu_*`, lever le blocage UI de la
   comparaison GPU). Ensuite M6 (build/release ≥ 1.7.0) + validation atelier de
   l'UI via l'exe.
+
+### 2026-07-17 — Session 10 (M5 : comparaison + rapport GPU)
+- Filtre CPU/GPU (session 9) validé en atelier via l'exe par l'utilisateur.
+- `thermal_compare.py` généralisé : voir la section M5 (cases cochées). Choix
+  d'archi clé : gains en **clés génériques** sourcées par cible (`_METRIC_KEYS`)
+  → verdict / cartes / résumé UI communs aux deux cibles, zéro duplication.
+  (`report/generator.py` = rapport de diagnostic : rien à y toucher.)
+- Garde-fou honnêteté : **adaptateur différent = comparaison refusée** (message
+  UI dédié + alerte dans le rapport) ; toléré si adaptateur inconnu (vieilles
+  sessions).
+- Blocage UI M4 levé ; courbes de comparaison sur la série `gpu` (légende
+  « Avant/Après (GPU) », seuil 90 °C) ; rapport suffixé `_gpu` vérifié en rendu
+  réel (Edge headless) : verdict « −14 °C en charge — intervention efficace
+  (throttling éliminé) », cartes hotspot/clock/power, carte testée mentionnée.
+- 8 nouveaux tests (`tests/test_thermal_compare.py`) → **23 verts** au total,
+  + parcours UI complet automatisé (2 sessions GPU → verdict + rapport généré).
+- **Prochaine étape : M6** (build ≥ 1.7.0 : bump versions, CHANGELOG,
+  RELEASE_NOTES, PyInstaller, SHA-256, ROADMAP) + validation atelier M5
+  (vraie comparaison avant/après GPU sur la même carte, dépoussiérage entre
+  les deux passes).
