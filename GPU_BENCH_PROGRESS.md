@@ -260,13 +260,22 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
 - [ ] Validation atelier : une vraie comparaison avant/après GPU (même carte,
       dépoussiérage entre les deux) via l'exe.
 
-### M6 — Build & release ⬜
-- [ ] Vérifier qu'aucun binaire n'est ajouté (d3d11.dll/dxgi.dll = composants OS ;
-      shader précompilé embarqué).
-- [ ] Bump version (orchestrator.py, report/generator.py, version_info.txt, manifest
-      UAC de build.bat), CHANGELOG + RELEASE_NOTES.
-- [ ] Build PyInstaller, vérif ProductVersion, SHA-256, release GitHub.
-- [ ] Mettre à jour [ROADMAP.md](ROADMAP.md).
+### M6 — Build & release ✅ *(fait 2026-07-18 — v1.7.0 publiée)*
+- [x] Aucun binaire ajouté : d3d11/dxgi/d3dcompiler_47/nvml = composants OS ou
+      pilote. (Le shader reste compilé au runtime via d3dcompiler_47 — déviation
+      M2 assumée, validée sur tout le parc.) Hidden-imports `collectors.gpu` /
+      `collectors.gpu_load` ajoutés à build.bat par sûreté.
+- [x] Bump 1.6.6 → **1.7.0** (orchestrator.py, report/generator.py,
+      version_info.txt, manifest UAC de build.bat), CHANGELOG +
+      RELEASE_NOTES_v1.7.0.md.
+- [x] Branche mergée dans main via
+      [PR #12](https://github.com/ghislaindoucy/ghisdiag/pull/12).
+- [x] Build PyInstaller OK, ProductVersion vérifié **1.7.0.0**, SHA-256
+      `593964db…319b50` (33.8 MB), release GitHub **publiée** avec exe +
+      mentions légales :
+      [v1.7.0](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.7.0).
+- [x] [ROADMAP.md](ROADMAP.md) à jour (1.7.0 = bench GPU livré ; ancien plan
+      1.7.0 décalé en 1.8.0).
 
 ---
 
@@ -505,3 +514,18 @@ confondre avec du thermique.
   RELEASE_NOTES, PyInstaller, SHA-256, ROADMAP) + validation atelier M5
   (vraie comparaison avant/après GPU sur la même carte, dépoussiérage entre
   les deux passes).
+
+### 2026-07-18 — Session 11 (M6 : release 1.7.0) — **CHANTIER LIVRÉ** 🎉
+- Bump 1.6.6 → 1.7.0 partout, CHANGELOG, RELEASE_NOTES_v1.7.0.md, ROADMAP
+  (1.7.0 = bench GPU ; ancien plan 1.7.0 → 1.8.0).
+- Branche `claude/thermal-bench-gpu-support-c8478f` poussée puis **mergée dans
+  main** (PR #12). Build PyInstaller depuis main : ProductVersion 1.7.0.0,
+  SHA-256 injecté dans les notes, **release GitHub v1.7.0 publiée** (exe 33.8 Mo
+  + THIRD-PARTY-NOTICES + zip licences).
+- Astuce build depuis l'environnement Claude : le sandbox réinitialise le cwd
+  des processus lancés → wrapper .bat qui fait `cd /d` + `call` en chemin
+  ABSOLU (`call "D:\...\build.bat"`), stdin sur nul pour neutraliser `pause`.
+- **Reste (non bloquant, hors chantier)** : validation atelier M5 en réel
+  (vraie comparaison avant/après GPU, même carte, dépoussiérage entre les
+  passes) ; dGPU AMD discret toujours jamais croisé dans le parc ; option
+  future : noyau de charge plus lourd pour saturer les gros dGPU.
