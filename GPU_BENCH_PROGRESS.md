@@ -197,12 +197,34 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       - Reste souhaitable : un vrai **dGPU AMD discret** (toujours absent du parc).
 - Reste AMD discret + un test avant/après réel (M5) pour boucler.
 
-### M4 — UI onglet bench ⬜
-- [ ] Sélecteur **cible CPU / GPU** (radio) dans l'onglet bench.
-- [ ] Si GPU : dropdown adaptateur (si plusieurs GPU), presets d'intensité,
-      réutiliser l'avertissement de responsabilité.
-- [ ] Courbes temps réel : mettre la série GPU au premier plan quand `target=gpu`.
-- [ ] Test visuel sur vraie machine.
+### M4 — UI onglet bench ✅ *(fait 2026-07-17, test visuel dev OK — à valider en atelier)*
+- [x] Combo **Cible CPU / GPU** dans la barre de config. Détection GPU en thread
+      de fond au chargement de l'onglet (adaptateurs DXGI + température lisible
+      NVML/LHM) ; GPU refusé avec message clair si : détection en cours, aucun
+      adaptateur matériel, ou aucune temp GPU (iGPU) — jamais de bench impossible lancé.
+- [x] Combo **Carte graphique** (visible seulement en cible GPU — barre compacte
+      pour petits écrans) : « Auto (carte dédiée) » + adaptateurs **filtrés**
+      (NVIDIA toujours, sinon ≥ 1 Go VRAM dédiée → les iGPU sont écartés : en
+      choisir un sur hybride chargerait l'iGPU en mesurant le dGPU). Garde-fou
+      moteur assorti dans `NvmlDevice.open_matching` : le repli « GPU NVML
+      unique » est refusé si le sélecteur nomme un autre vendor.
+- [x] Presets d'intensité par cible (GPU : 100 %/50 %, pas d'AVX) + avertissement
+      de responsabilité GPU dédié (saccades écran, arrêt auto ≤ 90 °C/slowdown).
+- [x] Cible propagée : phase « Charge GPU », relevés temps réel GPU-first
+      (temp/%/MHz/W), ligne d'urgence 90 °C sur le graphe, **courbe GPU au
+      premier plan** (tracée en dernier, épaisseur 3), marqueurs de throttling
+      sur `gpu_clock`/`gpu` avec le plancher partagé du moteur (`_gpu_throttle_floor`).
+- [x] Résultats : formatage métriques GPU (ΔT/plateau/max, clock max + chute,
+      power max avec **« n/a »** si NVML absent — leçon GT 1030, hotspot, note
+      power-limited « normal »). Liste des sessions : tag `GPU` + métriques `gpu_*`.
+      Message d'arrêt d'urgence adapté. Session GPU rouverte → graphe en mode GPU.
+- [x] Comparaison avant/après **bloquée proprement pour les sessions GPU**
+      (message « prochaine version ») — la vraie comparaison GPU = M5.
+- [x] Test fonctionnel + visuel sur machine dev (hybride Quadro P2000 + UHD 630) :
+      bascule CPU↔GPU OK, iGPU exclu de la liste, capture d'écran vérifiée
+      (barre compacte, ligne 90 °C, légende GPU en premier).
+- [ ] Validation atelier via l'exe compilé (parcours réel : avertissement,
+      bench GPU complet, urgence jamais à tort, session dans la liste).
 
 ### M5 — Rapport & comparaison GPU ⬜
 - [ ] Étendre `thermal_compare.py` + `report/generator.py` aux métriques/séries GPU.
@@ -419,3 +441,18 @@ confondre avec du thermique.
 - Reste souhaitable : un vrai **dGPU AMD discret** (jamais dans le parc) + un
   avant/après réel (relève de M5).
 - **Prochaine étape : M4 (UI).**
+
+### 2026-07-17 — Session 9 (M4 : UI onglet bench)
+- Onglet bench généralisé CPU/GPU dans `main.py` : voir la section M4 (cases cochées).
+- **Piège attrapé pendant le test fonctionnel** : la liste d'adaptateurs proposait
+  l'iGPU Intel du dev (UHD 630) — le sélectionner aurait chargé l'iGPU pendant que
+  l'échantillonneur NVML mesurait la Quadro (repli « GPU unique » de la jointure par
+  nom). Double correctif : filtre UI (NVIDIA ou ≥ 1 Go VRAM dédiée) + garde-fou
+  vendor dans `NvmlDevice.open_matching` (collectors/gpu.py).
+- Test fonctionnel automatisé sur l'app réelle (fenêtre withdraw) : détection,
+  bascule GPU (presets + combo carte), retour CPU (AVX restauré, combo cachée).
+  Capture d'écran de l'onglet en cible GPU vérifiée (layout compact, 90 °C, légende).
+- **Prochaine étape : M5** (rapport + comparaison GPU : étendre `thermal_compare.py`
+  et `report/generator.py` aux métriques/séries `gpu_*`, lever le blocage UI de la
+  comparaison GPU). Ensuite M6 (build/release ≥ 1.7.0) + validation atelier de
+  l'UI via l'exe.

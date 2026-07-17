@@ -323,6 +323,12 @@ class NvmlDevice:
             else:
                 if len(candidates) != 1:   # 0 ou ambigu sans match par nom
                     raise LookupError
+                # GPU NVML unique sans correspondance de nom : on ne le prend
+                # PAS si le selecteur designe explicitement un autre fabricant
+                # (ex. iGPU Intel choisi sur un hybride -> mesurer la carte
+                # NVIDIA a la place fausserait tout le bench).
+                if any(v in sel for v in ("intel", "amd", "radeon", "arc")):
+                    raise LookupError
             i, handle, name = candidates[0]
             t_slow = _u_get(get_thresh, handle,
                             c_uint(NVML_TEMPERATURE_THRESHOLD_SLOWDOWN))

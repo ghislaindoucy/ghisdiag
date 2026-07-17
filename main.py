@@ -50,6 +50,7 @@ try:
         list_sessions as bench_list_sessions,
         load_session as bench_load_session,
         THROTTLE_CLOCK_DROP, THROTTLE_TEMP_FLOOR_C,
+        DEFAULT_GPU_EMERGENCY_TEMP_C, _gpu_throttle_floor,
     )
     from thermal_compare import compare_sessions, generate_comparison_report
     _HAS_BENCH = True
@@ -3187,8 +3188,13 @@ class GhisdiagApp(tk.Tk):
     _BENCH_INTENS   = (("100 %", 100, "python"),
                        ("50 %", 50, "python"),
                        ("Stabilité (AVX max)", 100, "avx"))
+    # Presets GPU : le noyau D3D11 est unique (pas d'équivalent AVX), seule
+    # l'intensité (rapport cyclique des dispatches) varie.
+    _BENCH_INTENS_GPU = (("100 %", 100, "python"),
+                         ("50 %", 50, "python"))
     _BENCH_DURATION = (("Court (2 min)", 120), ("Standard (5 min)", 300),
                        ("Long (10 min)", 600))
+    _BENCH_GPU_AUTO = "Auto (carte dédiée)"
     _BENCH_IDLE_SEC = 120
     _BENCH_COOL_SEC = 300
     _BENCH_LABELS_FR = {"avant": "Avant", "apres": "Après", "libre": "Libre"}
@@ -3200,8 +3206,8 @@ class GhisdiagApp(tk.Tk):
         tk.Label(head, text="Bench thermique", font=("Segoe UI", 16, "bold"),
                  bg=BG, fg=FG).pack(anchor="w")
         tk.Label(head,
-                 text="Repos → charge CPU → refroidissement. Mesure le gain d'un "
-                      "nettoyage ou d'un changement de pâte thermique (avant / après).",
+                 text="Repos → charge CPU ou GPU → refroidissement. Mesure le gain "
+                      "d'un nettoyage ou d'un changement de pâte thermique (avant / après).",
                  font=("Segoe UI", 10), bg=BG, fg=FG_DIM,
                  justify="left").pack(anchor="w")
 
@@ -3222,14 +3228,24 @@ class GhisdiagApp(tk.Tk):
                               state="readonly", style="PD.TCombobox",
                               font=("Segoe UI", 10), width=max(len(v) for v in values) + 2)
             cb.pack(anchor="w", pady=(2, 0))
-            return var, cb
+            return var, cb, holder
 
-        self._bench_label_var, self._bench_label_cb = _combo(
+        self._bench_label_var, self._bench_label_cb, _ = _combo(
             "Étiquette", [t for t, _ in self._BENCH_LABELS], "Avant")
-        self._bench_intens_var, self._bench_intens_cb = _combo(
+        self._bench_target_var, self._bench_target_cb, _ = _combo(
+            "Cible", ["CPU", "GPU"], "CPU")
+        self._bench_target_cb.config(width=6)
+        self._bench_target_cb.bind("<<ComboboxSelected>>", self._bench_on_target)
+        # Choix de carte graphique : visible seulement en cible GPU (la barre
+        # reste compacte en CPU — contrainte petits écrans de la 1.6.6).
+        self._bench_gpu_var, self._bench_gpu_cb, self._bench_gpu_holder = _combo(
+            "Carte graphique", [self._BENCH_GPU_AUTO], self._BENCH_GPU_AUTO)
+        self._bench_gpu_cb.config(width=26)
+        self._bench_gpu_holder.pack_forget()
+        self._bench_intens_var, self._bench_intens_cb, self._bench_intens_holder = _combo(
             "Intensité", [t for t, _, _ in self._BENCH_INTENS], "100 %")
         self._bench_intens_cb.config(width=20)  # « Stabilité (AVX max) » sans troncature
-        self._bench_dur_var, self._bench_dur_cb = _combo(
+        self._bench_dur_var, self._bench_dur_cb, _ = _combo(
             "Durée de charge",
             [t for t, _ in self._BENCH_DURATION] + ["Personnalisé…"],
             "Standard (5 min)")
@@ -3316,7 +3332,87 @@ class GhisdiagApp(tk.Tk):
         self._bench_bounds = []
         self._bench_mode = "single"        # single | compare
         self._bench_compare_data = None    # (avant_samples, apres_samples)
+        self._bench_target = "cpu"         # cible du test en cours / affiché
+        self._bench_gpu_detect = None      # None = détection en cours ; dict sinon
+        threading.Thread(target=self._bench_detect_gpus, daemon=True).start()
         self.after(500, self._bench_refresh_sessions)
+
+    # -- Cible CPU / GPU -------------------------------------------------------
+
+    def _bench_detect_gpus(self):
+        """Thread de fond : énumère les adaptateurs DXGI et vérifie qu'une
+        température GPU est lisible (NVML, sinon LHM). Le repli LHM lance un
+        PowerShell ponctuel (~1-3 s) — jamais sur le thread UI."""
+        res = {"adapters": [], "temp_ok": False}
+        try:
+            from collectors import gpu_load
+            if gpu_load.available():
+                # On ne propose que les adaptateurs benchables thermiquement :
+                # les iGPU (pas de capteur dédié, refroidissement partagé avec le
+                # CPU) sont écartés — sur un hybride, en choisir un chargerait
+                # l'iGPU pendant que les capteurs mesurent le dGPU. Heuristique :
+                # NVIDIA toujours (NVML), sinon >= 1 Go de VRAM dédiée (écarte
+                # les iGPU Intel ~128 Mo ; garde les vrais dGPU AMD).
+                res["adapters"] = [
+                    a for a in gpu_load.list_adapters()
+                    if not a["is_software"]
+                    and (a["vendor"] == "NVIDIA" or a["vram_mb"] >= 1024)]
+        except Exception:
+            logger.exception("Bench : énumération des adaptateurs GPU")
+        try:
+            from collectors import gpu
+            res["temp_ok"] = any(g.get("temp") is not None for g in gpu.list_gpus())
+        except Exception:
+            logger.exception("Bench : détection de température GPU")
+
+        def _apply():
+            self._bench_gpu_detect = res
+            values = [self._BENCH_GPU_AUTO] + [
+                f"[{a['index']}] {a['name']}" for a in res["adapters"]]
+            self._bench_gpu_cb.config(values=values)
+        self.after(0, _apply)
+
+    def _bench_on_target(self, _event=None):
+        """Bascule CPU/GPU : valide la faisabilité GPU, adapte les presets
+        d'intensité et montre/cache le choix de carte graphique."""
+        want_gpu = self._bench_target_var.get() == "GPU"
+        if want_gpu:
+            det = self._bench_gpu_detect
+            if det is None:
+                messagebox.showinfo(
+                    "Bench GPU",
+                    "Détection des cartes graphiques en cours… réessayez dans "
+                    "quelques secondes.")
+                want_gpu = False
+            elif not det["adapters"]:
+                messagebox.showwarning(
+                    "Bench GPU",
+                    "Aucune carte graphique utilisable pour la charge (Direct3D 11 "
+                    "indisponible, ou seul un adaptateur logiciel est présent).")
+                want_gpu = False
+            elif not det["temp_ok"]:
+                messagebox.showwarning(
+                    "Bench GPU",
+                    "Aucune température GPU lisible sur cette machine — typique "
+                    "d'un GPU intégré (iGPU), qui n'expose pas de capteur dédié.\n\n"
+                    "Le bench thermique GPU n'a de sens que sur une carte graphique "
+                    "dédiée : un iGPU partage le refroidissement du processeur "
+                    "(utilisez le bench CPU pour cette machine).")
+                want_gpu = False
+            if not want_gpu:
+                self._bench_target_var.set("CPU")
+        self._bench_target = "gpu" if want_gpu else "cpu"
+
+        presets = self._BENCH_INTENS_GPU if want_gpu else self._BENCH_INTENS
+        labels = [t for t, _, _ in presets]
+        self._bench_intens_cb.config(values=labels)
+        if self._bench_intens_var.get() not in labels:
+            self._bench_intens_var.set("100 %")
+        if want_gpu:
+            self._bench_gpu_holder.pack(side="left", padx=(0, 16),
+                                        before=self._bench_intens_holder)
+        else:
+            self._bench_gpu_holder.pack_forget()
 
     # -- Pilotage du test ------------------------------------------------------
 
@@ -3353,18 +3449,37 @@ class GhisdiagApp(tk.Tk):
             return
 
         label     = dict(self._BENCH_LABELS)[self._bench_label_var.get()]
-        _intens_map = {lbl: (i, k) for lbl, i, k in self._BENCH_INTENS}
-        intensity, kernel = _intens_map[self._bench_intens_var.get()]
+        target    = "gpu" if self._bench_target_var.get() == "GPU" else "cpu"
+        self._bench_target = target
+        presets   = self._BENCH_INTENS_GPU if target == "gpu" else self._BENCH_INTENS
+        _intens_map = {lbl: (i, k) for lbl, i, k in presets}
+        intensity, kernel = _intens_map.get(self._bench_intens_var.get(),
+                                            (100, "python"))
         # Preset connu, sinon durée personnalisée (repli 300 s si non définie).
         load_sec  = dict(self._BENCH_DURATION).get(
             self._bench_dur_var.get(), self._bench_custom_load_sec or 300)
 
         total_min = round((self._BENCH_IDLE_SEC + load_sec + self._BENCH_COOL_SEC) / 60)
-        charge_desc = ("charge AVX MAXIMALE (mode stabilité — comparable à un "
-                       "torture-test, températures nettement plus élevées)"
-                       if kernel == "avx" else f"forte charge (intensité {intensity} %)")
-        if not messagebox.askyesno(
-                "⚠ Avertissement — Test de charge thermique",
+        if target == "gpu":
+            warn_body = (
+                f"Ce test sollicite VOLONTAIREMENT la carte graphique à forte "
+                f"charge (intensité {intensity} %) pendant environ {total_min} min, "
+                "afin de mesurer son comportement thermique puis son "
+                "refroidissement.\n\n"
+                "L'écran peut devenir saccadé pendant la charge : c'est normal.\n\n"
+                "Des sécurités sont prévues — arrêt automatique avant le seuil de "
+                f"bridage thermique de la carte ({DEFAULT_GPU_EMERGENCY_TEMP_C:.0f} °C "
+                "au plus, abaissé selon le seuil constructeur) et arrêt manuel "
+                "possible à tout moment. Elles réduisent le risque mais NE "
+                "l'éliminent PAS : selon l'état réel du matériel (poussière, pâte ou "
+                "pads thermiques dégradés, ventilateur défaillant, composants "
+                "vieillissants), la montée en température peut endommager le "
+                "matériel.")
+        else:
+            charge_desc = ("charge AVX MAXIMALE (mode stabilité — comparable à un "
+                           "torture-test, températures nettement plus élevées)"
+                           if kernel == "avx" else f"forte charge (intensité {intensity} %)")
+            warn_body = (
                 f"Ce test sollicite VOLONTAIREMENT le processeur à {charge_desc} "
                 f"pendant environ {total_min} min, afin de "
                 "mesurer son comportement thermique puis son refroidissement.\n\n"
@@ -3373,7 +3488,10 @@ class GhisdiagApp(tk.Tk):
                 "NE l'éliminent PAS : selon l'état réel du matériel (poussière, pâte "
                 "thermique dégradée, ventilateur ou capteur défaillant, composants "
                 "vieillissants ou déjà fragilisés), la montée en température peut "
-                "endommager le matériel.\n\n"
+                "endommager le matériel.")
+        if not messagebox.askyesno(
+                "⚠ Avertissement — Test de charge thermique",
+                warn_body + "\n\n"
                 "Ne lancez ce test que sur une machine dont l'état le permet. En "
                 "cliquant sur « Oui », vous le démarrez en connaissance de cause et "
                 "sous votre entière responsabilité ; Ghisdiag et son auteur ne "
@@ -3383,11 +3501,20 @@ class GhisdiagApp(tk.Tk):
                 icon="warning"):
             return
 
+        # Adaptateur GPU choisi : « Auto » -> None (dGPU le plus gros), sinon
+        # l'index DXGI extrait de « [i] Nom ».
+        gpu_adapter = None
+        if target == "gpu":
+            sel = self._bench_gpu_var.get()
+            if sel.startswith("[") and "]" in sel:
+                gpu_adapter = sel[1:sel.index("]")]
+
         out_dir = str(Path(self.out_dir_var.get()) / "thermal")
         cfg = BenchConfig(
             label=label, idle_sec=self._BENCH_IDLE_SEC, load_sec=load_sec,
             cooldown_sec=self._BENCH_COOL_SEC, intensity=intensity, kernel=kernel,
             sample_interval_ms=2000, output_dir=out_dir,
+            target=target, gpu_adapter=gpu_adapter,
         ).normalized()
 
         self._bench_samples   = []
@@ -3423,7 +3550,8 @@ class GhisdiagApp(tk.Tk):
 
     def _bench_set_controls(self, enabled: bool):
         state = "readonly" if enabled else "disabled"
-        for cb in (self._bench_label_cb, self._bench_intens_cb, self._bench_dur_cb):
+        for cb in (self._bench_label_cb, self._bench_target_cb, self._bench_gpu_cb,
+                   self._bench_intens_cb, self._bench_dur_cb):
             cb.config(state=state)
 
     def _bench_reset_button(self):
@@ -3442,11 +3570,28 @@ class GhisdiagApp(tk.Tk):
         if not self._bench_running:
             return
         self._bench_samples.append(rec)
-        cpu = rec.get("cpu"); gpu = rec.get("gpu"); clk = rec.get("clock")
-        parts = [f"CPU {cpu:.0f}°C" if cpu is not None else "CPU —",
-                 f"GPU {gpu:.0f}°C" if gpu is not None else "GPU —"]
-        if clk:
-            parts.append(f"{clk:.0f} MHz")
+        cpu = rec.get("cpu"); gpu = rec.get("gpu")
+        if self._bench_target == "gpu":
+            # Relevés GPU en premier (temp, charge, clock NVML, power) ; le CPU
+            # reste affiché en contexte.
+            parts = [f"GPU {gpu:.0f}°C" if gpu is not None else "GPU —"]
+            gl = rec.get("gpu_load")
+            if gl is not None:
+                parts.append(f"{gl:.0f} %")
+            gc = rec.get("gpu_clock")
+            if gc:
+                parts.append(f"{gc:.0f} MHz")
+            gw = rec.get("gpu_power")
+            if gw is not None:
+                parts.append(f"{gw:.0f} W")
+            if cpu is not None:
+                parts.append(f"CPU {cpu:.0f}°C")
+        else:
+            clk = rec.get("clock")
+            parts = [f"CPU {cpu:.0f}°C" if cpu is not None else "CPU —",
+                     f"GPU {gpu:.0f}°C" if gpu is not None else "GPU —"]
+            if clk:
+                parts.append(f"{clk:.0f} MHz")
         self._bench_live_var.set("    ".join(parts))
         self._bench_draw_chart()
 
@@ -3454,9 +3599,10 @@ class GhisdiagApp(tk.Tk):
         self.after(0, self._bench_set_phase, phase, idx, total)
 
     def _bench_set_phase(self, phase, idx, total):
+        load_lbl = "Charge GPU" if self._bench_target == "gpu" else "Charge CPU"
         names = {
             BenchPhase.IDLE:     ("Repos (baseline)", FG_DIM),
-            BenchPhase.LOAD:     ("Charge CPU", RED),
+            BenchPhase.LOAD:     (load_lbl, RED),
             BenchPhase.COOLDOWN: ("Refroidissement", ACCENT),
         }
         label, color = names.get(phase, ("?", FG))
@@ -3479,10 +3625,14 @@ class GhisdiagApp(tk.Tk):
         self._bench_draw_chart()
         self._bench_refresh_sessions()
         if session.get("emergency"):
-            messagebox.showwarning(
-                "Arrêt d'urgence",
-                "Température CPU au-delà de 95 °C : la charge a été coupée "
-                "automatiquement. Le refroidissement a tout de même été mesuré.")
+            if (session.get("config") or {}).get("target") == "gpu":
+                msg = ("Température GPU au niveau du seuil de sécurité (ou bridage "
+                       "thermique confirmé par le pilote) : la charge a été coupée "
+                       "automatiquement. Le refroidissement a tout de même été mesuré.")
+            else:
+                msg = ("Température CPU au-delà de 95 °C : la charge a été coupée "
+                       "automatiquement. Le refroidissement a tout de même été mesuré.")
+            messagebox.showwarning("Arrêt d'urgence", msg)
 
     def _bench_on_error(self, msg):
         self.after(0, self._bench_errored, msg)
@@ -3514,12 +3664,16 @@ class GhisdiagApp(tk.Tk):
             except Exception:
                 pass
             m = s.get("metrics") or {}
-            d = m.get("delta_c"); mx = m.get("load_max_c")
+            # Sessions GPU : métriques gpu_* + tag distinctif dans la liste.
+            if s.get("target") == "gpu":
+                d = m.get("gpu_delta_c"); mx = m.get("gpu_max_c"); tag = "GPU "
+            else:
+                d = m.get("delta_c"); mx = m.get("load_max_c"); tag = ""
             dt = f"ΔT {d:+.0f}°C" if d is not None else "ΔT —"
             mxs = f"max {mx:.0f}°C" if mx is not None else "max —"
             flag = " (interrompu)" if s.get("aborted") else ""
             self._bench_sessions_list.insert(
-                "end", f"[{lab:5}] {when}  {dt}  {mxs}{flag}")
+                "end", f"[{lab:5}] {when}  {tag}{dt}  {mxs}{flag}")
             self._bench_session_files.append(s["file"])
 
     def _bench_open_session(self, _event=None):
@@ -3535,12 +3689,16 @@ class GhisdiagApp(tk.Tk):
         self._bench_compare_data = None
         self._bench_samples = session.get("samples", [])
         cfg = session.get("config", {})
+        # Cible de la session affichée (pilote l'emphase GPU/CPU du graphe).
+        self._bench_target = cfg.get("target", "cpu")
         b1 = cfg.get("idle_sec", 0)
         b2 = b1 + cfg.get("load_sec", 0)
         self._bench_total_sec = max(1, b2 + cfg.get("cooldown_sec", 0))
         self._bench_bounds = [(0, b1, "idle"), (b1, b2, "load"),
                               (b2, self._bench_total_sec, "cooldown")]
         lab = self._BENCH_LABELS_FR.get(session.get("label"), "?")
+        if self._bench_target == "gpu":
+            lab += " · GPU"
         self._bench_phase_var.set(f"Session affichée — {lab}")
         self._bench_phase_lbl.config(fg=FG_DIM)
         self._bench_live_var.set("")
@@ -3566,6 +3724,16 @@ class GhisdiagApp(tk.Tk):
         s2 = bench_load_session(files[1])
         if not s1 or not s2:
             messagebox.showerror("Comparaison", "Impossible de charger les sessions.")
+            return
+        # La comparaison avant/après GPU (métriques gpu_*, rapport dédié) arrive
+        # avec la prochaine étape du chantier (M5) — en attendant, on refuse
+        # honnêtement plutôt que de comparer sur les températures CPU.
+        if any((s.get("config") or {}).get("target") == "gpu" for s in (s1, s2)):
+            messagebox.showinfo(
+                "Comparaison",
+                "La comparaison avant / après des benchs GPU arrive dans une "
+                "prochaine version. Les sessions GPU restent consultables "
+                "individuellement (double-clic).")
             return
         cmp = compare_sessions(s1, s2)
         if not cmp["compatible"]:
@@ -3629,6 +3797,8 @@ class GhisdiagApp(tk.Tk):
 
     @staticmethod
     def _bench_format_metrics(m: dict, session: dict) -> str:
+        if (session.get("config") or {}).get("target") == "gpu":
+            return GhisdiagApp._bench_format_metrics_gpu(m, session)
         def deg(x):
             return f"{x:.0f}°C" if x is not None else "—"
         d   = m.get("delta_c")
@@ -3652,6 +3822,47 @@ class GhisdiagApp(tk.Tk):
                      "par conception, ce n'est pas un souci de refroidissement.")
         if session.get("emergency"):
             note = "\n⚠ Arrêt d'urgence à 95 °C — résultats partiels."
+        elif session.get("aborted"):
+            note = "\n⚠ Test interrompu — résultats partiels."
+        return f"{line1}\n{line2}{note}"
+
+    @staticmethod
+    def _bench_format_metrics_gpu(m: dict, session: dict) -> str:
+        """Résumé des métriques d'une session GPU (clock NVML, power, hotspot)."""
+        def deg(x):
+            return f"{x:.0f}°C" if x is not None else "—"
+        d   = m.get("gpu_delta_c")
+        dts = f"{d:+.0f}°C" if d is not None else "—"
+        cool = m.get("gpu_cooldown_sec")
+        cs = f"{cool:.0f} s" if cool is not None else "non atteint"
+        thr = "oui" if m.get("gpu_throttling") else "non"
+        clk = m.get("gpu_clock_max_mhz"); drop = m.get("gpu_clock_drop_pct")
+        clks = "—"
+        if clk:
+            clks = f"{clk:.0f} MHz"
+            if drop:
+                clks += f" (chute {drop:.0f} %)"
+        pw = m.get("gpu_power_max_w")
+        pws = f"{pw:.0f} W" if pw is not None else "n/a"   # NVML absent sur
+                                                           # certaines cartes
+        line1 = (f"GPU repos {deg(m.get('gpu_idle_c'))}    •    "
+                 f"T max {deg(m.get('gpu_max_c'))}    •    "
+                 f"plateau {deg(m.get('gpu_plateau_c'))}    •    ΔT {dts}")
+        line2 = (f"Throttling GPU : {thr}    •    Clock max : {clks}"
+                 f"    •    Power max : {pws}    •    Retour au calme : {cs}")
+        hot = m.get("gpu_hotspot_max_c")
+        if hot is not None:
+            line2 += f"    •    hotspot {hot:.0f}°C"
+        note = ""
+        # Limite de puissance (power cap constructeur) : la carte bride sa
+        # frequence par conception — a distinguer d'un souci de refroidissement.
+        if m.get("gpu_power_limited") and not m.get("gpu_throttling"):
+            note += ("\nℹ Limite de puissance de la carte atteinte : la fréquence "
+                     "est bridée par conception à charge soutenue. Normal — ce "
+                     "n'est pas un souci de refroidissement.")
+        if session.get("emergency"):
+            note = ("\n⚠ Arrêt d'urgence GPU (seuil de sécurité ou bridage "
+                    "thermique confirmé) — résultats partiels.")
         elif session.get("aborted"):
             note = "\n⚠ Test interrompu — résultats partiels."
         return f"{line1}\n{line2}{note}"
@@ -3710,9 +3921,13 @@ class GhisdiagApp(tk.Tk):
             c.create_line(x0, yy, x1, yy, fill=BORDER)
             c.create_text(x0 - 6, yy, text=str(temp), anchor="e",
                           fill=FG_MUTED, font=("Segoe UI", 8))
-        ye = Y(95)
+        # Ligne du seuil d'arrêt d'urgence : 95 °C (CPU) ou plafond GPU (90 °C —
+        # le seuil réel peut être abaissé par le slowdown constructeur via NVML).
+        limit = (DEFAULT_GPU_EMERGENCY_TEMP_C if self._bench_target == "gpu"
+                 else 95.0)
+        ye = Y(limit)
         c.create_line(x0, ye, x1, ye, fill=RED, dash=(4, 3))
-        c.create_text(x1 - 2, ye - 7, text="95 °C", anchor="e",
+        c.create_text(x1 - 2, ye - 7, text=f"{limit:.0f} °C", anchor="e",
                       fill=RED, font=("Segoe UI", 8))
         for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
             t = total * frac
@@ -3722,7 +3937,7 @@ class GhisdiagApp(tk.Tk):
         return c, x0, y0, x1, y1, X, Y
 
     @staticmethod
-    def _bench_polyline(c, samples, key, color, X, Y, getter, dash=None):
+    def _bench_polyline(c, samples, key, color, X, Y, getter, dash=None, width=2):
         pts = []
         for s in samples:
             v = getter(s, key)
@@ -3731,7 +3946,7 @@ class GhisdiagApp(tk.Tk):
             pts.extend((X(s.get("t", 0)), Y(v)))
         if len(pts) >= 4:
             kw = {"dash": dash} if dash else {}
-            c.create_line(*pts, fill=color, width=2, smooth=True, **kw)
+            c.create_line(*pts, fill=color, width=width, smooth=True, **kw)
         elif len(pts) == 2:
             c.create_oval(pts[0] - 2, pts[1] - 2, pts[0] + 2, pts[1] + 2,
                           fill=color, width=0)
@@ -3749,28 +3964,30 @@ class GhisdiagApp(tk.Tk):
             lx += 17 + len(lbl) * 7 + 18
 
     @staticmethod
-    def _bench_throttle_ranges(samples, bounds):
+    def _bench_throttle_ranges(samples, bounds, clock_key="clock",
+                               temp_key="cpu", floor=THROTTLE_TEMP_FLOOR_C):
         """Detecte les intervalles de throttling pendant la phase de charge, en
         reprenant les seuils de thermal_bench.compute_metrics() (chute de
         frequence vs debut de charge, a temperature elevee) mais echantillon
-        par echantillon pour un affichage sur la courbe."""
+        par echantillon pour un affichage sur la courbe. Les cles et le plancher
+        de temperature dependent de la cible (cpu ou gpu)."""
         load = next(((a, b) for a, b, name in bounds if name == "load"), None)
         if load is None:
             return []
         a, b = load
         load_samples = [s for s in samples if a <= s.get("t", -1) <= b]
         early_end = a + 0.4 * (b - a)
-        early_clocks = [s["clock"] for s in load_samples
-                         if s.get("clock") and s.get("t", 0) <= early_end]
+        early_clocks = [s[clock_key] for s in load_samples
+                         if s.get(clock_key) and s.get("t", 0) <= early_end]
         if not early_clocks:
             return []
         threshold = max(early_clocks) * (1 - THROTTLE_CLOCK_DROP)
         ranges = []
         cur_start = None
         for s in load_samples:
-            clk, temp, t = s.get("clock"), s.get("cpu"), s.get("t", 0)
+            clk, temp, t = s.get(clock_key), s.get(temp_key), s.get("t", 0)
             hot = (clk is not None and clk < threshold
-                   and temp is not None and temp >= THROTTLE_TEMP_FLOOR_C)
+                   and temp is not None and temp >= floor)
             if hot and cur_start is None:
                 cur_start = t
             elif not hot and cur_start is not None:
@@ -3785,14 +4002,34 @@ class GhisdiagApp(tk.Tk):
         if geom is None:
             return
         c, x0, y0, x1, y1, X, Y = geom
-        series = (("cpu", RED, "CPU"), ("gpu", GREEN, "GPU"), ("__disk__", YELLOW, "Disque"))
-        for key, color, _lbl in series:
+        gpu_mode = self._bench_target == "gpu"
+        # La serie de la cible est tracee EN DERNIER (premier plan) et plus
+        # epaisse ; les autres restent en contexte.
+        if gpu_mode:
+            series = (("__disk__", YELLOW, "Disque", 2), ("cpu", RED, "CPU", 2),
+                      ("gpu", GREEN, "GPU", 3))
+        else:
+            series = (("__disk__", YELLOW, "Disque", 2), ("gpu", GREEN, "GPU", 2),
+                      ("cpu", RED, "CPU", 3))
+        for key, color, _lbl, width in series:
             self._bench_polyline(c, self._bench_samples, key, color, X, Y,
-                                 self._bench_sample_value)
-        ranges = self._bench_throttle_ranges(self._bench_samples, self._bench_bounds)
+                                 self._bench_sample_value, width=width)
+        if gpu_mode:
+            # Plancher « croire le signal thermique » aligne sur le moteur :
+            # slowdown NVML - marge quand connu, sinon plancher absolu.
+            slow = next((s.get("gpu_slowdown_c") for s in self._bench_samples
+                         if s.get("gpu_slowdown_c") is not None), None)
+            ranges = self._bench_throttle_ranges(
+                self._bench_samples, self._bench_bounds,
+                clock_key="gpu_clock", temp_key="gpu",
+                floor=_gpu_throttle_floor(slow))
+        else:
+            ranges = self._bench_throttle_ranges(self._bench_samples,
+                                                 self._bench_bounds)
         for ra, rb in ranges:
             c.create_line(X(ra), y1 - 4, X(rb), y1 - 4, fill=ORANGE, width=4)
-        legend = [(col, lbl) for _k, col, lbl in series]
+        # Legende dans l'ordre de lecture habituel (cible d'abord).
+        legend = [(col, lbl) for _k, col, lbl, _w in reversed(series)]
         if ranges:
             legend.append((ORANGE, "Throttling"))
         self._bench_legend(c, x0, y0, legend)
