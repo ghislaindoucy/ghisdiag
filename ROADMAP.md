@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.6.0** (2026-06-19) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.0)
+**Version actuelle : 1.7.0** (2026-07-17) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.7.0)
 
 ---
 
@@ -120,7 +120,25 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
 
 ---
 
-### v1.7.0 — Diagnostic encore plus parlant
+### v1.7.0 — 🎮 Bench thermique GPU ✅ *livré*
+
+**Le besoin** : le même avant/après objectif que pour le CPU, appliqué à la carte
+graphique (dépoussiérage, changement de pâte/pads).
+
+- **Charge GPU vendor-neutral** : compute shader Direct3D 11 piloté en ctypes/COM,
+  aucun binaire ajouté (d3d11/dxgi/d3dcompiler = composants Windows), dispatches
+  courts calibrés anti-TDR — validé NVIDIA / AMD APU / Intel iGPU, 0 incident
+- **Mesures NVML** fiables sous charge (temp, clock, power, raison de bridage du
+  pilote) avec session persistante sur le GPU ciblé ; repli LHM pour AMD/Intel
+- **UI** : cible CPU/GPU, choix de la carte (iGPU sans capteur écartés), relevés
+  temps réel adaptés, liste des sessions filtrée CPU | GPU
+- **Sécurité** : arrêt avant le seuil de bridage constructeur (slowdown NVML) ou
+  sur bridage thermique confirmé — jamais sur le bit seul (faux positif au repos)
+- **Comparaison + rapport HTML GPU** : verdict chiffré, gains (dont hotspot et
+  chute de clock), garde-fous protocole identique + même carte
+- Suivi de chantier : `GPU_BENCH_PROGRESS.md` (M0→M6, validations atelier)
+
+### v1.8.0 — Diagnostic encore plus parlant
 
 - **Résumé exécutif** « Ce qui ralentit ce PC » en tête du rapport HTML (top 3 priorisé)
 - **Pilotes obsolètes / non signés** : détection + source de mise à jour
