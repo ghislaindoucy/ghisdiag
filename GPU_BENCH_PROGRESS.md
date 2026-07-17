@@ -150,7 +150,7 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       d'adaptateur correcte partout. Détail : section « Résultats charge GPU atelier ».
 - [ ] Intégration au moteur = **M3**.
 
-### M3 — Généralisation du moteur ✅ *(fait 2026-07-17, à valider atelier)*
+### M3 — Généralisation du moteur ✅ *(fait + validé atelier 2026-07-17)*
 - [x] `BenchConfig` : `target` (`cpu` | `gpu`), `gpu_adapter` (index/nom/None=auto),
       `gpu_emergency_temp_c` (défaut 90 °C). Défauts = comportement CPU inchangé.
 - [x] Abstraction : interface `_ILoadGenerator` (Popen + taskkill /T communs) ;
@@ -184,11 +184,18 @@ aucun des deux n'est installé. Testé sur la machine de dev (chemin OK, cas
       44→70 °C (Δ23 °C), 99 % charge soutenue, clock NVML stable 1721 MHz
       (aucune chute), aucune urgence, session JSON standard écrite. Bout-en-bout
       validé sur materiel reel.
-- [ ] **Validation atelier multi-machines** : idem sur dGPU NVIDIA autre que la
-      P2000 + si possible AMD discret. Outil prêt :
-      [atelier_thermal_bench_gpu.py](atelier_thermal_bench_gpu.py) +
-      [test_thermal_bench_gpu_atelier.bat](test_thermal_bench_gpu_atelier.bat)
-      (double-clic, ~1min45, rapport JSON horodaté à côté du script).
+- [x] **Validation atelier multi-machines (2026-07-17, 4 machines)** — moteur M3
+      complet via `atelier_thermal_bench_gpu.py`. AUCUN TDR / crash / urgence à tort.
+      Détail : section « Résultats moteur GPU atelier » ci-dessous.
+      - GTX 1060 3GB (desktop) : 36→61 °C (Δ23), 100 %, clock NVML 1949 stable, 99 W.
+      - GT 1030 (desktop) : 35→55 °C (Δ18), 97 %, clock 1695 stable ; `power_limited`
+        OK ; **power NVML absent** sur cette carte (`gpu_power_max_w=null`).
+      - RTX 4060 Laptop (hybride) : 49→62 °C (Δ12), 99 %, clock 2055 stable. **Bit
+        `sw_thermal` présent AU REPOS ignoré** → `gpu_throttling=false`, aucune urgence :
+        exactement la leçon M1, prouvée dans le moteur M3.
+      - Intel iGPU : **refusé proprement** (« aucune température GPU… GPU intégré »).
+      - Reste souhaitable : un vrai **dGPU AMD discret** (toujours absent du parc).
+- Reste AMD discret + un test avant/après réel (M5) pour boucler.
 
 ### M4 — UI onglet bench ⬜
 - [ ] Sélecteur **cible CPU / GPU** (radio) dans l'onglet bench.
@@ -271,6 +278,41 @@ sur tous (utilisation ou clock/power qui montent).
 - **Puissance modérée sur gros dGPU** (RTX 4060 : 30 W sur ~100 W possibles) : le shader ne
   sature pas électriquement. +12 °C suffit pour un avant/après, mais RAFFINEMENT OPTIONNEL :
   noyau plus lourd (plus d'ALU / transcendantales) pour pousser les gros dGPU.
+
+## 🧪 Résultats moteur GPU atelier (2026-07-17, 4 machines — M3)
+
+Bench complet via `atelier_thermal_bench_gpu.py` (repos 15s → charge 60s →
+refroidissement 30s), qui pilote `ThermalBench(target="gpu")` — le chemin exact
+de l'UI M4. **Aucun TDR, aucun crash, aucune urgence déclenchée à tort.**
+
+| Machine | GPU ciblé | idle→max | Δ | Charge | Clock NVML (chute) | Power | Verdict moteur |
+|---|---|---|---|---|---|---|---|
+| DESKTOP-FAJH22R | GTX 1060 3GB (desktop) | 36→61 °C | 23 | 100 % | 1949 MHz (1.3 %) | 99.2 W | sain, rien à signaler |
+| DESKTOP-6U1TDAO | GT 1030 (desktop) | 35→55 °C | 18 | 97 % | 1695 MHz (0.7 %) | **null** | `power_limited` |
+| MSI | RTX 4060 Laptop (hybride) | 49→62 °C | 12 | 99 % | 2055 MHz (0.0 %) | 31.4 W | `power_limited` |
+| DESKTOP-S8SFDM7 | Intel iGPU | — | — | — | — | — | **refusé** (pas de temp GPU) |
+
+**Validation la plus importante — RTX 4060 (MSI)** : NVML remonte
+`["sw_power_cap","sw_thermal"]` **dès le repos** (49 °C / 0 % charge, slowdown 91 °C).
+Le moteur garde `gpu_throttling=false` et **ne déclenche aucune urgence** : la temp
+(max 62 °C) n'a jamais atteint le plancher `slowdown-10=81 °C`. C'est la preuve
+terrain que la logique « ne jamais croire le bit thermique seul » (leçon M1) est
+correctement implémentée dans le moteur M3. `power_limited` détecté sans le
+confondre avec du thermique.
+
+**Enseignements pour M4 (pas des bugs) :**
+1. **`gpu_power_max_w` peut être `null`** (GT 1030 : NVML n'expose pas la puissance
+   sur certaines vieilles/petites cartes, même si `sw_power_cap` remonte). L'UI M4
+   doit afficher « n/a » proprement, pas 0 ni un vide trompeur.
+2. **`gpu_cooldown_sec=null` sur les cartes desktop** : le refroidissement de 30 s
+   *du script de test* est trop court pour redescendre à idle+5 °C (la RTX 4060
+   laptop y arrive en 4.4 s). Métrique **correcte** (null = non atteint) ; en usage
+   réel M4 le cooldown sera long (300 s comme le CPU). Rien à corriger.
+3. **Sélection d'adaptateur sur hybride OK** : le MSI (iGPU Intel + RTX 4060) a bien
+   ciblé la RTX 4060 dGPU. WARP/iGPU écartés.
+4. **Chaleur modérée sur gros dGPU** confirmée (RTX 4060 : 31 W sur ~100 W, Δ12 °C ;
+   RAFFINEMENT OPTIONNEL noyau plus lourd, cf. M2). Les cartes desktop plus petites
+   (GTX 1060 : 99 W, GT 1030) chauffent mieux relativement.
 
 ## ❓ Questions ouvertes (à trancher en chemin)
 
@@ -361,3 +403,19 @@ sur tous (utilisation ou clock/power qui montent).
   (au moins un 2e dGPU NVIDIA, AMD discret si dispo) pour confirmer que la
   résolution d'adaptateur et l'absence de faux-positifs d'urgence tiennent
   au-delà de la machine de dev.
+
+### 2026-07-17 — Session 8 (validation atelier M3, 4 machines)
+- `atelier_thermal_bench_gpu.py` passé sur **4 machines** : GTX 1060 3GB, GT 1030,
+  RTX 4060 Laptop (hybride), Intel iGPU. **Aucun TDR, aucun crash, aucune urgence
+  à tort.** Détail chiffré : section « Résultats moteur GPU atelier ».
+- **Validation clé** : sur la RTX 4060, le bit `sw_thermal` présent DÈS LE REPOS
+  (49 °C / 0 %) est correctement ignoré par le moteur → `gpu_throttling=false`,
+  pas d'urgence. La leçon M1 (« ne pas croire le bit seul ») tient dans le moteur M3.
+- iGPU Intel refusé proprement (message clair, pas de plante). Sélection dGPU
+  correcte sur l'hybride. **M3 clos côté validation NVIDIA + iGPU.**
+- 2 enseignements M4 (pas des bugs) : `gpu_power` peut être `null` (GT 1030) →
+  afficher « n/a » ; `gpu_cooldown_sec=null` avec un cooldown court (normal, sera
+  300 s en usage réel).
+- Reste souhaitable : un vrai **dGPU AMD discret** (jamais dans le parc) + un
+  avant/après réel (relève de M5).
+- **Prochaine étape : M4 (UI).**
