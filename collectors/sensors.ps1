@@ -115,6 +115,7 @@ function Get-Sample {
 
     $cpuPkg = $null; $cpuMax = $null; $cpuAvg = $null; $cpuLoad = $null; $cpuClkMax = $null
     $gpuTemp = $null; $gpuHot = $null; $gpuLoad = $null; $gpuFan = $null
+    $gpuClk = $null; $gpuPwr = $null; $gpuName = $null
 
     # Diagnostic : liste brute de TOUS les capteurs CPU vus (nom + type + valeur).
     # Sert a identifier pourquoi un CPU ne remonte pas de temperature (Celeron,
@@ -157,6 +158,7 @@ function Get-Sample {
                         elseif ($s.SensorType -eq "Load" -and $n -eq "CPU Total") { $cpuLoad = $v }
                     }
                     { $_ -like "Gpu*" } {
+                        if ($null -eq $gpuName) { $gpuName = [string]$hw.Name }
                         if ($s.SensorType -eq "Temperature") {
                             if ($n -eq "GPU Core" -or $n -eq "GPU") {
                                 if ($null -eq $gpuTemp -or $v -gt $gpuTemp) { $gpuTemp = $v }
@@ -166,6 +168,13 @@ function Get-Sample {
                         elseif ($s.SensorType -eq "Load" -and $n -eq "GPU Core") { $gpuLoad = $v }
                         elseif ($s.SensorType -eq "Fan") {
                             if ($null -eq $gpuFan -or $v -gt $gpuFan) { $gpuFan = [int]$v }
+                        }
+                        # Frequence coeur GPU et puissance : servent au bench GPU
+                        # (detection de bridage : la frequence s'effondre quand la
+                        # temperature plafonne). Power = le plus eleve vu (Package/PPT).
+                        elseif ($s.SensorType -eq "Clock" -and $n -eq "GPU Core") { $gpuClk = $v }
+                        elseif ($s.SensorType -eq "Power") {
+                            if ($null -eq $gpuPwr -or $v -gt $gpuPwr) { $gpuPwr = $v }
                         }
                     }
                     "Storage" {
@@ -209,6 +218,9 @@ function Get-Sample {
     $h['gpu_hotspot']   = (R1 $gpuHot)
     $h['gpu_load']      = (R1 $gpuLoad)
     $h['gpu_fan']       = $gpuFan
+    $h['gpu_name']      = $gpuName
+    $h['gpu_core_clock'] = if ($null -ne $gpuClk) { [math]::Round([double]$gpuClk, 0) } else { $null }
+    $h['gpu_power']     = (R1 $gpuPwr)
     # .ToArray() et pas @(...) : sur une List[object], l'operateur @() leve une
     # ArgumentException en PowerShell 5.1 (quirk connu) ; ToArray est sur.
     $h['fans']          = $fans.ToArray()

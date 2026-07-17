@@ -1,16 +1,20 @@
 """
-Ghisdiag - Moteur de bench thermique (Phase 1)
+Ghisdiag - Moteur de bench thermique
 
 Objective un nettoyage / changement de pate thermique en mesurant le
 comportement en temperature d'une machine selon un protocole reproductible :
 
-    repos (baseline) -> charge CPU -> refroidissement
+    repos (baseline) -> charge (CPU ou GPU) -> refroidissement
 
 Le moteur s'appuie sur collectors.sensors.SensorStream (LibreHardwareMonitor)
-pour l'echantillonnage et sur collectors/cpu_load.ps1 pour generer la charge.
-Il calcule les metriques utiles (T idle, T max, T plateau, deltaT, temps de
-retour au calme, throttling), declenche un arret d'urgence au-dela d'un seuil,
-et sauvegarde la session en JSON horodate dans Documents\\Ghisdiag_Reports\\thermal.
+pour l'echantillonnage et sur un generateur de charge selon la cible :
+collectors/cpu_load.py (multiprocessing) ou collectors/gpu_load.py (compute
+D3D11). En cible GPU, les echantillons sont enrichis via NVML quand disponible
+(clock/power/raison de bridage fiables sous charge, la ou LHM peut rester fige
+sur NVIDIA). Il calcule les metriques utiles (T idle, T max, T plateau, deltaT,
+temps de retour au calme, throttling), declenche un arret d'urgence au-dela d'un
+seuil (dynamique cote GPU : seuil slowdown NVML), et sauvegarde la session en
+JSON horodate dans Documents\\Ghisdiag_Reports\\thermal.
 
 Conception : moteur pur (sans UI). Il expose des callbacks (on_sample, on_phase,
 on_finish, on_error) appeles depuis des threads de fond ; l'UI (Phase 2) devra
@@ -43,6 +47,42 @@ SCHEMA_VERSION = 1
 # Seuil d'arret d'urgence (temperature CPU de reference, en degres C).
 DEFAULT_EMERGENCY_TEMP_C = 95.0
 
+# Seuil d'arret d'urgence GPU par defaut. Quand NVML expose le seuil slowdown du
+# GPU (`temp_slowdown_c`), le seuil effectif devient min(ce plafond, slowdown -
+# GPU_SLOWDOWN_MARGIN_C) : on coupe AVANT que la carte ne se bride d'elle-meme.
+DEFAULT_GPU_EMERGENCY_TEMP_C = 90.0
+GPU_SLOWDOWN_MARGIN_C = 3.0
+
+# Le bit NVML `throttle_thermal` peut etre TRUE au repos sur certaines cartes
+# (vu en atelier : RTX 4060 a 47 C / 0 % de charge). On ne le croit que si la
+# temperature est PROCHE du seuil slowdown : slowdown - GPU_THROTTLE_PROX_C,
+# ou a defaut (slowdown inconnu) au-dessus d'un plancher absolu.
+GPU_THROTTLE_PROX_C         = 10.0
+GPU_THROTTLE_TEMP_FLOOR_C   = 75.0
+
+# Classification des raisons de bridage NVML pour le bench. hw_slowdown (clocks
+# divisees par 2 par un signal materiel) est range cote THERMIQUE : c'est
+# precisement le "clock qui chute" qu'on cherche — mais comme sw/hw_thermal, il
+# n'est cru que temperature a l'appui (voir _gpu_throttle_floor). Unique source
+# de verite pour l'urgence ET les metriques (pas le bool throttle_thermal de
+# collectors.gpu, qui exclut hw_slowdown).
+GPU_THERMAL_REASONS = frozenset({"sw_thermal", "hw_thermal", "hw_slowdown"})
+GPU_POWER_REASONS   = frozenset({"sw_power_cap", "hw_power_brake"})
+
+
+def _gpu_throttle_floor(slowdown_c) -> float:
+    """Temperature minimale pour CROIRE un signal thermique NVML (le bit peut
+    etre vrai au repos). slowdown_c falsy (None ou 0 = valeur invalide d'un
+    driver) -> plancher absolu. Partage entre urgence et metriques : les deux
+    doivent qualifier « proche du slowdown » de la meme facon."""
+    return slowdown_c - GPU_THROTTLE_PROX_C if slowdown_c else GPU_THROTTLE_TEMP_FLOOR_C
+
+
+# Fenetres relatives de decoupage de la phase de charge, partagees CPU/GPU :
+# regime etabli (plateau / fin de charge) et debut etabli (apres la montee).
+STEADY_WINDOW = (0.66, 1.0)
+EARLY_WINDOW  = (0.10, 0.40)
+
 # Marge de "retour au calme" : le refroidissement est considere termine quand la
 # temperature redescend a T_idle + cette marge.
 RECOVERY_MARGIN_C = 5.0
@@ -68,7 +108,8 @@ STREAM_WARMUP_SEC = 20.0
 THROTTLE_CLOCK_DROP    = 0.05   # 5 %
 THROTTLE_TEMP_FLOOR_C  = 90.0   # en-dessous : limite de puissance, pas thermique
 
-VALID_LABELS = ("avant", "apres", "libre")
+VALID_LABELS  = ("avant", "apres", "libre")
+VALID_TARGETS = ("cpu", "gpu")
 
 
 class BenchPhase(Enum):
@@ -82,19 +123,24 @@ class BenchConfig:
     """Parametres d'une session de bench."""
     label: str               = "libre"          # avant | apres | libre
     idle_sec: int            = 120               # repos / baseline
-    load_sec: int            = 300               # charge CPU
+    load_sec: int            = 300               # charge
     cooldown_sec: int        = 300               # refroidissement
     intensity: int           = 100               # rapport cyclique 1..100
-    threads: int             = 0                 # 0 = tous les coeurs logiques
+    threads: int             = 0                 # 0 = tous les coeurs logiques (cpu)
     kernel: str              = "python"          # python (FPU) | avx (stress numpy)
     sample_interval_ms: int  = 2000              # periode d'echantillonnage
     emergency_temp_c: float  = DEFAULT_EMERGENCY_TEMP_C
     output_dir: Optional[str] = None             # None = dossier standard
+    target: str              = "cpu"             # cpu | gpu
+    gpu_adapter: Optional[str] = None            # index ou sous-chaine du nom
+                                                 # (None = dGPU le plus gros)
+    gpu_emergency_temp_c: float = DEFAULT_GPU_EMERGENCY_TEMP_C
 
     def normalized(self) -> "BenchConfig":
         """Retourne une copie aux valeurs bornees / validees."""
         label = self.label if self.label in VALID_LABELS else "libre"
         kernel = self.kernel if self.kernel in ("python", "avx") else "python"
+        target = self.target if self.target in VALID_TARGETS else "cpu"
         return BenchConfig(
             label=label,
             idle_sec=max(0, int(self.idle_sec)),
@@ -106,6 +152,9 @@ class BenchConfig:
             sample_interval_ms=max(500, int(self.sample_interval_ms)),
             emergency_temp_c=float(self.emergency_temp_c),
             output_dir=self.output_dir,
+            target=target,
+            gpu_adapter=self.gpu_adapter,
+            gpu_emergency_temp_c=float(self.gpu_emergency_temp_c),
         )
 
 
@@ -130,10 +179,12 @@ def _resolve_python() -> str:
 # (gere dans main.py) qui bascule vers le mode worker sans GUI.
 _FROZEN = getattr(sys, "frozen", False)
 _CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
+_GPU_LOAD_WORKER_FLAG = "--ghisdiag-gpu-load-worker"
 
-_PYTHON_EXE   = _resolve_python()
-_LOAD_SCRIPT  = _base_path() / "collectors" / "cpu_load.py"
-_NO_WINDOW    = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_PYTHON_EXE      = _resolve_python()
+_LOAD_SCRIPT     = _base_path() / "collectors" / "cpu_load.py"
+_GPU_LOAD_SCRIPT = _base_path() / "collectors" / "gpu_load.py"
+_NO_WINDOW       = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _resolve_taskkill() -> str:
@@ -152,39 +203,37 @@ def default_output_dir() -> Path:
             / "Ghisdiag_Reports" / "thermal")
 
 
-# --- Generateur de charge CPU -----------------------------------------------
+# --- Generateurs de charge (CPU / GPU) ---------------------------------------
 
-class _LoadGenerator:
-    """Pilote collectors/cpu_load.py dans un processus dedie."""
+class _ILoadGenerator:
+    """Interface d'un generateur de charge : un processus worker dedie.
 
-    def __init__(self, intensity: int, threads: int, max_duration_sec: int,
-                 kernel: str = "python"):
-        self.intensity        = intensity
-        self.threads          = threads
-        self.max_duration_sec = max_duration_sec
-        self.kernel           = kernel
+    Les implementations fournissent available() et _build_args() ; le
+    lancement (Popen sans fenetre) et l'arret (taskkill de l'ARBRE de
+    processus) sont communs.
+    """
+
+    def __init__(self):
         self._proc: Optional[subprocess.Popen] = None
 
     def available(self) -> bool:
-        return _FROZEN or _LOAD_SCRIPT.is_file()
+        raise NotImplementedError
+
+    def _build_args(self) -> list[str]:
+        raise NotImplementedError
+
+    def _unavailable_hint(self) -> str:
+        return ""
 
     def start(self) -> bool:
         if not self.available():
-            logger.error("cpu_load.py introuvable : %s", _LOAD_SCRIPT)
+            logger.error("%s : generateur de charge indisponible. %s",
+                         type(self).__name__, self._unavailable_hint())
             return False
-        if _FROZEN:
-            args = [_PYTHON_EXE, _CPU_LOAD_WORKER_FLAG]
-        else:
-            args = [_PYTHON_EXE, str(_LOAD_SCRIPT)]
-        args += [
-            "--threads", str(self.threads),
-            "--intensity", str(self.intensity),
-            "--duration", str(self.max_duration_sec),
-            "--kernel", self.kernel,
-        ]
         try:
             self._proc = subprocess.Popen(
-                args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                self._build_args(),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 shell=False, creationflags=_NO_WINDOW,
             )
         except OSError as exc:
@@ -218,6 +267,157 @@ class _LoadGenerator:
                 pass
         finally:
             self._proc = None
+
+
+class _CpuLoadGenerator(_ILoadGenerator):
+    """Pilote collectors/cpu_load.py (multiprocessing, un worker par coeur)."""
+
+    def __init__(self, intensity: int, threads: int, max_duration_sec: int,
+                 kernel: str = "python"):
+        super().__init__()
+        self.intensity        = intensity
+        self.threads          = threads
+        self.max_duration_sec = max_duration_sec
+        self.kernel           = kernel
+
+    def available(self) -> bool:
+        return _FROZEN or _LOAD_SCRIPT.is_file()
+
+    def _unavailable_hint(self) -> str:
+        return f"Script attendu : {_LOAD_SCRIPT}"
+
+    def _build_args(self) -> list[str]:
+        if _FROZEN:
+            args = [_PYTHON_EXE, _CPU_LOAD_WORKER_FLAG]
+        else:
+            args = [_PYTHON_EXE, str(_LOAD_SCRIPT)]
+        return args + [
+            "--threads", str(self.threads),
+            "--intensity", str(self.intensity),
+            "--duration", str(self.max_duration_sec),
+            "--kernel", self.kernel,
+        ]
+
+
+# Retro-compatibilite : ancien nom du generateur CPU.
+_LoadGenerator = _CpuLoadGenerator
+
+
+class _GpuLoadGenerator(_ILoadGenerator):
+    """Pilote collectors/gpu_load.py (compute D3D11, processus unique).
+
+    `adapter_selector` : index DXGI (resolu en amont par le moteur pour
+    stresser exactement l'adaptateur mesure) ou sous-chaine du nom.
+    """
+
+    def __init__(self, intensity: int, adapter_selector, max_duration_sec: int):
+        super().__init__()
+        self.intensity        = intensity
+        self.adapter_selector = adapter_selector
+        self.max_duration_sec = max_duration_sec
+
+    def available(self) -> bool:
+        if not (_FROZEN or _GPU_LOAD_SCRIPT.is_file()):
+            return False
+        try:
+            from collectors import gpu_load
+            return gpu_load.available()
+        except Exception:
+            return False
+
+    def _unavailable_hint(self) -> str:
+        return (f"Script attendu : {_GPU_LOAD_SCRIPT} + DLL systeme "
+                "d3d11/dxgi/d3dcompiler_47")
+
+    def _build_args(self) -> list[str]:
+        if _FROZEN:
+            args = [_PYTHON_EXE, _GPU_LOAD_WORKER_FLAG]
+        else:
+            args = [_PYTHON_EXE, str(_GPU_LOAD_SCRIPT)]
+        args += [
+            "--intensity", str(self.intensity),
+            "--duration", str(self.max_duration_sec),
+        ]
+        if self.adapter_selector is not None and str(self.adapter_selector) != "":
+            args += ["--adapter", str(self.adapter_selector)]
+        return args
+
+
+def _make_generator(cfg: "BenchConfig", gpu_info: Optional[dict] = None) -> _ILoadGenerator:
+    """Instancie le generateur correspondant a la cible du bench."""
+    max_duration = cfg.load_sec + LOAD_SAFETY_MARGIN_SEC
+    if cfg.target == "gpu":
+        selector = gpu_info["index"] if gpu_info is not None else cfg.gpu_adapter
+        return _GpuLoadGenerator(cfg.intensity, selector, max_duration)
+    return _CpuLoadGenerator(cfg.intensity, cfg.threads, max_duration,
+                             kernel=cfg.kernel)
+
+
+# --- Cible GPU : resolution d'adaptateur + lecture NVML ----------------------
+
+def _resolve_gpu_adapter(selector) -> Optional[dict]:
+    """Adaptateur DXGI MATERIEL a bencher (index/nom/None = auto).
+    None si la charge D3D11 est indisponible ou aucun adaptateur materiel."""
+    try:
+        from collectors import gpu_load
+        if not gpu_load.available():
+            return None
+        sel = selector
+        if isinstance(sel, str) and sel.isdigit():
+            sel = int(sel)
+        return gpu_load._match_adapter(gpu_load.list_adapters(), sel)
+    except Exception as exc:
+        logger.debug("thermal_bench._resolve_gpu_adapter : %s", exc)
+        return None
+
+
+class _NvmlGpuSampler:
+    """Lecture NVML du GPU cible, appelee a chaque echantillon.
+
+    Sous charge NVIDIA, la clock lue par LHM peut rester FIGEE (vu en atelier :
+    RTX 4060 lue a 100 MHz malgre 99 % de charge) : clock/power/raison de
+    bridage doivent venir de NVML. open() etablit UNE session NVML persistante
+    (collectors.gpu.NvmlDevice : jointure par nom DXGI<->NVML, handle fige) —
+    pas de rechargement DLL / nvmlInit a chaque sample sur le thread capteurs.
+    Sur AMD/Intel (pas de NVML), open() echoue et read() rend None : le moteur
+    retombe sur le flux LHM.
+    """
+
+    def __init__(self, adapter_name: str):
+        self._name = adapter_name or ""
+        self._dev = None
+        self._warned = False
+
+    def open(self) -> bool:
+        try:
+            from collectors import gpu as gpu_mod
+            self._dev = gpu_mod.NvmlDevice.open_matching(self._name)
+        except Exception as exc:
+            logger.debug("NvmlGpuSampler.open : %s", exc)
+            self._dev = None
+        return self._dev is not None
+
+    def read(self) -> Optional[dict]:
+        if self._dev is None:
+            return None
+        try:
+            return self._dev.sample()
+        except Exception as exc:
+            # Panne NVML en cours de bench : signaler UNE fois (sinon le repli
+            # LHM silencieux masquerait une integration cassee), puis continuer.
+            if not self._warned:
+                self._warned = True
+                logger.warning("Lecture NVML echouee en cours de bench (%s) — "
+                               "repli sur les capteurs LHM.", exc)
+            return None
+
+    def close(self) -> None:
+        if self._dev is not None:
+            try:
+                self._dev.close()
+            except Exception:
+                pass
+            self._dev = None
 
 
 # --- Calcul des metriques (fonctions pures, testables) ----------------------
@@ -257,6 +457,20 @@ def _slice_by_fraction(samples: list[dict], start_f: float, end_f: float) -> lis
     return [s for s in samples if lo <= s["t"] <= hi]
 
 
+def _time_to_recover(cool: list[dict], baseline_c: Optional[float],
+                     key: str) -> Optional[float]:
+    """Delai (s) depuis le debut du refroidissement pour repasser sous
+    baseline + RECOVERY_MARGIN_C sur la cle `key`. None si jamais atteint."""
+    if baseline_c is None or not cool:
+        return None
+    target = baseline_c + RECOVERY_MARGIN_C
+    t_start = cool[0]["t"]
+    for s in cool:
+        if s.get(key) is not None and s[key] <= target:
+            return round(s["t"] - t_start, 1)
+    return None
+
+
 def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     """Derive les metriques de la session a partir des echantillons tagges."""
     idle = [s for s in samples if s["phase"] == BenchPhase.IDLE.value]
@@ -270,7 +484,7 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     # Charge.
     load_cpu = _vals(load, "cpu")
     load_max_c     = round(max(load_cpu), 1) if load_cpu else None
-    load_plateau_c = _median(_vals(_slice_by_fraction(load, 0.66, 1.0) or load, "cpu"))
+    load_plateau_c = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW) or load, "cpu"))
     cpu_load_avg   = _mean(_vals(load, "cpu_load"))
 
     delta_c = (round(load_plateau_c - idle_c, 1)
@@ -289,8 +503,8 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
 
     # Frequence / throttling : on compare le debut etabli (10-40 %) a la fin
     # (dernier tiers) de la phase de charge.
-    clock_early = _median(_vals(_slice_by_fraction(load, 0.10, 0.40), "clock"))
-    clock_late  = _median(_vals(_slice_by_fraction(load, 0.66, 1.0), "clock"))
+    clock_early = _median(_vals(_slice_by_fraction(load, *EARLY_WINDOW), "clock"))
+    clock_late  = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW), "clock"))
     clock_vals  = _vals(load, "clock")
     clock_max_mhz = round(max(clock_vals)) if clock_vals else None
 
@@ -312,16 +526,9 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
 
     # Temps de retour au calme : depuis le debut du refroidissement, delai pour
     # repasser sous T_idle + marge. None si jamais atteint dans la fenetre.
-    cooldown_sec = None
-    if idle_c is not None and cool:
-        target = idle_c + RECOVERY_MARGIN_C
-        t_start = cool[0]["t"]
-        for s in cool:
-            if s.get("cpu") is not None and s["cpu"] <= target:
-                cooldown_sec = round(s["t"] - t_start, 1)
-                break
+    cooldown_sec = _time_to_recover(cool, idle_c, "cpu")
 
-    return {
+    metrics = {
         "idle_c":          idle_c,
         "load_max_c":      load_max_c,
         "load_plateau_c":  load_plateau_c,
@@ -337,6 +544,86 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "power_limited":   power_limited,
         "cooldown_sec":    cooldown_sec,
         "recovery_margin_c": RECOVERY_MARGIN_C,
+    }
+
+    # Bloc GPU : uniquement en cible GPU, pour laisser la sortie des benches
+    # CPU strictement identique (retro-compatibilite comparaison / rapport).
+    if getattr(config, "target", "cpu") == "gpu":
+        metrics.update(_gpu_metrics(idle_steady, load, cool, gpu_idle_c))
+
+    return metrics
+
+
+def _gpu_metrics(idle_steady: list[dict], load: list[dict], cool: list[dict],
+                 gpu_idle_c: Optional[float]) -> dict:
+    """Metriques propres au bench GPU (echantillons deja decoupes par phase).
+
+    Toutes les valeurs de clock viennent de la cle `gpu_clock` des echantillons,
+    alimentee en priorite par NVML (LHM peut rester figee sous charge NVIDIA).
+    """
+    gpu_load_avg  = _mean(_vals(load, "gpu_load"))
+    gpu_plateau_c = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW) or load, "gpu"))
+    gpu_delta_c = (round(gpu_plateau_c - gpu_idle_c, 1)
+                   if (gpu_plateau_c is not None and gpu_idle_c is not None) else None)
+
+    power_vals = _vals(load, "gpu_power")
+    gpu_power_max_w = round(max(power_vals), 1) if power_vals else None
+    hot_vals = _vals(load, "gpu_hotspot")
+    gpu_hotspot_max_c = round(max(hot_vals), 1) if hot_vals else None
+
+    # Clock : memes fenetres que le CPU (debut etabli vs dernier tiers).
+    clk_early = _median(_vals(_slice_by_fraction(load, *EARLY_WINDOW), "gpu_clock"))
+    clk_late  = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW), "gpu_clock"))
+    clk_vals  = _vals(load, "gpu_clock")
+    gpu_clock_max_mhz = round(max(clk_vals)) if clk_vals else None
+    gpu_clock_drop_pct = (round((clk_early - clk_late) / clk_early * 100, 1)
+                          if clk_early and clk_late else None)
+
+    # Raison de bridage NVML observee pendant la charge — meme qualification
+    # que l'urgence (_check_gpu_emergency) : un signal thermique n'est cru que
+    # temperature proche du slowdown a l'appui (bit parasite a froid sinon).
+    slowdown_vals = _vals(load, "gpu_slowdown_c")
+    gpu_slowdown_c = slowdown_vals[0] if slowdown_vals else None
+    floor = _gpu_throttle_floor(gpu_slowdown_c)
+    thermal_reason_seen = any(
+        (set(s.get("gpu_throttle") or ()) & GPU_THERMAL_REASONS)
+        and (s.get("gpu") or 0) >= floor
+        for s in load)
+    power_reason_seen = any(
+        set(s.get("gpu_throttle") or ()) & GPU_POWER_REASONS
+        for s in load)
+
+    gpu_vals_load = _vals(load, "gpu")
+    gpu_max = max(gpu_vals_load) if gpu_vals_load else None
+    gpu_throttling = False
+    gpu_power_limited = False
+    if thermal_reason_seen:
+        gpu_throttling = True
+    if gpu_clock_drop_pct is not None and clk_late < clk_early * (1 - THROTTLE_CLOCK_DROP):
+        # Chute de clock soutenue : thermique si chaud (ou raison NVML), sinon
+        # limite de puissance (normale : power cap constructeur).
+        if gpu_throttling or (gpu_max or 0) >= floor:
+            gpu_throttling = True
+        else:
+            gpu_power_limited = True
+    elif power_reason_seen and not gpu_throttling:
+        gpu_power_limited = True
+
+    # Retour au calme de la temperature GPU.
+    gpu_cooldown_sec = _time_to_recover(cool, gpu_idle_c, "gpu")
+
+    return {
+        "gpu_plateau_c":      gpu_plateau_c,
+        "gpu_delta_c":        gpu_delta_c,
+        "gpu_load_avg":       gpu_load_avg,
+        "gpu_power_max_w":    gpu_power_max_w,
+        "gpu_hotspot_max_c":  gpu_hotspot_max_c,
+        "gpu_clock_max_mhz":  gpu_clock_max_mhz,
+        "gpu_clock_drop_pct": gpu_clock_drop_pct,
+        "gpu_slowdown_c":     gpu_slowdown_c,
+        "gpu_throttling":     gpu_throttling,
+        "gpu_power_limited":  gpu_power_limited,
+        "gpu_cooldown_sec":   gpu_cooldown_sec,
     }
 
 
@@ -381,6 +668,7 @@ def list_sessions(output_dir: Optional[str] = None) -> list[dict]:
         out.append({
             "file":        str(p),
             "label":       data.get("label"),
+            "target":      (data.get("config") or {}).get("target", "cpu"),
             "started_at":  data.get("started_at"),
             "metrics":     data.get("metrics", {}),
             "aborted":     data.get("aborted", False),
@@ -427,7 +715,9 @@ class ThermalBench:
 
         self._thread: Optional[threading.Thread] = None
         self._stream: Optional[SensorStream] = None
-        self._load:   Optional[_LoadGenerator] = None
+        self._load:   Optional[_ILoadGenerator] = None
+        self._gpu_info: Optional[dict] = None            # adaptateur DXGI cible
+        self._gpu_nvml: Optional[_NvmlGpuSampler] = None  # lecture NVML (cible gpu)
 
         self._cancel = threading.Event()
         self._sensor_stalled = threading.Event()  # backend capteurs fige (watchdog)
@@ -472,6 +762,18 @@ class ThermalBench:
         self._t0 = time.monotonic()
         self._started_at = datetime.now().isoformat(timespec="seconds")
         try:
+            # Cible GPU : resoudre l'adaptateur AVANT de demarrer les capteurs
+            # (echec immediat plutot qu'apres 20 s de warmup).
+            if cfg.target == "gpu":
+                self._gpu_info = _resolve_gpu_adapter(cfg.gpu_adapter)
+                if self._gpu_info is None:
+                    self._error("Bench GPU impossible : aucun adaptateur graphique "
+                                "materiel utilisable (D3D11/DXGI indisponibles, "
+                                "adaptateur introuvable, ou seul WARP present).")
+                    return
+                self._gpu_nvml = _NvmlGpuSampler(self._gpu_info["name"])
+                self._gpu_nvml.open()   # False = pas de NVML -> repli LHM
+
             self._stream = SensorStream(cfg.sample_interval_ms,
                                         on_sample=self._record,
                                         on_stall=self._on_stall)
@@ -480,10 +782,11 @@ class ThermalBench:
                 return
 
             # Verifier que les capteurs repondent AVANT le protocole : un premier
-            # echantillon avec temperature CPU exploitable. Sinon on renonce avec
-            # un message clair (backend fige, CPU recent non supporte...) plutot
-            # que de lancer 10 minutes de bench dans le vide.
-            if not self._stream.wait_first_sample(STREAM_WARMUP_SEC, require_cpu_temp=True):
+            # echantillon avec temperature CPU exploitable (cible cpu). Sinon on
+            # renonce avec un message clair (backend fige, CPU recent non
+            # supporte...) plutot que de lancer 10 minutes de bench dans le vide.
+            if not self._stream.wait_first_sample(STREAM_WARMUP_SEC,
+                                                  require_cpu_temp=(cfg.target == "cpu")):
                 self._stream.stop()
                 if self._stream.stalled:
                     self._error("Capteurs figes : " + (self._stream.stall_reason
@@ -499,6 +802,18 @@ class ThermalBench:
                                 f"{STREAM_WARMUP_SEC:.0f}s). Voir diagnose_sensors.py.")
                 return
 
+            # Cible GPU : exiger une temperature GPU exploitable (NVML ou LHM).
+            # Sans elle, ni surveillance d'urgence ni metriques : on renonce
+            # (cas typique : iGPU Intel, aucune temp GPU exposee -> non
+            # benchable thermiquement, c'est normal).
+            if cfg.target == "gpu" and not self._gpu_temp_available():
+                self._stream.stop()
+                self._error("Bench GPU impossible : aucune temperature GPU "
+                            f"disponible pour « {self._gpu_info['name']} » "
+                            "(typique d'un GPU integre). Le bench thermique GPU "
+                            "n'a de sens que sur une carte dediee avec capteur.")
+                return
+
             # Phase repos
             self._enter_phase(BenchPhase.IDLE)
             r = self._wait(cfg.idle_sec, watch_emergency=False)
@@ -512,9 +827,7 @@ class ThermalBench:
 
             # Phase charge
             self._enter_phase(BenchPhase.LOAD)
-            self._load = _LoadGenerator(
-                cfg.intensity, cfg.threads, cfg.load_sec + LOAD_SAFETY_MARGIN_SEC,
-                kernel=cfg.kernel)
+            self._load = _make_generator(cfg, self._gpu_info)
             if not self._load.start():
                 self._finalize(aborted=True, reason="Echec du generateur de charge")
                 return
@@ -547,6 +860,8 @@ class ThermalBench:
                 self._load.stop()
             if self._stream is not None:
                 self._stream.stop()
+            if self._gpu_nvml is not None:
+                self._gpu_nvml.close()
             self._running = False
 
     def _wait(self, seconds: int, watch_emergency: bool) -> str:
@@ -573,10 +888,26 @@ class ThermalBench:
         idx = self._PHASE_ORDER.index(phase) + 1
         self._invoke(self._cb.on_phase, phase, idx, len(self._PHASE_ORDER))
 
+    def _gpu_temp_available(self) -> bool:
+        """Une temperature GPU est-elle lisible (NVML ou flux LHM) ?"""
+        nv = self._gpu_nvml.read() if self._gpu_nvml is not None else None
+        if nv is not None and nv.get("temp") is not None:
+            return True
+        s = self._stream.latest() if self._stream is not None else None
+        return bool(s) and s.get("gpu_temp") is not None
+
+    @staticmethod
+    def _first(*vals):
+        """Premiere valeur non-None (0 et 0.0 sont des valeurs valides)."""
+        return next((v for v in vals if v is not None), None)
+
     def _record(self, sample: dict) -> None:
         """Callback SensorStream (thread lecteur) : tag + stockage + emergency."""
         if not self._running:
             return
+        # Cible GPU : lecture NVML synchrone du GPU cible (clock/power/throttle
+        # fiables sous charge). None sur AMD/Intel -> repli sur le flux LHM.
+        nv = self._gpu_nvml.read() if self._gpu_nvml is not None else None
         rec = {
             "t":        round(time.monotonic() - self._t0, 2),
             "phase":    self._phase.value,
@@ -585,20 +916,58 @@ class ThermalBench:
             "cpu_max":  sample.get("cpu_max"),
             "cpu_load": sample.get("cpu_load"),
             "clock":    sample.get("cpu_clock_max"),
-            "gpu":      sample.get("gpu_temp"),
-            "gpu_load": sample.get("gpu_load"),
-            "gpu_fan":  sample.get("gpu_fan"),
+            "gpu":      self._first(nv.get("temp") if nv else None,
+                                    sample.get("gpu_temp")),
+            "gpu_load": self._first(nv.get("load") if nv else None,
+                                    sample.get("gpu_load")),
+            "gpu_fan":  sample.get("gpu_fan"),   # LHM (RPM) — le % NVML n'est
+                                                 # pas melange (unites differentes)
+            "gpu_hotspot": sample.get("gpu_hotspot"),
+            "gpu_clock":   self._first(nv.get("clock_sm_mhz") if nv else None,
+                                       sample.get("gpu_core_clock")),
+            "gpu_power":   self._first(nv.get("power_w") if nv else None,
+                                       sample.get("gpu_power")),
             "fans":     list(sample.get("fans") or []),
             "disks":    sample.get("disks") or [],
         }
+        if nv is not None:
+            rec["gpu_throttle"]   = list(nv.get("throttle_reasons") or [])
+            rec["gpu_slowdown_c"] = nv.get("temp_slowdown_c")
         self._samples.append(rec)
 
         # Arret d'urgence : seuil franchi pendant la charge.
-        if (self._phase == BenchPhase.LOAD and rec["cpu"] is not None
-                and rec["cpu"] >= self.config.emergency_temp_c):
-            self._emergency = True
+        if self._phase == BenchPhase.LOAD:
+            if self.config.target == "gpu":
+                self._check_gpu_emergency(rec)
+            elif (rec["cpu"] is not None
+                    and rec["cpu"] >= self.config.emergency_temp_c):
+                self._emergency = True
 
         self._invoke(self._cb.on_sample, rec)
+
+    def _check_gpu_emergency(self, rec: dict) -> None:
+        """Urgence GPU : pas un simple seuil fixe (lecons atelier).
+
+        1. Plafond de temperature : min(seuil configure, slowdown NVML - marge)
+           — on coupe avant que la carte ne se bride elle-meme.
+        2. Raison de bridage thermique NVML (GPU_THERMAL_REASONS, y compris
+           hw_slowdown = clocks divisees) : fiable UNIQUEMENT si la temperature
+           est proche du seuil slowdown (le bit peut etre vrai au repos sur
+           certaines cartes). Meme classification que _gpu_metrics.
+        """
+        t = rec.get("gpu")
+        if t is None:
+            return
+        slowdown = rec.get("gpu_slowdown_c")
+        cap = self.config.gpu_emergency_temp_c
+        if slowdown:   # falsy voulu : 0 = valeur invalide (driver), pas un seuil
+            cap = min(cap, slowdown - GPU_SLOWDOWN_MARGIN_C)
+        if t >= cap:
+            self._emergency = True
+            return
+        if (set(rec.get("gpu_throttle") or ()) & GPU_THERMAL_REASONS
+                and t >= _gpu_throttle_floor(slowdown)):
+            self._emergency = True
 
     def _finalize(self, aborted: bool, reason: Optional[str]) -> None:
         metrics = compute_metrics(self._samples, self.config)
@@ -616,6 +985,13 @@ class ThermalBench:
             "metrics":     metrics,
             "samples":     self._samples,
         }
+        if self._gpu_info is not None:
+            session["gpu_adapter"] = {
+                "index":   self._gpu_info.get("index"),
+                "name":    self._gpu_info.get("name"),
+                "vendor":  self._gpu_info.get("vendor"),
+                "vram_mb": self._gpu_info.get("vram_mb"),
+            }
         path = None
         try:
             path = save_session(session, self.config.output_dir)

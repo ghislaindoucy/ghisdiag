@@ -4,6 +4,53 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.7.0] — 2026-07-17
+
+> **Bench thermique GPU** : le bench avant/après s'étend à la **carte graphique**
+> — chauffe reproductible du GPU (compute shader Direct3D 11, tous fabricants),
+> mesure NVML fiable sous charge, comparaison et rapport dédiés. Validé en
+> atelier sur NVIDIA discret (RTX 4060, GTX 1060, GT 1030, Quadro P2000),
+> AMD APU et Intel iGPU — **aucun TDR, aucun crash**.
+
+### 🎮 Bench thermique GPU
+
+- **Cible CPU / GPU** dans l'onglet bench : nouveau sélecteur + choix de la
+  carte graphique (« Auto » = carte dédiée la plus grosse ; les iGPU sans
+  capteur sont écartés d'office avec un message clair — un iGPU partage le
+  refroidissement du CPU, le bench n'y a pas de sens).
+- **Charge GPU vendor-neutral** : compute shader Direct3D 11 piloté en
+  ctypes/COM — fonctionne sur NVIDIA / AMD / Intel **sans aucun binaire
+  ajouté** (d3d11/dxgi/d3dcompiler sont des composants Windows). Dispatches
+  courts calibrés (~40 ms) : aucune réinitialisation de pilote (TDR) sur tout
+  le parc de test.
+- **Mesures fiables sous charge** : session NVML persistante sur le GPU ciblé
+  (température, clock, puissance, **raison de bridage du pilote**) — la clock
+  LibreHardwareMonitor peut rester figée sous charge sur NVIDIA ; repli LHM
+  automatique sur AMD/Intel.
+- **Arrêt d'urgence intelligent** : coupure avant le seuil de bridage
+  constructeur (90 °C au plus, abaissé selon le seuil slowdown NVML), ou si le
+  pilote signale un bridage thermique confirmé par la température — le bit
+  seul peut être un faux positif au repos (vu en atelier sur RTX 4060).
+- **Métriques GPU** : ΔT, plateau, max, hotspot, clock max + chute (source
+  NVML), puissance, throttling **thermique** distingué de la **limite de
+  puissance** (normale), temps de retour au calme.
+- **Comparaison avant / après GPU** + **rapport HTML dédié** : verdict chiffré,
+  cartes de gains (dont hotspot — révélateur du contact pâte/pads), courbes
+  superposées. Garde-fous : protocole identique **et même carte** exigés.
+- **Liste des sessions filtrée CPU | GPU** : les benchs des deux familles ne se
+  mélangent plus dans la liste ni dans la comparaison.
+- Relevés temps réel adaptés à la cible (GPU : temp / charge / MHz / W) et
+  courbe GPU au premier plan pendant un bench GPU.
+
+### 🌡️ Capteurs GPU enrichis (toutes fonctions)
+
+- Lecture NVIDIA via **NVML** enrichie : puissance, fréquences SM/mémoire,
+  raisons de bridage décodées, seuil slowdown, identité.
+- Flux LibreHardwareMonitor : ajout de `gpu_name`, `gpu_core_clock`,
+  `gpu_power` (tous fabricants) ; énumération corrigée sur les iGPU Intel.
+
+---
+
 ## [1.6.6] — 2026-07-02
 
 > Correctif d'**accessibilité de l'interface** sur les laptops à petit écran et
