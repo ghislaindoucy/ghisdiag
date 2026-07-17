@@ -5132,6 +5132,10 @@ class GhisdiagApp(tk.Tk):
 # charge CPU (collectors/cpu_load.py) relance donc l'exe avec ce flag pour basculer
 # en mode "worker" sans GUI, plutot que d'ouvrir une nouvelle fenetre de l'app.
 _CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
+# Meme principe pour le generateur de charge GPU (collectors/gpu_load.py) : en
+# version compilee, l'exe se relance avec ce flag pour basculer en worker de
+# charge GPU (D3D11 compute, sans GUI) au lieu d'ouvrir une nouvelle fenetre.
+_GPU_LOAD_WORKER_FLAG = "--ghisdiag-gpu-load-worker"
 
 
 def main():
@@ -5155,5 +5159,11 @@ if __name__ == "__main__":
         mp.set_start_method("spawn", force=True)
         from collectors.cpu_load import main as _cpu_load_main
         _cpu_load_main()
+        sys.exit(0)
+    if _GPU_LOAD_WORKER_FLAG in sys.argv:
+        # Pas de multiprocessing (process unique pilotant D3D11).
+        sys.argv.remove(_GPU_LOAD_WORKER_FLAG)
+        from collectors.gpu_load import main as _gpu_load_main
+        _gpu_load_main()
         sys.exit(0)
     main()

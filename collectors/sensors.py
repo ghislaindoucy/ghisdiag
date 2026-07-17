@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Schema d'un echantillon (cle -> type) tel qu'emis par sensors.ps1 :
 #   ts, ok, cpu_pkg, cpu_max, cpu_avg, cpu_ref, cpu_load, cpu_clock_max,
-#   gpu_temp, gpu_hotspot, gpu_load, gpu_fan, fans[int], disks[{n, t}]
+#   gpu_temp, gpu_hotspot, gpu_load, gpu_fan, gpu_name, gpu_core_clock,
+#   gpu_power, fans[int], disks[{n, t}]
 
 
 def _base_path() -> Path:
