@@ -57,6 +57,17 @@ try:
 except Exception:
     _HAS_BENCH = False
 
+# Historique des diagnostics : comparaison de deux rapports JSON dans le temps.
+try:
+    from diag_compare import (
+        compare_reports as diag_compare_reports,
+        generate_history_report as diag_generate_history_report,
+        load_report as diag_load_report,
+    )
+    _HAS_HISTORY = True
+except Exception:
+    _HAS_HISTORY = False
+
 from prefs    import LOG_DIR, load_prefs, save_prefs
 from security import is_admin, request_elevation, is_safe_output_dir
 
@@ -640,6 +651,15 @@ class GhisdiagApp(tk.Tk):
             state="disabled", command=self._open_folder,
         )
         self.btn_folder.pack(side="left", padx=(8, 0))
+
+        if _HAS_HISTORY:
+            tk.Button(
+                foot, text="📈 Historique…",
+                font=("Segoe UI", 11), bg=SURFACE, fg=FG,
+                activebackground=SURFACE2, activeforeground=FG,
+                relief="flat", cursor="hand2", padx=20, pady=10,
+                command=self._open_history_dialog,
+            ).pack(side="left", padx=(8, 0))
 
         tk.Checkbutton(
             foot, text="Ouvrir auto.",
@@ -3038,6 +3058,109 @@ class GhisdiagApp(tk.Tk):
         except OSError as e:
             logger.warning("Impossible d'ouvrir l'explorateur : %s", e)
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le dossier : {e}")
+
+    # ── Historique des diagnostics (comparaison de 2 rapports JSON) ───────────
+    def _open_history_dialog(self):
+        """Choisir deux rapports JSON du dossier de sortie et les comparer :
+        la machine s'améliore ou se dégrade ?"""
+        out_dir = Path(self.out_dir_var.get())
+        try:
+            files = sorted(out_dir.glob("Ghisdiag_*.json"),
+                           key=lambda p: p.name, reverse=True)
+        except OSError:
+            files = []
+        if len(files) < 2:
+            messagebox.showinfo(
+                "Historique des diagnostics",
+                "Il faut au moins deux rapports JSON dans le dossier de sortie "
+                "pour comparer dans le temps.\n\nLancez un diagnostic aujourd'hui, "
+                "revenez plus tard : l'historique dira si la machine s'améliore "
+                "ou se dégrade.")
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Historique des diagnostics")
+        dlg.configure(bg=BG)
+        dlg.geometry("620x420")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Sélectionnez DEUX rapports de la même machine (Ctrl+clic)",
+                 font=("Segoe UI", 10, "bold"), bg=BG, fg=FG).pack(
+            anchor="w", padx=16, pady=(14, 2))
+        tk.Label(dlg, text="Le plus ancien devient « avant », le plus récent « après » — "
+                           "l'ordre de sélection n'a pas d'importance.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", padx=16)
+
+        lb = tk.Listbox(
+            dlg, selectmode="extended", font=("Consolas", 10),
+            bg=SURFACE, fg=FG, relief="flat", bd=0,
+            selectbackground=SURFACE2, selectforeground=FG,
+            highlightbackground=BORDER, highlightthickness=1, activestyle="none")
+        lb.pack(fill="both", expand=True, padx=16, pady=(8, 4))
+        for p in files:
+            lb.insert("end", f"  {p.stem[9:]}")  # sans le préfixe « Ghisdiag_ »
+
+        status_var = tk.StringVar(value="")
+        tk.Label(dlg, textvariable=status_var, font=("Segoe UI", 9),
+                 bg=BG, fg=FG_MUTED).pack(anchor="w", padx=16)
+
+        def _do_compare():
+            sel = lb.curselection()
+            if len(sel) != 2:
+                messagebox.showwarning("Historique",
+                                       "Sélectionnez exactement deux rapports "
+                                       "(Ctrl+clic).", parent=dlg)
+                return
+            status_var.set("Chargement des rapports…")
+            dlg.update_idletasks()
+            r1 = diag_load_report(files[sel[0]])
+            r2 = diag_load_report(files[sel[1]])
+            if not r1 or not r2:
+                status_var.set("")
+                messagebox.showerror("Historique",
+                                     "Impossible de lire l'un des rapports "
+                                     "(JSON invalide ou incomplet).", parent=dlg)
+                return
+            cmp = diag_compare_reports(r1, r2)
+            if not cmp["compatible"]:
+                status_var.set("")
+                messagebox.showerror(
+                    "Historique impossible",
+                    f"Ces rapports portent sur deux machines différentes "
+                    f"(« {cmp.get('machine_before')} » et "
+                    f"« {cmp.get('machine_after')} »).\n\n"
+                    "L'historique n'a de sens que sur la même machine.",
+                    parent=dlg)
+                return
+            try:
+                path = diag_generate_history_report(cmp, out_dir)
+            except Exception as e:
+                logger.exception("Rapport d'historique")
+                status_var.set("")
+                messagebox.showerror("Historique",
+                                     f"Échec de génération du rapport : {e}",
+                                     parent=dlg)
+                return
+            self._log(f"📈  Historique généré : {path.name}", "info")
+            self._log(f"    Verdict : {cmp['verdict']}",
+                      {"ok": "ok", "crit": "err"}.get(cmp["verdict_level"], "info"))
+            try:
+                os.startfile(str(path.resolve()))
+            except OSError as e:
+                logger.warning("Impossible d'ouvrir %s : %s", path, e)
+            dlg.destroy()
+
+        btns = tk.Frame(dlg, bg=BG)
+        btns.pack(fill="x", padx=16, pady=(4, 14))
+        tk.Button(btns, text="Comparer dans le temps",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
+                  padx=16, pady=8, command=_do_compare).pack(side="right")
+        tk.Button(btns, text="Fermer",
+                  font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+                  activebackground=SURFACE2, relief="flat", cursor="hand2",
+                  padx=16, pady=8, command=dlg.destroy).pack(side="right", padx=(0, 8))
 
     # ── Moniteur Temps Réel ───────────────────────────────────────────────────
     def _temp_stream_ensure(self):
