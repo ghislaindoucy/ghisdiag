@@ -172,6 +172,24 @@ _ALERT_RULES = [
 ]
 
 
+# Où chercher la mise à jour d'un pilote ancien, par classe de périphérique.
+_DRIVER_UPDATE_SOURCES = {
+    "DISPLAY":     "Site du fabricant du GPU (NVIDIA / AMD / Intel)",
+    "NET":         "Site du constructeur du PC, sinon du fabricant de la carte (Intel, Realtek…)",
+    "BLUETOOTH":   "Site du constructeur du PC (module Wi-Fi/BT)",
+    "MEDIA":       "Site du constructeur du PC (audio, souvent Realtek)",
+    "HDC":         "Site du constructeur du PC ou Intel/AMD (contrôleur stockage)",
+    "SCSIADAPTER": "Site du constructeur du PC ou Intel/AMD (contrôleur stockage)",
+    "USB":         "Site du constructeur du PC",
+}
+
+
+def _driver_update_source(device_class) -> str:
+    return _DRIVER_UPDATE_SOURCES.get(
+        str(device_class or "").upper(),
+        "Windows Update (mises à jour facultatives) ou site du constructeur")
+
+
 class ReportGenerator:
     def __init__(self, report_data: dict, output_dir: Path | None = None):
         self.report     = report_data
@@ -217,6 +235,35 @@ class ReportGenerator:
         self._analyse_events(d)
         self._analyse_reliability(d)
         self._analyse_smart(d)
+        self._analyse_drivers(d)
+
+    def _analyse_drivers(self, d: dict):
+        """Pilotes non signés / anciens (v1.8.0). Garde-fou bruit : un ou deux
+        vieux pilotes anodins (lecteur de cartes…) ne méritent pas une alerte —
+        on n'alerte que si GPU/réseau est concerné, ou à partir de 3 pilotes."""
+        drv = _v(d, "software", "drivers", default={})
+        if not isinstance(drv, dict):
+            return
+
+        unsigned = _ensure_dicts(drv.get("unsigned_drivers"))
+        if unsigned:
+            names = ", ".join(str(x.get("device_name") or "?") for x in unsigned[:3])
+            self.alerts.append(("warn", "Pilotes non signés",
+                                 f"{len(unsigned)} pilote(s) non signé(s) sur du matériel actif "
+                                 f"({names}) — fiabilité et provenance à vérifier"))
+
+        outdated = _ensure_dicts(drv.get("outdated_drivers"))
+        hot = [x for x in outdated
+               if str(x.get("device_class") or "").upper() in ("DISPLAY", "NET")]
+        if hot:
+            names = ", ".join(str(x.get("device_name") or "?") for x in hot[:3])
+            self.alerts.append(("warn", "Pilote graphique/réseau ancien",
+                                 f"{names} : pilote de plus de 5 ans — mise à jour recommandée "
+                                 f"(perf et stabilité)"))
+        elif len(outdated) >= 3:
+            self.alerts.append(("warn", "Pilotes anciens",
+                                 f"{len(outdated)} pilote(s) de plus de 5 ans sur du matériel actif "
+                                 f"— voir la section Logiciels & Drivers"))
 
     def _analyse_disks(self, d: dict):
         vols = _ensure_dicts(_v(d, "system_info", "disks", "volumes", default=[]))
@@ -1361,12 +1408,15 @@ class ReportGenerator:
         sw      = d.get("software", {}) or {}
         wu      = d.get("windows_updates", {}) or {}
         drivers = d.get("drivers", {}) or {}
-        items   = _ensure_list(sw.get("items"))
-        drv_err = _ensure_list(drivers.get("error_drivers"))
-        recent  = _ensure_list(drivers.get("recent_drivers"))
+        items    = _ensure_list(sw.get("items"))
+        drv_err  = _ensure_list(drivers.get("error_drivers"))
+        recent   = _ensure_list(drivers.get("recent_drivers"))
+        unsigned = _ensure_dicts(drivers.get("unsigned_drivers"))
+        outdated = _ensure_dicts(drivers.get("outdated_drivers"))
 
         summary = (f"{sw.get('count',0)} logiciel(s) installé(s) — "
                    f"{drivers.get('errors_count',0)} driver(s) en erreur — "
+                   f"{len(unsigned)} non signé(s) — {len(outdated)} ancien(s) (>5 ans) — "
                    f"{drivers.get('recent_count',0)} driver(s) modifié(s) récemment.")
 
         sw_rows = "".join(
@@ -1400,11 +1450,20 @@ class ReportGenerator:
   <div class="card card-{'crit' if drivers.get('errors_count',0) else 'ok'}">
     <div class="card-title">Drivers en erreur</div>
     <div class="card-value {'crit' if drivers.get('errors_count',0) else 'ok'}">{drivers.get('errors_count',0)}</div></div>
+  <div class="card card-{'warn' if unsigned else 'ok'}">
+    <div class="card-title">Drivers non signés</div>
+    <div class="card-value {'warn' if unsigned else 'ok'}">{len(unsigned)}</div></div>
+  <div class="card card-{'warn' if outdated else 'ok'}">
+    <div class="card-title">Drivers anciens (&gt;5 ans)</div>
+    <div class="card-value {'warn' if outdated else 'ok'}">{len(outdated)}</div>
+    <div class="card-sub">matériel actif, hors drivers Windows</div></div>
   <div class="card"><div class="card-title">Drivers récents (30j)</div>
     <div class="card-value">{drivers.get('recent_count',0)}</div></div>
 </div>
 {'<div class="alert-box alert-crit"><span class="label">🔴 Drivers en erreur</span><p>Des pilotes présentent des erreurs et peuvent causer des instabilités.</p></div>' if drv_err else ''}
 {f'<div class="table-wrap"><table><tr><th>Périphérique</th><th>Fabricant</th><th>Erreur</th><th>Version</th></tr>{drv_err_rows}</table></div>' if drv_err else ''}
+{self._drivers_unsigned_block(unsigned)}
+{self._drivers_outdated_block(outdated)}
 <h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">Mises à jour Windows (10 dernières)</h3>
 <div class="table-wrap"><table>
 <tr><th>KB</th><th>Description</th><th>Date</th></tr>
@@ -1421,6 +1480,45 @@ class ReportGenerator:
 {sw_rows or '<tr><td colspan="4" class="dim">Données indisponibles</td></tr>'}
 </table></div></details>
 </section>"""
+
+    def _drivers_unsigned_block(self, unsigned: list) -> str:
+        if not unsigned:
+            return ""
+        rows = "".join(
+            f"<tr><td>{_esc(x.get('device_name',''))}</td>"
+            f"<td>{_esc(x.get('manufacturer',''))}</td>"
+            f"<td>{_esc(x.get('driver_version',''))}</td>"
+            f"<td>{_esc(x.get('driver_date','N/A'))}</td>"
+            f"<td class='mono'>{_esc(x.get('inf_name',''))}</td></tr>"
+            for x in unsigned
+        )
+        return f"""
+<div class="alert-box alert-warn"><span class="label">⚠ Pilotes non signés sur du matériel actif</span>
+<p>Un pilote non signé n'a pas passé la validation Microsoft : fiabilité et provenance à vérifier.</p></div>
+<div class="table-wrap"><table>
+<tr><th>Périphérique</th><th>Fabricant</th><th>Version</th><th>Date</th><th>INF</th></tr>
+{rows}
+</table></div>"""
+
+    def _drivers_outdated_block(self, outdated: list) -> str:
+        if not outdated:
+            return ""
+        rows = "".join(
+            f"<tr><td>{_esc(x.get('device_name',''))}</td>"
+            f"<td>{_esc(x.get('device_class',''))}</td>"
+            f"<td>{_esc(x.get('manufacturer',''))}</td>"
+            f"<td class='warn'>{_esc(x.get('driver_date','?'))}</td>"
+            f"<td>{_esc(x.get('driver_version',''))}</td>"
+            f"<td style='font-size:11px'>{_esc(_driver_update_source(x.get('device_class')))}</td></tr>"
+            for x in outdated
+        )
+        return f"""
+<h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">Pilotes anciens (&gt;5 ans, matériel actif, hors drivers Windows)</h3>
+<p style="color:var(--fg-muted);font-size:12px;margin:0 0 8px">Les pilotes fournis par Windows (souvent datés 2006) sont volontairement exclus : ils sont maintenus via Windows Update.</p>
+<div class="table-wrap"><table>
+<tr><th>Périphérique</th><th>Classe</th><th>Fabricant</th><th>Date pilote</th><th>Version</th><th>Où mettre à jour</th></tr>
+{rows}
+</table></div>"""
 
     def _diag_culprit_summary(self, diag_perf: list) -> str:
         """Encadré de synthèse des applications/processus responsables de ralentissements."""

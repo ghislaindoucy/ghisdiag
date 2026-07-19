@@ -11,7 +11,7 @@ qu'on collecte déjà.
 | # | Milestone | État | Notes |
 |---|---|---|---|
 | M1 | **Résumé exécutif « Ce qui ralentit ce PC »** — top 3 priorisé en tête du rapport HTML | ✅ | Moteur de règles `report/exec_summary.py` (10 règles / 14 freins possibles, scores impact perf), section héro + nav, findings aussi dans le JSON (`executive_summary`) pour l'audit IA. Tests unitaires. |
-| M2 | **Pilotes obsolètes / non signés** — détection + source de mise à jour | ⬜ | Étendre `collectors/software.ps1` (date/signature des drivers actifs), règles d'alerte + section rapport. |
+| M2 | **Pilotes obsolètes / non signés** — détection + source de mise à jour | ✅ | `software.ps1` : signature/classe/présence par driver, listes `unsigned_drivers` + `outdated_drivers` (>5 ans, matériel présent, classes pertinentes, drivers boîte Windows exclus — signer strict `"Microsoft Windows"`, PAS `-match` : WHQL vendeur = "…Hardware Compatibility Publisher"). Rapport : cartes, tableaux, colonne « Où mettre à jour » par classe, alertes avec garde-fou bruit (GPU/réseau, ou ≥3). Validé en réel sur la machine de dev (229 drivers, 0 faux positif inbox). Tests. |
 | M3 | **Analyse du boot par phase** — Event ID 100 (MainPath, drivers, services, profil) | ⬜ | Étendre `collectors/events.ps1` (payload XML de l'ID 100), décomposition dans le rapport. |
 | M4 | **Historique des diagnostics** — comparer 2 rapports JSON dans le temps | ⬜ | La machine s'améliore ou se dégrade ? Synergie avec le bench thermique. |
 | M5 | **Build & release v1.8.0** | ⬜ | Bump, CHANGELOG, RELEASE_NOTES, ROADMAP, exe, release GitHub. |
@@ -39,3 +39,11 @@ qu'on collecte déjà.
 - Ouverture du chantier, cadrage M1-M5.
 - M1 livré : `report/exec_summary.py` + section héro dans `report/generator.py`,
   styles `assets/report.css`, tests `tests/test_exec_summary.py`.
+- M2 livré : `collectors/software.ps1` étendu (non signés / anciens), rapport +
+  alertes, tests `tests/test_report_drivers.py`. Collecteur exécuté en réel sur la
+  machine de dev : total=229, unsigned=0, outdated=2 (lecteur cartes Realtek 2018,
+  SATA AHCI Intel 2019) — pertinent, zéro bruit inbox 2006.
+- Piège documenté : ne PAS filtrer l'obsolescence sur `signer -match "Microsoft"` —
+  tous les drivers WHQL vendeurs sont signés « Microsoft Windows Hardware
+  Compatibility Publisher ». Seul le signataire exact « Microsoft Windows »
+  désigne un driver boîte.
