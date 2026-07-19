@@ -113,6 +113,10 @@ $drivers = Safe-Get -Name "Drivers" -Default @() -Block {
             driver_version = $_.DriverVersion
             driver_date    = $driverDate
             inf_name       = $_.InfName
+            device_class   = [string]$_.DeviceClass
+            is_signed      = $_.IsSigned
+            signer         = [string]$_.Signer
+            present        = $pnpMap.ContainsKey($_.DeviceID)
             status         = $status
             is_ok          = ($errCode -eq 0 -or $errCode -eq $null)
         }
@@ -122,6 +126,40 @@ $drivers = Safe-Get -Name "Drivers" -Default @() -Block {
 $thirtyDaysAgo    = (Get-Date).AddDays(-30).ToString("yyyy-MM-dd")
 $driversWithError = @($drivers | Where-Object { -not $_["is_ok"] })
 $recentDrivers    = @($drivers | Where-Object { $_["driver_date"] -and $_["driver_date"] -gt $thirtyDaysAgo })
+
+# ── Pilotes non signés / obsolètes (v1.8.0) ──────────────────────────────────
+# Garde-fous anti-faux-positifs :
+#  - périphérique PRÉSENT uniquement (DeviceID vu par Win32_PnPEntity) : les
+#    périphériques fantômes traînent de vieux drivers sans aucun impact ;
+#  - obsolescence : drivers "boîte" Windows exclus — ils sont datés volontairement
+#    (souvent 2006-06-21) et maintenus via Windows Update. Attention : les drivers
+#    vendeurs WHQL sont signés "Microsoft Windows Hardware Compatibility
+#    Publisher" ; seul le signataire EXACT "Microsoft Windows" désigne un driver
+#    boîte, d'où le -ne strict et non un -match ;
+#  - classes pertinentes uniquement (GPU, réseau, audio, stockage, USB, BT) :
+#    un vieux driver d'imprimante n'explique ni lenteur ni instabilité.
+$fiveYearsAgo    = (Get-Date).AddYears(-5).ToString("yyyy-MM-dd")
+$relevantClasses = @("DISPLAY", "NET", "MEDIA", "HDC", "SCSIADAPTER", "USB", "BLUETOOTH")
+
+$unsignedDrivers = @($drivers | Where-Object {
+    $_["present"] -and ($_["is_signed"] -eq $false)
+})
+
+$outdatedDrivers = @($drivers | Where-Object {
+    $_["present"] -and $_["driver_date"] -and ($_["driver_date"] -lt $fiveYearsAgo) -and
+    ($relevantClasses -contains $_["device_class"].ToUpper()) -and
+    ($_["manufacturer"] -notmatch "^Microsoft") -and
+    ($_["signer"] -ne "Microsoft Windows")
+})
+
+# Dédoublonnage : le même INF apparaît une fois par périphérique (hubs USB…) ;
+# un driver = un problème, pas dix. Tri du plus ancien au plus récent.
+$seenDrv = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$outdatedDrivers = @($outdatedDrivers |
+    Where-Object { $seenDrv.Add("$($_["inf_name"])|$($_["driver_version"])") } |
+    Sort-Object { $_["driver_date"] } |
+    Select-Object -First 30)
+$unsignedDrivers = @($unsignedDrivers | Select-Object -First 30)
 
 $result["software"] = @{
     count = $software.Count
@@ -134,11 +172,15 @@ $result["windows_updates"] = @{
 }
 
 $result["drivers"] = @{
-    total          = $drivers.Count
-    errors_count   = $driversWithError.Count
-    recent_count   = $recentDrivers.Count
-    error_drivers  = $driversWithError
-    recent_drivers = $recentDrivers
+    total            = $drivers.Count
+    errors_count     = $driversWithError.Count
+    recent_count     = $recentDrivers.Count
+    error_drivers    = $driversWithError
+    recent_drivers   = $recentDrivers
+    unsigned_count   = $unsignedDrivers.Count
+    outdated_count   = $outdatedDrivers.Count
+    unsigned_drivers = $unsignedDrivers
+    outdated_drivers = $outdatedDrivers
 }
 
 $result["collector_errors"]  = $errors

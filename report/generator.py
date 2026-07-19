@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .exec_summary import compute_findings
+
 VERSION = "1.7.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "Ghisdiag_Reports"
@@ -170,12 +172,50 @@ _ALERT_RULES = [
 ]
 
 
+# Décomposition du démarrage (Event ID 100) : regroupement des phases mesurées
+# par Windows en familles parlantes pour le technicien, avec piste de diagnostic
+# quand une famille domine un démarrage lent.
+_BOOT_PHASE_GROUPS = (
+    ("Noyau & session",               ("kernel_ms", "smss_ms", "prefetch_ms", "autochk_ms")),
+    ("Pilotes & périphériques",       ("drivers_ms", "devices_ms")),
+    ("Services critiques",            ("services_ms",)),
+    ("Profil (machine + utilisateur)", ("machine_profile_ms", "user_profile_ms")),
+    ("Bureau (Explorer)",             ("explorer_ms",)),
+)
+_BOOT_PHASE_HINTS = {
+    "Noyau & session":                "phase noyau anormalement longue — matériel ou disque à contrôler",
+    "Pilotes & périphériques":        "un pilote traîne au chargement — croiser avec les pilotes anciens ou en erreur (section Logiciels & Drivers)",
+    "Services critiques":             "un service dépasse son délai — croiser avec les services en échec",
+    "Profil (machine + utilisateur)": "chargement de profil lent — GPO, profil volumineux ou réseau",
+    "Bureau (Explorer)":              "bureau long à devenir utilisable — souvent disque saturé ou mécanique",
+}
+
+
+# Où chercher la mise à jour d'un pilote ancien, par classe de périphérique.
+_DRIVER_UPDATE_SOURCES = {
+    "DISPLAY":     "Site du fabricant du GPU (NVIDIA / AMD / Intel)",
+    "NET":         "Site du constructeur du PC, sinon du fabricant de la carte (Intel, Realtek…)",
+    "BLUETOOTH":   "Site du constructeur du PC (module Wi-Fi/BT)",
+    "MEDIA":       "Site du constructeur du PC (audio, souvent Realtek)",
+    "HDC":         "Site du constructeur du PC ou Intel/AMD (contrôleur stockage)",
+    "SCSIADAPTER": "Site du constructeur du PC ou Intel/AMD (contrôleur stockage)",
+    "USB":         "Site du constructeur du PC",
+}
+
+
+def _driver_update_source(device_class) -> str:
+    return _DRIVER_UPDATE_SOURCES.get(
+        str(device_class or "").upper(),
+        "Windows Update (mises à jour facultatives) ou site du constructeur")
+
+
 class ReportGenerator:
     def __init__(self, report_data: dict, output_dir: Path | None = None):
         self.report     = report_data
         self.meta       = report_data.get("meta", {})
         self.data       = report_data.get("data", {})
         self.alerts     = []  # liste (level, title, desc)
+        self.exec_findings = []  # freins perf priorisés (peuplé par _build_html)
         self.output_dir = output_dir or DEFAULT_REPORTS_DIR
 
     def save(self) -> tuple[Path, Path]:
@@ -189,6 +229,9 @@ class ReportGenerator:
         json_path = self.output_dir / f"{basename}.json"
 
         html_path.write_text(self._build_html(), encoding="utf-8")
+        # Le résumé exécutif part aussi dans le JSON : l'audit IA et le futur
+        # historique des diagnostics l'exploitent sans re-déduire les règles.
+        self.report["executive_summary"] = self.exec_findings
         json_path.write_text(
             json.dumps(self.report, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8"
@@ -211,6 +254,35 @@ class ReportGenerator:
         self._analyse_events(d)
         self._analyse_reliability(d)
         self._analyse_smart(d)
+        self._analyse_drivers(d)
+
+    def _analyse_drivers(self, d: dict):
+        """Pilotes non signés / anciens (v1.8.0). Garde-fou bruit : un ou deux
+        vieux pilotes anodins (lecteur de cartes…) ne méritent pas une alerte —
+        on n'alerte que si GPU/réseau est concerné, ou à partir de 3 pilotes."""
+        drv = _v(d, "software", "drivers", default={})
+        if not isinstance(drv, dict):
+            return
+
+        unsigned = _ensure_dicts(drv.get("unsigned_drivers"))
+        if unsigned:
+            names = ", ".join(str(x.get("device_name") or "?") for x in unsigned[:3])
+            self.alerts.append(("warn", "Pilotes non signés",
+                                 f"{len(unsigned)} pilote(s) non signé(s) sur du matériel actif "
+                                 f"({names}) — fiabilité et provenance à vérifier"))
+
+        outdated = _ensure_dicts(drv.get("outdated_drivers"))
+        hot = [x for x in outdated
+               if str(x.get("device_class") or "").upper() in ("DISPLAY", "NET")]
+        if hot:
+            names = ", ".join(str(x.get("device_name") or "?") for x in hot[:3])
+            self.alerts.append(("warn", "Pilote graphique/réseau ancien",
+                                 f"{names} : pilote de plus de 5 ans — mise à jour recommandée "
+                                 f"(perf et stabilité)"))
+        elif len(outdated) >= 3:
+            self.alerts.append(("warn", "Pilotes anciens",
+                                 f"{len(outdated)} pilote(s) de plus de 5 ans sur du matériel actif "
+                                 f"— voir la section Logiciels & Drivers"))
 
     def _analyse_disks(self, d: dict):
         vols = _ensure_dicts(_v(d, "system_info", "disks", "volumes", default=[]))
@@ -394,8 +466,10 @@ class ReportGenerator:
     # ── HTML ──────────────────────────────────────────────────────────────────
     def _build_html(self) -> str:
         self._analyse()
+        self.exec_findings = compute_findings(self.data)
         css  = get_css()
         body = "\n".join([
+            self._section_executive(),
             self._section_alerts(),
             self._section_system(),
             self._section_performance(),
@@ -441,6 +515,7 @@ class ReportGenerator:
 </div>
 
 <nav class="nav">
+  <a href="#exec">🚦 Résumé</a>
   <a href="#alerts">⚠ Points d'attention</a>
   <a href="#system">🖥 Système</a>
   <a href="#performance">📊 Performance</a>
@@ -464,6 +539,38 @@ class ReportGenerator:
 </body></html>"""
 
     # ── Sections ─────────────────────────────────────────────────────────────
+    def _section_executive(self) -> str:
+        """Résumé exécutif « Ce qui ralentit ce PC » : top 3 des freins perf,
+        priorisés par le moteur de règles (report/exec_summary.py)."""
+        findings = self.exec_findings
+        if not findings:
+            content = ('<div class="alert-box alert-info">'
+                       '<span class="label">✅ Aucun frein majeur identifié</span>'
+                       '<p>Rien dans les données collectées n\'explique une lenteur '
+                       'de la machine. Si le client se plaint quand même, chercher '
+                       'côté usage : navigateur surchargé, réseau, périphériques.</p></div>')
+        else:
+            items = []
+            for i, f in enumerate(findings[:3], start=1):
+                items.append(
+                    f'<div class="exec-item exec-{f["severity"]}">'
+                    f'<div class="exec-rank">{i}</div>'
+                    f'<div class="exec-body">'
+                    f'<div class="exec-title">{_esc(f["title"])}</div>'
+                    f'<p class="exec-constat">{_esc(f["constat"])}</p>'
+                    f'<p class="exec-action">→ {_esc(f["action"])}</p>'
+                    f'</div></div>'
+                )
+            more = len(findings) - 3
+            if more > 0:
+                items.append(f'<p class="exec-more">+ {more} autre(s) frein(s) '
+                             f'secondaire(s) — voir les sections détaillées.</p>')
+            content = "\n".join(items)
+
+        return (f'<section id="exec" class="section">'
+                f'<h2 class="section-title">🚦 Ce qui ralentit ce PC</h2>'
+                f'{content}</section>')
+
     def _section_alerts(self) -> str:
         if not self.alerts:
             content = '<div class="alert-box alert-info"><span class="label">✅ Aucune anomalie détectée</span><p>Tous les indicateurs analysés semblent dans les normes.</p></div>'
@@ -1067,6 +1174,7 @@ class ReportGenerator:
 {source_rows or '<tr><td colspan="2" class="dim">Aucune erreur — système propre ✅</td></tr>'}
 </table></div>
 
+{self._boot_phase_block(diag_perf)}
 {self._diag_culprit_summary(diag_perf)}
 <details><summary>📊 Diagnostics-Performance — Démarrages/arrêts lents ({len(diag_perf)} événement(s) sur 30j)</summary>
 <p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-Diagnostics-Performance/Operational</code> — IDs 100/101 (boot), 200/201 (arrêt), 300/301 (veille)</p>
@@ -1320,12 +1428,15 @@ class ReportGenerator:
         sw      = d.get("software", {}) or {}
         wu      = d.get("windows_updates", {}) or {}
         drivers = d.get("drivers", {}) or {}
-        items   = _ensure_list(sw.get("items"))
-        drv_err = _ensure_list(drivers.get("error_drivers"))
-        recent  = _ensure_list(drivers.get("recent_drivers"))
+        items    = _ensure_list(sw.get("items"))
+        drv_err  = _ensure_list(drivers.get("error_drivers"))
+        recent   = _ensure_list(drivers.get("recent_drivers"))
+        unsigned = _ensure_dicts(drivers.get("unsigned_drivers"))
+        outdated = _ensure_dicts(drivers.get("outdated_drivers"))
 
         summary = (f"{sw.get('count',0)} logiciel(s) installé(s) — "
                    f"{drivers.get('errors_count',0)} driver(s) en erreur — "
+                   f"{len(unsigned)} non signé(s) — {len(outdated)} ancien(s) (>5 ans) — "
                    f"{drivers.get('recent_count',0)} driver(s) modifié(s) récemment.")
 
         sw_rows = "".join(
@@ -1359,11 +1470,20 @@ class ReportGenerator:
   <div class="card card-{'crit' if drivers.get('errors_count',0) else 'ok'}">
     <div class="card-title">Drivers en erreur</div>
     <div class="card-value {'crit' if drivers.get('errors_count',0) else 'ok'}">{drivers.get('errors_count',0)}</div></div>
+  <div class="card card-{'warn' if unsigned else 'ok'}">
+    <div class="card-title">Drivers non signés</div>
+    <div class="card-value {'warn' if unsigned else 'ok'}">{len(unsigned)}</div></div>
+  <div class="card card-{'warn' if outdated else 'ok'}">
+    <div class="card-title">Drivers anciens (&gt;5 ans)</div>
+    <div class="card-value {'warn' if outdated else 'ok'}">{len(outdated)}</div>
+    <div class="card-sub">matériel actif, hors drivers Windows</div></div>
   <div class="card"><div class="card-title">Drivers récents (30j)</div>
     <div class="card-value">{drivers.get('recent_count',0)}</div></div>
 </div>
 {'<div class="alert-box alert-crit"><span class="label">🔴 Drivers en erreur</span><p>Des pilotes présentent des erreurs et peuvent causer des instabilités.</p></div>' if drv_err else ''}
 {f'<div class="table-wrap"><table><tr><th>Périphérique</th><th>Fabricant</th><th>Erreur</th><th>Version</th></tr>{drv_err_rows}</table></div>' if drv_err else ''}
+{self._drivers_unsigned_block(unsigned)}
+{self._drivers_outdated_block(outdated)}
 <h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">Mises à jour Windows (10 dernières)</h3>
 <div class="table-wrap"><table>
 <tr><th>KB</th><th>Description</th><th>Date</th></tr>
@@ -1380,6 +1500,103 @@ class ReportGenerator:
 {sw_rows or '<tr><td colspan="4" class="dim">Données indisponibles</td></tr>'}
 </table></div></details>
 </section>"""
+
+    def _drivers_unsigned_block(self, unsigned: list) -> str:
+        if not unsigned:
+            return ""
+        rows = "".join(
+            f"<tr><td>{_esc(x.get('device_name',''))}</td>"
+            f"<td>{_esc(x.get('manufacturer',''))}</td>"
+            f"<td>{_esc(x.get('driver_version',''))}</td>"
+            f"<td>{_esc(x.get('driver_date','N/A'))}</td>"
+            f"<td class='mono'>{_esc(x.get('inf_name',''))}</td></tr>"
+            for x in unsigned
+        )
+        return f"""
+<div class="alert-box alert-warn"><span class="label">⚠ Pilotes non signés sur du matériel actif</span>
+<p>Un pilote non signé n'a pas passé la validation Microsoft : fiabilité et provenance à vérifier.</p></div>
+<div class="table-wrap"><table>
+<tr><th>Périphérique</th><th>Fabricant</th><th>Version</th><th>Date</th><th>INF</th></tr>
+{rows}
+</table></div>"""
+
+    def _drivers_outdated_block(self, outdated: list) -> str:
+        if not outdated:
+            return ""
+        rows = "".join(
+            f"<tr><td>{_esc(x.get('device_name',''))}</td>"
+            f"<td>{_esc(x.get('device_class',''))}</td>"
+            f"<td>{_esc(x.get('manufacturer',''))}</td>"
+            f"<td class='warn'>{_esc(x.get('driver_date','?'))}</td>"
+            f"<td>{_esc(x.get('driver_version',''))}</td>"
+            f"<td style='font-size:11px'>{_esc(_driver_update_source(x.get('device_class')))}</td></tr>"
+            for x in outdated
+        )
+        return f"""
+<h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">Pilotes anciens (&gt;5 ans, matériel actif, hors drivers Windows)</h3>
+<p style="color:var(--fg-muted);font-size:12px;margin:0 0 8px">Les pilotes fournis par Windows (souvent datés 2006) sont volontairement exclus : ils sont maintenus via Windows Update.</p>
+<div class="table-wrap"><table>
+<tr><th>Périphérique</th><th>Classe</th><th>Fabricant</th><th>Date pilote</th><th>Version</th><th>Où mettre à jour</th></tr>
+{rows}
+</table></div>"""
+
+    def _boot_phase_block(self, diag_perf: list) -> str:
+        """Décomposition par phase du dernier démarrage mesuré (Event ID 100).
+        Affichée dès que les phases sont disponibles (informative même sur un
+        boot normal) ; la piste de diagnostic n'apparaît que si le démarrage
+        est lent ET qu'une phase domine nettement (garde-fou bruit)."""
+        boots = [e for e in _ensure_dicts(diag_perf)
+                 if e.get("category") == "boot" and isinstance(e.get("boot_phases"), dict)]
+        if not boots:
+            return ""
+        latest = max(boots, key=lambda e: str(e.get("time_created") or ""))
+        ph = latest["boot_phases"]
+
+        def _n(key):
+            v = ph.get(key)
+            return v if isinstance(v, (int, float)) and v >= 0 else 0
+
+        groups = [(label, sum(_n(k) for k in keys)) for label, keys in _BOOT_PHASE_GROUPS]
+        main = _n("main_path_ms") or sum(v for _, v in groups)
+        if main <= 0:
+            return ""
+
+        rows = []
+        for label, ms in groups:
+            pct = min(100.0, ms * 100.0 / main)
+            rows.append(
+                f"<tr><td>{_esc(label)}</td>"
+                f"<td class='mono'>{ms / 1000:.1f} s</td>"
+                f"<td>{_pct_bar(pct, warn=30, crit=50)} {pct:.0f}%</td></tr>"
+            )
+
+        post = _n("postboot_ms")
+        apps = ph.get("startup_apps")
+        post_html = ""
+        if post:
+            apps_str = f" ({apps} application(s) au démarrage)" if isinstance(apps, int) else ""
+            post_html = (f"<p style='color:var(--fg-muted);font-size:12px;margin:6px 0 0'>"
+                         f"Après affichage du bureau, Windows a encore travaillé "
+                         f"{post / 1000:.0f} s en arrière-plan{apps_str}.</p>")
+
+        hint_html = ""
+        dominant_label, dominant_ms = max(groups, key=lambda g: g[1])
+        if main >= SLOW_BOOT_MS and dominant_ms >= 0.4 * main:
+            hint = _BOOT_PHASE_HINTS.get(dominant_label, "")
+            hint_html = (f'<div class="alert-box alert-warn"><span class="label">'
+                         f'🔍 Phase dominante : {_esc(dominant_label)} '
+                         f'({dominant_ms * 100 // main:.0f}% du démarrage)</span>'
+                         f'<p>Piste : {_esc(hint)}</p></div>')
+
+        return f"""
+<h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">
+⏱ Dernier démarrage mesuré, phase par phase ({latest.get('time_created', '?')} — {main / 1000:.0f} s jusqu'au bureau)</h3>
+<div class="table-wrap"><table>
+<tr><th>Phase</th><th>Durée</th><th>Part du démarrage</th></tr>
+{''.join(rows)}
+</table></div>
+{post_html}
+{hint_html}"""
 
     def _diag_culprit_summary(self, diag_perf: list) -> str:
         """Encadré de synthèse des applications/processus responsables de ralentissements."""

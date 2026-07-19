@@ -112,6 +112,23 @@ details[open] > summary::before { content: "▼ "; }
 .smart-table tr.smart-fail td { background: rgba(243, 139, 168, 0.18); color: #f38ba8; }
 .smart-table td.mono, .smart-table td:first-child { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 
+/* ── Résumé exécutif « Ce qui ralentit ce PC » ── */
+.exec-item { display: flex; gap: 14px; background: var(--surface); border-radius: var(--radius);
+             padding: 14px 18px; margin-bottom: 10px; border-left: 4px solid var(--accent); }
+.exec-crit { border-left-color: var(--red); }
+.exec-warn { border-left-color: var(--orange); }
+.exec-info { border-left-color: var(--yellow); }
+.exec-rank { font-size: 24px; font-weight: 800; color: var(--fg-muted); min-width: 28px;
+             text-align: center; line-height: 1.2; }
+.exec-body { flex: 1; }
+.exec-title { font-weight: 700; font-size: 14px; }
+.exec-crit .exec-title { color: var(--red); }
+.exec-warn .exec-title { color: var(--orange); }
+.exec-info .exec-title { color: var(--yellow); }
+.exec-constat { color: var(--fg-dim); font-size: 13px; margin-top: 4px; }
+.exec-action { color: var(--green); font-size: 13px; margin-top: 6px; font-weight: 600; }
+.exec-more { color: var(--fg-muted); font-size: 12px; margin-top: 4px; }
+
 /* ── Footer ── */
 footer { text-align: center; padding: 32px; color: var(--fg-muted); font-size: 12px;
          border-top: 1px solid var(--surface); margin-top: 24px; }
