@@ -12,7 +12,7 @@ qu'on collecte déjà.
 |---|---|---|---|
 | M1 | **Résumé exécutif « Ce qui ralentit ce PC »** — top 3 priorisé en tête du rapport HTML | ✅ | Moteur de règles `report/exec_summary.py` (10 règles / 14 freins possibles, scores impact perf), section héro + nav, findings aussi dans le JSON (`executive_summary`) pour l'audit IA. Tests unitaires. |
 | M2 | **Pilotes obsolètes / non signés** — détection + source de mise à jour | ✅ | `software.ps1` : signature/classe/présence par driver, listes `unsigned_drivers` + `outdated_drivers` (>5 ans, matériel présent, classes pertinentes, drivers boîte Windows exclus — signer strict `"Microsoft Windows"`, PAS `-match` : WHQL vendeur = "…Hardware Compatibility Publisher"). Rapport : cartes, tableaux, colonne « Où mettre à jour » par classe, alertes avec garde-fou bruit (GPU/réseau, ou ≥3). Validé en réel sur la machine de dev (229 drivers, 0 faux positif inbox). Tests. |
-| M3 | **Analyse du boot par phase** — Event ID 100 (MainPath, drivers, services, profil) | ⬜ | Étendre `collectors/events.ps1` (payload XML de l'ID 100), décomposition dans le rapport. |
+| M3 | **Analyse du boot par phase** — Event ID 100 (MainPath, drivers, services, profil) | ✅ | `events.ps1` : `boot_phases` extrait du payload XML de l'ID 100 (14 champs ms). Rapport : tableau « dernier démarrage phase par phase » (5 familles, barres de part), ligne post-boot (travail en arrière-plan + nb d'applis), piste de diagnostic seulement si boot ≥ 60 s ET phase ≥ 40 % (garde-fou bruit). Rétro-compatible (vieux JSON sans `boot_phases` = pas de bloc). Tests. **Reste : validation atelier sur une machine avec ID 100 réels** (journal vide/inaccessible sur le poste de dev non-admin). |
 | M4 | **Historique des diagnostics** — comparer 2 rapports JSON dans le temps | ⬜ | La machine s'améliore ou se dégrade ? Synergie avec le bench thermique. |
 | M5 | **Build & release v1.8.0** | ⬜ | Bump, CHANGELOG, RELEASE_NOTES, ROADMAP, exe, release GitHub. |
 
@@ -47,3 +47,8 @@ qu'on collecte déjà.
   tous les drivers WHQL vendeurs sont signés « Microsoft Windows Hardware
   Compatibility Publisher ». Seul le signataire exact « Microsoft Windows »
   désigne un driver boîte.
+- M3 livré : `events.ps1` extrait `boot_phases` (ID 100), rapport avec familles de
+  phases + piste dominante, tests `tests/test_report_boot_phases.py`. Le journal
+  Diagnostics-Performance du poste de dev est vide/inaccessible (non-admin) :
+  extraction validée en synthétique, collecteur complet exécuté sans erreur —
+  la validation avec de vrais ID 100 se fera en atelier (exe élevé).

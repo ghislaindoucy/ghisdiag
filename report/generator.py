@@ -172,6 +172,25 @@ _ALERT_RULES = [
 ]
 
 
+# Décomposition du démarrage (Event ID 100) : regroupement des phases mesurées
+# par Windows en familles parlantes pour le technicien, avec piste de diagnostic
+# quand une famille domine un démarrage lent.
+_BOOT_PHASE_GROUPS = (
+    ("Noyau & session",               ("kernel_ms", "smss_ms", "prefetch_ms", "autochk_ms")),
+    ("Pilotes & périphériques",       ("drivers_ms", "devices_ms")),
+    ("Services critiques",            ("services_ms",)),
+    ("Profil (machine + utilisateur)", ("machine_profile_ms", "user_profile_ms")),
+    ("Bureau (Explorer)",             ("explorer_ms",)),
+)
+_BOOT_PHASE_HINTS = {
+    "Noyau & session":                "phase noyau anormalement longue — matériel ou disque à contrôler",
+    "Pilotes & périphériques":        "un pilote traîne au chargement — croiser avec les pilotes anciens ou en erreur (section Logiciels & Drivers)",
+    "Services critiques":             "un service dépasse son délai — croiser avec les services en échec",
+    "Profil (machine + utilisateur)": "chargement de profil lent — GPO, profil volumineux ou réseau",
+    "Bureau (Explorer)":              "bureau long à devenir utilisable — souvent disque saturé ou mécanique",
+}
+
+
 # Où chercher la mise à jour d'un pilote ancien, par classe de périphérique.
 _DRIVER_UPDATE_SOURCES = {
     "DISPLAY":     "Site du fabricant du GPU (NVIDIA / AMD / Intel)",
@@ -1155,6 +1174,7 @@ class ReportGenerator:
 {source_rows or '<tr><td colspan="2" class="dim">Aucune erreur — système propre ✅</td></tr>'}
 </table></div>
 
+{self._boot_phase_block(diag_perf)}
 {self._diag_culprit_summary(diag_perf)}
 <details><summary>📊 Diagnostics-Performance — Démarrages/arrêts lents ({len(diag_perf)} événement(s) sur 30j)</summary>
 <p style="padding:4px 0 8px;color:var(--fg-muted);font-size:12px">Source : <code>Microsoft-Windows-Diagnostics-Performance/Operational</code> — IDs 100/101 (boot), 200/201 (arrêt), 300/301 (veille)</p>
@@ -1519,6 +1539,64 @@ class ReportGenerator:
 <tr><th>Périphérique</th><th>Classe</th><th>Fabricant</th><th>Date pilote</th><th>Version</th><th>Où mettre à jour</th></tr>
 {rows}
 </table></div>"""
+
+    def _boot_phase_block(self, diag_perf: list) -> str:
+        """Décomposition par phase du dernier démarrage mesuré (Event ID 100).
+        Affichée dès que les phases sont disponibles (informative même sur un
+        boot normal) ; la piste de diagnostic n'apparaît que si le démarrage
+        est lent ET qu'une phase domine nettement (garde-fou bruit)."""
+        boots = [e for e in _ensure_dicts(diag_perf)
+                 if e.get("category") == "boot" and isinstance(e.get("boot_phases"), dict)]
+        if not boots:
+            return ""
+        latest = max(boots, key=lambda e: str(e.get("time_created") or ""))
+        ph = latest["boot_phases"]
+
+        def _n(key):
+            v = ph.get(key)
+            return v if isinstance(v, (int, float)) and v >= 0 else 0
+
+        groups = [(label, sum(_n(k) for k in keys)) for label, keys in _BOOT_PHASE_GROUPS]
+        main = _n("main_path_ms") or sum(v for _, v in groups)
+        if main <= 0:
+            return ""
+
+        rows = []
+        for label, ms in groups:
+            pct = min(100.0, ms * 100.0 / main)
+            rows.append(
+                f"<tr><td>{_esc(label)}</td>"
+                f"<td class='mono'>{ms / 1000:.1f} s</td>"
+                f"<td>{_pct_bar(pct, warn=30, crit=50)} {pct:.0f}%</td></tr>"
+            )
+
+        post = _n("postboot_ms")
+        apps = ph.get("startup_apps")
+        post_html = ""
+        if post:
+            apps_str = f" ({apps} application(s) au démarrage)" if isinstance(apps, int) else ""
+            post_html = (f"<p style='color:var(--fg-muted);font-size:12px;margin:6px 0 0'>"
+                         f"Après affichage du bureau, Windows a encore travaillé "
+                         f"{post / 1000:.0f} s en arrière-plan{apps_str}.</p>")
+
+        hint_html = ""
+        dominant_label, dominant_ms = max(groups, key=lambda g: g[1])
+        if main >= SLOW_BOOT_MS and dominant_ms >= 0.4 * main:
+            hint = _BOOT_PHASE_HINTS.get(dominant_label, "")
+            hint_html = (f'<div class="alert-box alert-warn"><span class="label">'
+                         f'🔍 Phase dominante : {_esc(dominant_label)} '
+                         f'({dominant_ms * 100 // main:.0f}% du démarrage)</span>'
+                         f'<p>Piste : {_esc(hint)}</p></div>')
+
+        return f"""
+<h3 style="margin:16px 0 8px;color:var(--fg-dim);font-size:13px;text-transform:uppercase">
+⏱ Dernier démarrage mesuré, phase par phase ({latest.get('time_created', '?')} — {main / 1000:.0f} s jusqu'au bureau)</h3>
+<div class="table-wrap"><table>
+<tr><th>Phase</th><th>Durée</th><th>Part du démarrage</th></tr>
+{''.join(rows)}
+</table></div>
+{post_html}
+{hint_html}"""
 
     def _diag_culprit_summary(self, diag_perf: list) -> str:
         """Encadré de synthèse des applications/processus responsables de ralentissements."""

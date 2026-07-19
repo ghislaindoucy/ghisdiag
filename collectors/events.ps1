@@ -209,6 +209,7 @@ $diagPerfEvents = Safe-Get {
         # ID 300/301 : StandbyDuration, ProcessName
         $appName    = $null
         $durationMs = $null
+        $bootPhases = $null
         try {
             $xmlDoc   = [xml]$_.ToXml()
             $evtData  = @{}
@@ -231,6 +232,34 @@ $diagPerfEvents = Safe-Get {
                     elseif ($evtData["BootTsTime"]) { "BootTsTime" }
                     else { $null }
             if ($dKey) { try { $durationMs = [int]$evtData[$dKey] } catch {} }
+
+            # Décomposition du boot par phase (v1.8.0) — uniquement pour l'ID 100.
+            # Toutes les durées sont en millisecondes dans le payload de l'événement.
+            if ($evId -eq 100) {
+                $phaseMap = @{
+                    total_ms           = "BootTime"
+                    main_path_ms       = "MainPathBootTime"
+                    kernel_ms          = "BootKernelInitTime"
+                    drivers_ms         = "BootDriverInitTime"
+                    devices_ms         = "BootDevicesInitTime"
+                    prefetch_ms        = "BootPrefetchInitTime"
+                    autochk_ms         = "BootAutoChkTime"
+                    smss_ms            = "BootSmssInitTime"
+                    services_ms        = "BootCriticalServicesInitTime"
+                    user_profile_ms    = "BootUserProfileProcessingTime"
+                    machine_profile_ms = "BootMachineProfileProcessingTime"
+                    explorer_ms        = "BootExplorerInitTime"
+                    postboot_ms        = "BootPostBootTime"
+                    startup_apps       = "BootNumStartupApps"
+                }
+                $ph = @{}
+                foreach ($k in $phaseMap.Keys) {
+                    $raw = $evtData[$phaseMap[$k]]
+                    $n = 0
+                    if ($raw -and [int]::TryParse([string]$raw, [ref]$n)) { $ph[$k] = $n }
+                }
+                if ($ph.Count -gt 0) { $bootPhases = $ph }
+            }
         } catch {}
 
         @{
@@ -241,6 +270,7 @@ $diagPerfEvents = Safe-Get {
             level        = Get-LevelLabel $_.Level
             app_name     = if ($appName) { [string]$appName } else { $null }
             duration_ms  = $durationMs
+            boot_phases  = $bootPhases
             message      = [string]$msg.Substring(0, [Math]::Min(400, $msg.Length))
         }
     })
