@@ -4,6 +4,64 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.8.0] — 2026-07-19
+
+> **Diagnostic encore plus parlant** : le rapport dit maintenant en une seconde
+> **ce qui ralentit le PC** (top 3 priorisé), signale les **pilotes obsolètes
+> ou non signés** avec la source de mise à jour, décompose un **démarrage lent
+> phase par phase**, et compare **deux diagnostics dans le temps** — la machine
+> s'améliore ou se dégrade ?
+
+### 🚦 Résumé exécutif « Ce qui ralentit ce PC »
+
+- **Top 3 des freins de performance** en tête du rapport HTML : constat chiffré
+  + action recommandée pour chacun (disque mécanique, RAM insuffisante ou
+  saturée, disque plein, SMART en échec, démarrage lent, surchauffe CPU,
+  antivirus multiples, démarrage encombré, pilotes en erreur…).
+- Priorisation par **impact perf ressenti** — les alertes sécurité restent dans
+  « Points d'attention ».
+- **Garde-fous honnêteté** : HDD + SSD → constat conditionnel (Windows est
+  peut-être sur le SSD), disques USB exclus, mesures instantanées (CPU/RAM au
+  moment du diagnostic) formulées comme telles.
+- Les freins sont aussi **injectés dans le JSON** (`executive_summary`) :
+  l'audit IA et l'historique les exploitent directement.
+
+### 🔌 Pilotes obsolètes / non signés
+
+- Chaque pilote remonte désormais sa **signature**, sa **classe** et sa
+  **présence réelle** (les périphériques fantômes sont ignorés).
+- **Pilotes non signés** sur matériel actif : alerte + tableau dédié.
+- **Pilotes anciens (>5 ans)** sur les classes qui comptent (GPU, réseau,
+  audio, stockage, USB, Bluetooth) avec colonne **« Où mettre à jour »** par
+  type de matériel. Les pilotes fournis par Windows (datés 2006 volontairement)
+  sont exclus — zéro faux positif.
+- Alerte seulement si GPU/réseau est concerné ou à partir de 3 pilotes
+  (garde-fou bruit).
+
+### ⏱ Démarrage décomposé phase par phase
+
+- Le dernier démarrage mesuré par Windows (journal Diagnostics-Performance)
+  est décomposé en **5 familles** : noyau & session, pilotes & périphériques,
+  services critiques, profil, bureau — avec barres de proportion et le travail
+  en arrière-plan après l'affichage du bureau.
+- **Piste de diagnostic** quand une phase domine un démarrage lent (ex. :
+  « un pilote traîne au chargement — croiser avec les pilotes anciens »).
+
+### 📈 Historique des diagnostics
+
+- Nouveau bouton **« Historique… »** dans l'onglet Analyse : sélection de deux
+  rapports JSON de la même machine → **la machine s'améliore ou se dégrade ?**
+- **Freins résolus / apparus / persistants**, 12 chiffres clés comparés (boot,
+  BSOD, erreurs matérielles, espace disque, pilotes…), **usure SMART suivie
+  disque par disque** (appariement par n° de série — un disque remplacé n'est
+  pas une « dégradation »).
+- **Verdict pondéré honnête** : seuls les freins et les métriques durables
+  comptent — jamais les mesures instantanées. Rapport HTML dédié, imprimable.
+- **Garde-fou identité** : même machine exigée (n° de série BIOS, hostname en
+  repli). Fonctionne avec les rapports JSON des versions précédentes.
+
+---
+
 ## [1.7.0] — 2026-07-17
 
 > **Bench thermique GPU** : le bench avant/après s'étend à la **carte graphique**

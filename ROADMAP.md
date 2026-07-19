@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.7.0** (2026-07-17) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.7.0)
+**Version actuelle : 1.8.0** (2026-07-19) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.0)
 
 ---
 
@@ -138,13 +138,25 @@ graphique (dépoussiérage, changement de pâte/pads).
   chute de clock), garde-fous protocole identique + même carte
 - Suivi de chantier : `GPU_BENCH_PROGRESS.md` (M0→M6, validations atelier)
 
-### v1.8.0 — Diagnostic encore plus parlant
+### v1.8.0 — 🚦 Diagnostic encore plus parlant ✅ *livré*
 
-- **Résumé exécutif** « Ce qui ralentit ce PC » en tête du rapport HTML (top 3 priorisé)
-- **Pilotes obsolètes / non signés** : détection + source de mise à jour
-- **Analyse du boot par phase** (Event ID 100 : MainPath, drivers, services, profil)
-- **Historique des diagnostics** : comparer deux rapports JSON dans le temps —
-  la machine s'améliore ou se dégrade ? (synergie directe avec le bench thermique)
+- **Résumé exécutif « Ce qui ralentit ce PC »** en tête du rapport HTML : top 3
+  des freins priorisés par impact perf (moteur de règles `report/exec_summary.py`),
+  constat chiffré + action recommandée, findings injectés dans le JSON
+  (`executive_summary`) pour l'audit IA et l'historique. Garde-fous honnêteté
+  (HDD+SSD conditionnel, USB exclus, mesures instantanées annoncées).
+- **Pilotes obsolètes / non signés** : signature/classe/présence par driver,
+  tableau des anciens (>5 ans, matériel actif, drivers boîte Windows exclus —
+  signataire strict) avec « Où mettre à jour » par classe ; alertes avec
+  garde-fou bruit.
+- **Analyse du boot par phase** (Event ID 100) : décomposition noyau / pilotes /
+  services / profil / bureau + post-boot, piste de diagnostic quand une phase
+  domine un démarrage lent.
+- **Historique des diagnostics** (`diag_compare.py` + bouton « 📈 Historique… ») :
+  deux rapports JSON de la même machine → freins résolus/apparus/persistants,
+  12 chiffres clés, usure SMART par disque (apparié par n° de série), verdict
+  pondéré amélioration/stable/dégradation. Rétro-compatible JSON pré-1.8.
+- Suivi de chantier : `DIAG_V18_PROGRESS.md` (M0→M5).
 
 ### Plus tard / opportuniste
 

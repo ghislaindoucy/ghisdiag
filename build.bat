@@ -34,7 +34,7 @@ echo [3/5] Création du manifest UAC...
 (
 echo ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
 echo ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
-echo   ^<assemblyIdentity version="1.7.0.0" processorArchitecture="X86"
+echo   ^<assemblyIdentity version="1.8.0.0" processorArchitecture="X86"
 echo     name="Ghisdiag" type="win32"/^>
 echo   ^<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"^>
 echo     ^<security^>^<requestedPrivileges^>
@@ -78,6 +78,8 @@ py -m PyInstaller ^
     --hidden-import ai_report ^
     --hidden-import thermal_bench ^
     --hidden-import thermal_compare ^
+    --hidden-import diag_compare ^
+    --hidden-import report.exec_summary ^
     --collect-submodules cryptography ^
     --hidden-import collectors.realtime_monitor ^
     --hidden-import collectors.sensors ^
