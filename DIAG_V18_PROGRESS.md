@@ -1,0 +1,41 @@
+# Chantier v1.8.0 — « Diagnostic encore plus parlant »
+
+Suivi de chantier (même format que `GPU_BENCH_PROGRESS.md`). Ouvert le 2026-07-19.
+
+**Objectif** (cf. ROADMAP v1.8.0) : rendre le rapport immédiatement actionnable pour
+le technicien ET parlant pour le client, sans collecter plus — mieux exploiter ce
+qu'on collecte déjà.
+
+## Milestones
+
+| # | Milestone | État | Notes |
+|---|---|---|---|
+| M1 | **Résumé exécutif « Ce qui ralentit ce PC »** — top 3 priorisé en tête du rapport HTML | ✅ | Moteur de règles `report/exec_summary.py` (10 règles / 14 freins possibles, scores impact perf), section héro + nav, findings aussi dans le JSON (`executive_summary`) pour l'audit IA. Tests unitaires. |
+| M2 | **Pilotes obsolètes / non signés** — détection + source de mise à jour | ⬜ | Étendre `collectors/software.ps1` (date/signature des drivers actifs), règles d'alerte + section rapport. |
+| M3 | **Analyse du boot par phase** — Event ID 100 (MainPath, drivers, services, profil) | ⬜ | Étendre `collectors/events.ps1` (payload XML de l'ID 100), décomposition dans le rapport. |
+| M4 | **Historique des diagnostics** — comparer 2 rapports JSON dans le temps | ⬜ | La machine s'améliore ou se dégrade ? Synergie avec le bench thermique. |
+| M5 | **Build & release v1.8.0** | ⬜ | Bump, CHANGELOG, RELEASE_NOTES, ROADMAP, exe, release GitHub. |
+
+## Décisions M1
+
+- **Moteur de règles séparé** (`report/exec_summary.py`, fonctions pures sans HTML) :
+  testable unitairement, le générateur ne fait que le rendu.
+- **Score = impact perf ressenti** (0-100), pas gravité sécurité : le résumé répond à
+  « pourquoi ce PC rame », les alertes sécurité restent dans ⚠ Points d'attention.
+- **Garde-fous honnêteté** (dans la lignée du projet) :
+  - Disque mécanique : verdict fort seulement si c'est le **seul** disque interne
+    (sinon Windows est peut-être sur le SSD → constat conditionnel, score réduit).
+  - Disques USB exclus de la règle HDD (un disque externe ne ralentit pas Windows).
+  - RAM/CPU chargés à l'instant T : formulé comme un constat instantané, avec le
+    processus responsable nommé.
+- **Top 3 affiché**, les autres freins comptés en une ligne (pas de mur de texte).
+- Les findings sont **aussi injectés dans le JSON** (`executive_summary`) → l'audit IA
+  et le futur historique (M4) les exploitent sans re-déduire.
+
+## Journal
+
+### Session 1 — 2026-07-19
+
+- Ouverture du chantier, cadrage M1-M5.
+- M1 livré : `report/exec_summary.py` + section héro dans `report/generator.py`,
+  styles `assets/report.css`, tests `tests/test_exec_summary.py`.

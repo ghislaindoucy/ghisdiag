@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .exec_summary import compute_findings
+
 VERSION = "1.7.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "Ghisdiag_Reports"
@@ -176,6 +178,7 @@ class ReportGenerator:
         self.meta       = report_data.get("meta", {})
         self.data       = report_data.get("data", {})
         self.alerts     = []  # liste (level, title, desc)
+        self.exec_findings = []  # freins perf priorisés (peuplé par _build_html)
         self.output_dir = output_dir or DEFAULT_REPORTS_DIR
 
     def save(self) -> tuple[Path, Path]:
@@ -189,6 +192,9 @@ class ReportGenerator:
         json_path = self.output_dir / f"{basename}.json"
 
         html_path.write_text(self._build_html(), encoding="utf-8")
+        # Le résumé exécutif part aussi dans le JSON : l'audit IA et le futur
+        # historique des diagnostics l'exploitent sans re-déduire les règles.
+        self.report["executive_summary"] = self.exec_findings
         json_path.write_text(
             json.dumps(self.report, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8"
@@ -394,8 +400,10 @@ class ReportGenerator:
     # ── HTML ──────────────────────────────────────────────────────────────────
     def _build_html(self) -> str:
         self._analyse()
+        self.exec_findings = compute_findings(self.data)
         css  = get_css()
         body = "\n".join([
+            self._section_executive(),
             self._section_alerts(),
             self._section_system(),
             self._section_performance(),
@@ -441,6 +449,7 @@ class ReportGenerator:
 </div>
 
 <nav class="nav">
+  <a href="#exec">🚦 Résumé</a>
   <a href="#alerts">⚠ Points d'attention</a>
   <a href="#system">🖥 Système</a>
   <a href="#performance">📊 Performance</a>
@@ -464,6 +473,38 @@ class ReportGenerator:
 </body></html>"""
 
     # ── Sections ─────────────────────────────────────────────────────────────
+    def _section_executive(self) -> str:
+        """Résumé exécutif « Ce qui ralentit ce PC » : top 3 des freins perf,
+        priorisés par le moteur de règles (report/exec_summary.py)."""
+        findings = self.exec_findings
+        if not findings:
+            content = ('<div class="alert-box alert-info">'
+                       '<span class="label">✅ Aucun frein majeur identifié</span>'
+                       '<p>Rien dans les données collectées n\'explique une lenteur '
+                       'de la machine. Si le client se plaint quand même, chercher '
+                       'côté usage : navigateur surchargé, réseau, périphériques.</p></div>')
+        else:
+            items = []
+            for i, f in enumerate(findings[:3], start=1):
+                items.append(
+                    f'<div class="exec-item exec-{f["severity"]}">'
+                    f'<div class="exec-rank">{i}</div>'
+                    f'<div class="exec-body">'
+                    f'<div class="exec-title">{_esc(f["title"])}</div>'
+                    f'<p class="exec-constat">{_esc(f["constat"])}</p>'
+                    f'<p class="exec-action">→ {_esc(f["action"])}</p>'
+                    f'</div></div>'
+                )
+            more = len(findings) - 3
+            if more > 0:
+                items.append(f'<p class="exec-more">+ {more} autre(s) frein(s) '
+                             f'secondaire(s) — voir les sections détaillées.</p>')
+            content = "\n".join(items)
+
+        return (f'<section id="exec" class="section">'
+                f'<h2 class="section-title">🚦 Ce qui ralentit ce PC</h2>'
+                f'{content}</section>')
+
     def _section_alerts(self) -> str:
         if not self.alerts:
             content = '<div class="alert-box alert-info"><span class="label">✅ Aucune anomalie détectée</span><p>Tous les indicateurs analysés semblent dans les normes.</p></div>'
