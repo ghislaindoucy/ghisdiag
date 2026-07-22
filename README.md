@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.6.5-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.5)
+[![Version](https://img.shields.io/badge/version-1.8.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.1)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -144,6 +144,37 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.8.1 (Juillet 2026)
+🖥️ **Interface défilable sur petits écrans**
+- **Tous les onglets défilables** (Analyse et Bench thermique rejoignent les autres) : plus aucun contenu coupé sur les portables 14" ou en mise à l'échelle Windows ; la barre n'apparaît qu'en cas de manque de place
+- **En-tête compact** sur écran court + fenêtre restaurée bornée à l'écran
+- Correctif molette (une seule zone captait le défilement de toute l'app)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.8.1.md)
+
+### v1.8.0 (Juillet 2026)
+🚦 **Diagnostic encore plus parlant**
+- **Résumé exécutif « Ce qui ralentit ce PC »** : top 3 des freins de performance, priorisés, avec l'action à mener
+- **Pilotes obsolètes ou non signés** signalés, avec la source de mise à jour
+- **Démarrage lent décomposé phase par phase** + **comparaison de deux diagnostics dans le temps** (historique)
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.8.0.md)
+
+### v1.7.0 (Juillet 2026)
+🎮 **Bench thermique GPU**
+- Chauffe reproductible de la **carte graphique** (tous fabricants, sans rien installer), mesures fiables via le pilote NVIDIA
+- Comparaison avant/après et rapport client dédiés au GPU
+- Validé en atelier (RTX 4060, GTX 1060, GT 1030, Quadro P2000, AMD APU, Intel iGPU) — aucun plantage ni reset de pilote
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.7.0.md)
+
+### v1.6.6 (Juillet 2026)
+♿ **Accessibilité petit écran**
+- Interface utilisable sur **laptops à petit écran** et en **mise à l'échelle Windows 125 %/150 %** : plus aucun bouton ni contrôle coupé hors de la fenêtre
+- Correctifs d'affichage uniquement — mise à jour recommandée pour les techniciens en atelier
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.6.6.md)
 
 ### v1.6.5 (Juin 2026)
 🌡️ **Capteurs & bench thermique fiables sur tout-terrain**
@@ -290,7 +321,7 @@ build.bat
 L'exe généré : `dist/Ghisdiag.exe`
 - Toutes les dépendances embarquées
 - Aucun Python requis chez l'utilisateur
-- ~80-100 MB
+- ~34 MB
 
 ---
 
@@ -343,7 +374,7 @@ A: Non, sauf si tu veux l'analyse IA Mistral. Le diagnostic seul est 100% offlin
 A: `%USERPROFILE%\Documents\Ghisdiag_Reports` (modifiable dans l'interface).
 
 **Q: Ça mange beaucoup?**  
-A: L'exe : ~80 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <200 MB.
+A: L'exe : ~34 MB. Rapports : ~1-2 MB par diagnostic. RAM pendant exécution : <200 MB.
 
 ---
 

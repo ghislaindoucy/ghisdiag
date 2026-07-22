@@ -1,13 +1,13 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.8.0** (2026-07-19) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.0)
+**Version actuelle : 1.8.1** (2026-07-22) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.1)
 
 ---
 
 ## 📋 L'application aujourd'hui
 
 Ghisdiag est un **outil de diagnostic et de maintenance Windows tout-en-un**, compilé
-en un seul exécutable (PyInstaller, ~19 MB), sans aucune dépendance à installer sur la
+en un seul exécutable (PyInstaller, ~34 MB), sans aucune dépendance à installer sur la
 machine cible. Pensé pour le technicien SAV : on branche, on lance, on repart avec un
 rapport.
 
@@ -79,7 +79,7 @@ namespace OpenHardwareMonitor, exige OHM lancé) est trop fragile pour un bench.
   configurable 50/100 %) → refroidissement (~5 min)
 - Génération de charge par **workers PowerShell** (runspaces .NET, un par cœur
   logique, sans GIL) plutôt que multiprocessing Python : en `--onefile` chaque
-  processus Python enfant réextrairait les ~20 Mo du bundle
+  processus Python enfant réextrairait les ~34 Mo du bundle
 - Échantillonnage toutes les 2-5 s : températures + charge + fréquence CPU
 - **Détection de throttling** : fréquence qui s'effondre quand la température plafonne
 - **Arrêt d'urgence** : automatique si T > 95 °C, ou bouton Stop
@@ -157,6 +157,21 @@ graphique (dépoussiérage, changement de pâte/pads).
   12 chiffres clés, usure SMART par disque (apparié par n° de série), verdict
   pondéré amélioration/stable/dégradation. Rétro-compatible JSON pré-1.8.
 - Suivi de chantier : `DIAG_V18_PROGRESS.md` (M0→M5).
+
+### v1.8.1 — 🖥️ Interface défilable sur petits écrans ✅ *livré*
+
+- **Tous les onglets défilables** : Analyse et Bench thermique rejoignent
+  Dépannage / WiFi / Setup via un helper `_scrollable()` unique (les 6 zones
+  jusque-là dupliquées sont factorisées). Barre affichée seulement si la fenêtre
+  est trop courte ; sur grand écran, journal et graphe s'étirent comme avant.
+- **En-tête compact** sous 800 px de hauteur logique (portables 14", mise à
+  l'échelle Windows où l'app non DPI-aware ne voit que ~1280×720) : sous-titre
+  masqué, logo réduit, liens sur une ligne → ~100 px rendus au contenu.
+- **Fenêtre restaurée bornée à l'écran** (ne dépasse plus sous la barre des
+  tâches).
+- **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
+  zone construite captait la molette de toute l'app → routeur unique.
+- Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
 
 ### Plus tard / opportuniste
 
