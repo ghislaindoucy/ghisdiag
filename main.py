@@ -140,12 +140,16 @@ class GhisdiagApp(tk.Tk):
         super().__init__()
         self.title("Ghisdiag")
         self.resizable(True, True)
-        self.minsize(700, 580)
+        self.minsize(700, 520)
         self.configure(bg=BG)
 
         # Taille de restauration (utilisée quand l'utilisateur rétrécit depuis le mode maximisé)
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        # Portables 14" (et écrans 1080p avec mise à l'échelle Windows à 125/150 % :
+        # l'app n'est pas DPI-aware, Tk ne voit alors que ~1280x720 logiques) →
+        # en-tête allégé pour rendre la hauteur au contenu.
+        self._compact = sh < 800
         w, h   = min(1280, int(sw * 0.85)), min(900, int(sh * 0.85))
         self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
         # Démarre maximisé : tout le contenu visible dès l'ouverture
@@ -244,10 +248,13 @@ class GhisdiagApp(tk.Tk):
         self._set_icon()
         self._enable_dark_titlebar()
         self.update_idletasks()
-        self.geometry("740x640")
-        x = (self.winfo_screenwidth()  - 740) // 2
-        y = (self.winfo_screenheight() - 640) // 2
-        self.geometry(f"740x640+{x}+{y}")
+        # Taille restaurée : bornée à l'écran, sinon sur un 14" la fenêtre
+        # « restaurée » dépasse sous la barre des tâches.
+        rw = min(740, self.winfo_screenwidth()  - 40)
+        rh = min(640, self.winfo_screenheight() - 80)
+        x = (self.winfo_screenwidth()  - rw) // 2
+        y = (self.winfo_screenheight() - rh) // 2
+        self.geometry(f"{rw}x{rh}+{x}+{y}")
 
     def _set_icon(self):
         # En mode exe gelé (PyInstaller), les assets sont extraits dans _MEIPASS.
@@ -286,8 +293,15 @@ class GhisdiagApp(tk.Tk):
 
     # ── UI principale ─────────────────────────────────────────────────────────
     def _build_ui(self):
+        compact = self._compact
+
+        # Zones défilantes (chemin du canvas → (canvas, cadre interne)), pour
+        # router la molette — voir _scrollable / _on_mousewheel.
+        self._scroll_zones = {}
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+
         # En-tête Ghost Protocol
-        hdr = tk.Frame(self, bg=BG, pady=10)
+        hdr = tk.Frame(self, bg=BG, pady=4 if compact else 10)
         hdr.pack(fill="x")
 
         hdr_inner = tk.Frame(hdr, bg=BG)
@@ -301,7 +315,8 @@ class GhisdiagApp(tk.Tk):
             png = assets / "icon.png"
             if png.exists():
                 img = tk.PhotoImage(file=str(png))
-                factor = max(1, min(img.width(), img.height()) // 60)  # 256 → /4 ≈ 64px
+                # 256 → /4 ≈ 64px (≈ 42px en mode compact)
+                factor = max(1, min(img.width(), img.height()) // (40 if compact else 60))
                 self._header_logo = img.subsample(factor, factor)
                 tk.Label(hdr_inner, image=self._header_logo, bg=BG).pack(
                     side="left", padx=(0, 18))
@@ -326,48 +341,46 @@ class GhisdiagApp(tk.Tk):
         title_zone = tk.Frame(hdr_inner, bg=BG)
         title_zone.pack(side="left", anchor="center")
         tk.Label(title_zone, text="Ghisdiag",
-                 font=("Segoe UI Semibold", 22), bg=BG, fg=FG).pack(anchor="w")
-        tk.Label(title_zone, text="Diagnostic & maintenance Windows",
-                 font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(anchor="w")
+                 font=("Segoe UI Semibold", 18 if compact else 22),
+                 bg=BG, fg=FG).pack(anchor="w")
+        # Sous-titre sacrifié en mode compact : c'est de la décoration, et chaque
+        # ligne d'en-tête est prise sur le contenu utile.
+        if not compact:
+            tk.Label(title_zone, text="Diagnostic & maintenance Windows",
+                     font=("Segoe UI", 10), bg=BG, fg=FG_DIM).pack(anchor="w")
         tk.Label(title_zone, text=f"v{VERSION}  ·  {AUTHORS}",
                  font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 0))
 
-        # Lien de soutien — « offrez-moi un café » (PayPal)
-        coffee = tk.Label(
-            title_zone,
-            text="☕  Ghisdiag vous est utile ? Offrez-moi un café",
-            font=("Segoe UI", 9, "underline"),
-            bg=BG, fg=ACCENT, cursor="hand2")
-        coffee.pack(anchor="w", pady=(4, 0))
-        coffee.bind("<Button-1>", lambda e: webbrowser.open(PAYPAL_URL))
-        coffee.bind("<Enter>", lambda e: coffee.config(fg=PURPLE))
-        coffee.bind("<Leave>", lambda e: coffee.config(fg=ACCENT))
-
-        # Lien vers le dépôt GitHub (code source, releases, bugs)
-        github = tk.Label(
-            title_zone,
-            text="⌨  Code source & releases sur GitHub",
-            font=("Segoe UI", 9, "underline"),
-            bg=BG, fg=ACCENT, cursor="hand2")
-        github.pack(anchor="w", pady=(2, 0))
-        github.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_URL))
-        github.bind("<Enter>", lambda e: github.config(fg=PURPLE))
-        github.bind("<Leave>", lambda e: github.config(fg=ACCENT))
-
-        # Lien vers les licences & mentions légales des composants tiers
-        licences = tk.Label(
-            title_zone,
-            text="⚖  Licences & mentions légales",
-            font=("Segoe UI", 9, "underline"),
-            bg=BG, fg=ACCENT, cursor="hand2")
-        licences.pack(anchor="w", pady=(2, 0))
-        licences.bind("<Button-1>", lambda e: self._show_licenses())
-        licences.bind("<Enter>", lambda e: licences.config(fg=PURPLE))
-        licences.bind("<Leave>", lambda e: licences.config(fg=ACCENT))
+        # Liens : empilés normalement, sur une seule ligne en mode compact.
+        links = tk.Frame(title_zone, bg=BG)
+        links.pack(anchor="w", pady=(4, 0))
+        link_defs = (
+            ("☕  Ghisdiag vous est utile ? Offrez-moi un café",
+             "☕  Un café",
+             lambda: webbrowser.open(PAYPAL_URL)),
+            ("⌨  Code source & releases sur GitHub",
+             "⌨  GitHub",
+             lambda: webbrowser.open(GITHUB_URL)),
+            ("⚖  Licences & mentions légales",
+             "⚖  Licences",
+             self._show_licenses),
+        )
+        for full, short, action in link_defs:
+            lbl = tk.Label(
+                links, text=short if compact else full,
+                font=("Segoe UI", 9, "underline"),
+                bg=BG, fg=ACCENT, cursor="hand2")
+            if compact:
+                lbl.pack(side="left", padx=(0, 14))
+            else:
+                lbl.pack(anchor="w", pady=(2, 0))
+            lbl.bind("<Button-1>", lambda e, a=action: a())
+            lbl.bind("<Enter>", lambda e, w=lbl: w.config(fg=PURPLE))
+            lbl.bind("<Leave>", lambda e, w=lbl: w.config(fg=ACCENT))
 
         # Ligne décorative bicolore (remplace ttk.Separator)
         sep_c = tk.Canvas(self, height=3, bg=BG, highlightthickness=0)
-        sep_c.pack(fill="x", pady=(6, 0))
+        sep_c.pack(fill="x", pady=(2 if compact else 6, 0))
 
         def _refresh_sep(e=None, c=sep_c):
             w = c.winfo_width()
@@ -388,7 +401,7 @@ class GhisdiagApp(tk.Tk):
         style.configure("PD.TNotebook.Tab",
                         background=BG, foreground=FG_MUTED,
                         font=("Segoe UI", 10, "bold"),
-                        padding=[20, 10])
+                        padding=[12, 6] if compact else [20, 10])
         style.map("PD.TNotebook.Tab",
                   background=[("selected", SURFACE2), ("active", SURFACE)],
                   foreground=[("selected", ACCENT), ("active", FG_DIM)])
@@ -501,7 +514,68 @@ class GhisdiagApp(tk.Tk):
                   command=win.destroy).pack(side="right")
 
     # ── Onglet Analyse ────────────────────────────────────────────────────────
+    # ── Zone défilante générique ──────────────────────────────────────────────
+    def _scrollable(self, parent: tk.Frame) -> tk.Frame:
+        """Rend `parent` défilant verticalement et renvoie le cadre à remplir.
+
+        Le contenu garde sa taille naturelle : la barre n'apparaît que si la
+        fenêtre est trop courte (portables 14", mise à l'échelle Windows). Quand
+        la place suffit, le cadre interne est étiré à la hauteur du canvas pour
+        que les widgets en expand=True (journal, graphe) remplissent l'écran.
+        """
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview,
+                           style="PD.Vertical.TScrollbar")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=BG)
+        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync(_e=None):
+            need  = inner.winfo_reqheight()
+            avail = canvas.winfo_height()
+            width = canvas.winfo_width()
+            canvas.itemconfig(cw, width=width, height=max(need, avail))
+            canvas.configure(scrollregion=(0, 0, width, max(need, avail)))
+            if need > avail:
+                if not sb.winfo_ismapped():
+                    # `before` : le canvas est en expand=True et prendrait sinon
+                    # toute la largeur, laissant la barre sans place.
+                    sb.pack(side="right", fill="y", before=canvas)
+            elif sb.winfo_ismapped():
+                sb.pack_forget()
+                canvas.yview_moveto(0)
+
+        inner.bind("<Configure>", _sync)
+        canvas.bind("<Configure>", _sync)
+
+        # La molette est routée par _on_mousewheel (un seul bind_all pour toute
+        # l'app) : chaque zone s'enregistre par le chemin de son canvas.
+        self._scroll_zones[str(canvas)] = (canvas, inner)
+        return inner
+
+    def _on_mousewheel(self, e):
+        """Route la molette vers la zone défilante qui contient le pointeur."""
+        w = e.widget
+        if isinstance(w, str):
+            return
+        # Les zones de texte et les listes gèrent déjà la molette : sans ce
+        # garde-fou, un cran ferait défiler le contenu ET la page.
+        if isinstance(w, (tk.Text, tk.Listbox)):
+            return
+        # Remonte la hiérarchie : la zone la plus imbriquée gagne (sous-onglets).
+        while w is not None:
+            zone = self._scroll_zones.get(str(w))
+            if zone:
+                canvas, inner = zone
+                if inner.winfo_reqheight() > canvas.winfo_height():
+                    canvas.yview_scroll(-1 * (e.delta // 120), "units")
+                return
+            w = getattr(w, "master", None)
+
     def _build_analyse_tab(self, parent: tk.Frame):
+        parent = self._scrollable(parent)
+
         # Dossier de destination
         dest = tk.Frame(parent, bg=BG, pady=12)
         dest.pack(fill="x", padx=28)
@@ -730,6 +804,10 @@ class GhisdiagApp(tk.Tk):
             bd=0, padx=10, pady=10,
             state="disabled", wrap="word",
             selectbackground=SURFACE2,
+            # 8 lignes = hauteur naturelle de l'onglet dans la zone défilante
+            # (le défaut de 24 lignes forcerait une barre même sur grand écran) ;
+            # le journal s'étire dès qu'il y a de la place.
+            height=8,
         )
         sb = ttk.Scrollbar(log_wrap, command=self.log.yview, style="PD.Vertical.TScrollbar")
         self.log.configure(yscrollcommand=sb.set)
@@ -771,30 +849,10 @@ class GhisdiagApp(tk.Tk):
         self._build_reparation_panel(reparation_frame)
 
     def _build_impression_panel(self, parent: tk.Frame):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
-        self._build_spooler_section(inner)
+        self._build_spooler_section(self._scrollable(parent))
 
     def _build_reseau_panel(self, parent: tk.Frame):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
-        self._build_network_section(inner)
+        self._build_network_section(self._scrollable(parent))
 
     # ── Section Spooler ───────────────────────────────────────────────────────
     def _build_spooler_section(self, parent: tk.Frame):
@@ -1443,16 +1501,7 @@ class GhisdiagApp(tk.Tk):
 
     # ── Panneau Réparation système ────────────────────────────────────────────
     def _build_reparation_panel(self, parent: tk.Frame):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+        inner = self._scrollable(parent)
 
         # ── Titre
         hdr = tk.Frame(inner, bg=BG, pady=16)
@@ -1849,27 +1898,7 @@ class GhisdiagApp(tk.Tk):
 
     # ── Onglet WiFi ───────────────────────────────────────────────────────────
     def _build_wifi_tab(self, parent: tk.Frame):
-        # Canvas scrollable (même pattern que _build_troubleshoot_tab)
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        inner = tk.Frame(canvas, bg=BG)
-        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        def _on_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        inner.bind("<Configure>", _on_configure)
-
-        def _on_canvas_resize(event):
-            canvas.itemconfig(canvas_window, width=event.width)
-        canvas.bind("<Configure>", _on_canvas_resize)
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(-1 * (event.delta // 120), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        inner = self._scrollable(parent)
 
         # ── Section Profils sauvegardés ───────────────────────────────────────
         sec_p = tk.Frame(inner, bg=BG, pady=16)
@@ -3323,6 +3352,8 @@ class GhisdiagApp(tk.Tk):
     _BENCH_LABELS_FR = {"avant": "Avant", "apres": "Après", "libre": "Libre"}
 
     def _build_bench_tab(self, parent: tk.Frame):
+        parent = self._scrollable(parent)
+
         # En-tête
         head = tk.Frame(parent, bg=BG)
         head.pack(fill="x", padx=28, pady=(14, 2))
@@ -3402,7 +3433,10 @@ class GhisdiagApp(tk.Tk):
         # Graphe temps réel
         chart_box = tk.Frame(parent, bg=SURFACE,
                              highlightbackground=BORDER, highlightthickness=1, bd=0)
-        self._bench_canvas = tk.Canvas(chart_box, bg=BG, highlightthickness=0)
+        # height : hauteur naturelle du graphe dans la zone défilante (le défaut
+        # Tk de 7 cm gonflerait l'onglet) ; il s'étire dès qu'il y a de la place.
+        self._bench_canvas = tk.Canvas(chart_box, bg=BG, height=200,
+                                       highlightthickness=0)
         self._bench_canvas.pack(fill="both", expand=True)
         self._bench_canvas.bind("<Configure>", lambda e: self._bench_redraw())
 
@@ -4310,15 +4344,7 @@ class GhisdiagApp(tk.Tk):
 
     # ── Panneau Comptes ───────────────────────────────────────────────────────
     def _build_comptes_panel(self, parent: tk.Frame):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        inner = self._scrollable(parent)
 
         pad = {"padx": 28, "pady": 8}
 
@@ -4621,7 +4647,7 @@ class GhisdiagApp(tk.Tk):
 
     # ── Panneau Mises à jour ──────────────────────────────────────────────────
     def _build_maj_panel(self, parent: tk.Frame):
-        sec = tk.Frame(parent, bg=BG, pady=16)
+        sec = tk.Frame(self._scrollable(parent), bg=BG, pady=16)
         sec.pack(fill="both", expand=True, padx=28)
 
         tk.Label(sec, text="🔄  Mises à jour Windows & Applications",
@@ -4673,7 +4699,7 @@ class GhisdiagApp(tk.Tk):
         self._maj_log = tk.Text(self._maj_log_wrap, bg=SURFACE, fg=FG_DIM,
                                  font=("Consolas", 9), bd=0, padx=10, pady=8,
                                  state="disabled", wrap="word",
-                                 selectbackground=SURFACE2)
+                                 selectbackground=SURFACE2, height=8)
         maj_sb = ttk.Scrollbar(self._maj_log_wrap, command=self._maj_log.yview, style="PD.Vertical.TScrollbar")
         self._maj_log.configure(yscrollcommand=maj_sb.set)
         maj_sb.pack(side="right", fill="y")
@@ -4935,15 +4961,7 @@ class GhisdiagApp(tk.Tk):
         # Windows à 125/150 %), la hauteur logique disponible ne suffit pas à
         # afficher toute la liste + les icônes du bureau + le log. Sans scroll,
         # le bas du panneau (bouton « Ajouter les icônes du bureau ») était coupé.
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        inner = self._scrollable(parent)
 
         sec = tk.Frame(inner, bg=BG, pady=16)
         sec.pack(fill="x", padx=28)
@@ -5172,15 +5190,7 @@ class GhisdiagApp(tk.Tk):
 
     # ── Panneau Récupération ──────────────────────────────────────────────────
     def _build_recuperation_panel(self, parent: tk.Frame):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview, style="PD.Vertical.TScrollbar")
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(canvas, bg=BG)
-        cw = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        inner = self._scrollable(parent)
 
         # ── Titre ─────────────────────────────────────────────────────────────
         sec = tk.Frame(inner, bg=BG, pady=16)
