@@ -4,6 +4,34 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.8.1] — 2026-07-22
+
+> **Confort petits écrans** : l'interface s'adapte enfin aux portables 14" et
+> aux écrans 1080p en mise à l'échelle Windows (125/150 %), où le bas des
+> onglets se retrouvait coupé sous la barre des tâches.
+
+### 🖥️ Interface adaptative
+
+- **Tous les onglets sont désormais défilables** : Analyse et Bench thermique
+  rejoignent Dépannage / WiFi / Setup. Une barre de défilement n'apparaît que
+  si la fenêtre est trop courte pour tout afficher — sur grand écran, le journal
+  et le graphe s'étirent comme avant.
+- **En-tête compact** sous 800 px de hauteur utile (portables 14", mise à
+  l'échelle Windows) : sous-titre masqué, logo réduit, liens sur une seule
+  ligne, onglets resserrés → ~100 px rendus au contenu.
+- **Fenêtre restaurée bornée à l'écran** : elle ne dépasse plus sous la barre
+  des tâches quand on quitte le mode maximisé sur petit écran.
+
+### 🐛 Corrections
+
+- **Molette de défilement** : chaque panneau installait un gestionnaire global,
+  si bien que la dernière zone construite captait la molette de toute
+  l'application (faire défiler un onglet agissait sur un autre). Un routeur
+  unique dirige maintenant la molette vers la zone réellement survolée.
+- Factorisation des 6 zones défilantes dupliquées en un helper unique.
+
+---
+
 ## [1.8.0] — 2026-07-19
 
 > **Diagnostic encore plus parlant** : le rapport dit maintenant en une seconde
