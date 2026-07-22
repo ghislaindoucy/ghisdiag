@@ -44,11 +44,9 @@
 
 ## 📦 Fichier
 
-À compléter à la génération de l'exe :
-
 - **Ghisdiag.exe** `1.8.1.0`
-- Taille : _à renseigner_
-- SHA-256 : _à renseigner_
+- Taille : 33.9 MB (35 542 557 octets)
+- SHA-256 : `34b89da95165cdf6d24a06c9826d4af492e330d9201c3893efafc3ad18e7b265`
 
 ---
 
