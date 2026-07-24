@@ -4,6 +4,28 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [1.8.2] — 2026-07-24
+
+> **Poser une question à l'IA.** En plus de l'audit automatique, tu peux
+> maintenant joindre une **question précise** en rapport avec le poste — l'IA y
+> répond en tête de rapport, puis produit l'audit complet comme d'habitude.
+
+### 🤖 Question libre à l'IA
+
+- **Champ question optionnel** (500 caractères) dans le panneau Analyse IA,
+  visible seulement quand une clé API est configurée. Compteur de caractères en
+  direct.
+- La réponse apparaît dans une section **« Réponse à ta question » en tête du
+  rapport IA**, argumentée sur les données réelles du diagnostic (commandes
+  exactes si pertinent). La question posée est rappelée dans l'en-tête du rapport.
+- **Garde-fou hors-sujet** : si la question ne concerne pas le poste ou son
+  dépannage (recette de cuisine, culture générale…), l'IA la décline poliment en
+  une phrase et poursuit l'audit normalement.
+- Sans question, le comportement est strictement identique aux versions
+  précédentes.
+
+---
+
 ## [1.8.1] — 2026-07-22
 
 > **Confort petits écrans** : l'interface s'adapte enfin aux portables 14" et

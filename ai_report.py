@@ -332,6 +332,7 @@ def generate_ai_report(
     provider_label: str = "IA",
     model_label: str = "",
     app_version: str = "",
+    question: str = "",
 ) -> Path:
     """
     Génère un rapport HTML à partir de l'analyse IA.
@@ -343,6 +344,7 @@ def generate_ai_report(
         provider_label: libellé du fournisseur (ex. "Anthropic (Claude)")
         model_label: libellé du modèle (ex. "Claude Opus 4.8")
         app_version: version de Ghisdiag (pour le pied de page)
+        question: question libre posée par le technicien (rappelée dans l'encart méta)
 
     Returns:
         Path vers le fichier HTML généré.
@@ -359,6 +361,10 @@ def generate_ai_report(
         model_line = (
             f'<p><strong>Modèle :</strong> {html.escape(model_label)}</p>'
             if model_label else ""
+        )
+        question_line = (
+            f'<p><strong>Question du technicien :</strong> {html.escape(question.strip())}</p>'
+            if question and question.strip() else ""
         )
         version_line = f" v{html.escape(app_version)}" if app_version else ""
 
@@ -380,6 +386,7 @@ def generate_ai_report(
             <p><strong>Généré :</strong> <span class="timestamp">{datetime.now().strftime("%d/%m/%Y à %H:%M:%S")}</span></p>
             <p><strong>Fournisseur :</strong> {html.escape(provider_label)}</p>
             {model_line}
+            {question_line}
         </div>
     </header>
 
