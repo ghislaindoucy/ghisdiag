@@ -49,8 +49,8 @@
 ## 📦 Fichier
 
 - **Ghisdiag.exe** `1.8.2.0`
-- Taille : 33.9 MB (35 528 741 octets)
-- SHA-256 : `4b78763c23b2a970f59e422702b94300d2ef37258d3f892eb687bac6b1c13c75`
+- Taille : 33.9 MB (35 528 656 octets)
+- SHA-256 : `2b09a3078da7c16df3ae9ae714539bc4441eaf46b7b64c8f1bdcdb8f11156c94`
 
 ---
 
