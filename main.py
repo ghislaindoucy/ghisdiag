@@ -7,6 +7,7 @@ import subprocess
 import sys
 import gc
 import threading
+import time
 import webbrowser
 import logging
 import logging.handlers
@@ -3584,8 +3585,13 @@ class GhisdiagApp(tk.Tk):
         self._bench_compare_data = None    # (avant_samples, apres_samples)
         self._bench_target = "cpu"         # cible du test en cours / affiché
         self._bench_gpu_detect = None      # None = détection en cours ; dict sinon
+        self._bench_gpu_detect_running = False
         self._bench_sess_filter_style()
-        threading.Thread(target=self._bench_detect_gpus, daemon=True).start()
+        # Détection GPU lancée APRÈS le démarrage de la boucle tkinter : un
+        # thread démarré ici (pendant la construction de l'UI) peut finir avant
+        # `mainloop()` et perdre définitivement son résultat — voir
+        # _bench_detect_gpus.
+        self.after(150, self._bench_start_gpu_detect)
         self.after(500, self._bench_refresh_sessions)
 
     # -- Filtre CPU / GPU de la liste des sessions -----------------------------
@@ -3608,6 +3614,17 @@ class GhisdiagApp(tk.Tk):
             self._bench_refresh_sessions()
 
     # -- Cible CPU / GPU -------------------------------------------------------
+
+    def _bench_start_gpu_detect(self):
+        """(Re)lance la détection GPU en tâche de fond, si aucune n'est en cours.
+
+        Appelée au démarrage puis à chaque bascule vers la cible GPU tant que le
+        résultat manque : une détection perdue ne peut donc jamais bloquer la
+        cible GPU sur « détection en cours » jusqu'au redémarrage de l'app."""
+        if self._bench_gpu_detect_running:
+            return
+        self._bench_gpu_detect_running = True
+        threading.Thread(target=self._bench_detect_gpus, daemon=True).start()
 
     def _bench_detect_gpus(self):
         """Thread de fond : énumère les adaptateurs DXGI et vérifie qu'une
@@ -3636,11 +3653,29 @@ class GhisdiagApp(tk.Tk):
             logger.exception("Bench : détection de température GPU")
 
         def _apply():
+            self._bench_gpu_detect_running = False
             self._bench_gpu_detect = res
             values = [self._BENCH_GPU_AUTO] + [
                 f"[{a['index']}] {a['name']}" for a in res["adapters"]]
             self._bench_gpu_cb.config(values=values)
-        self.after(0, _apply)
+
+        # tkinter refuse un `after()` venu d'un autre thread tant que la boucle
+        # d'événements n'a pas démarré : après ~1 s d'attente il lève
+        # RuntimeError(« main thread is not in main loop ») et le résultat est
+        # perdu — le thread meurt en silence (exe sans console). Cas réel : une
+        # détection NVML rapide (~50 ms) qui se termine pendant la construction
+        # des derniers onglets. On réessaie donc au lieu d'abandonner.
+        for _ in range(30):
+            try:
+                self.after(0, _apply)
+                return
+            except RuntimeError:
+                time.sleep(0.2)          # boucle tkinter pas encore démarrée
+            except tk.TclError:
+                self._bench_gpu_detect_running = False
+                return                   # fenêtre détruite : plus rien à faire
+        self._bench_gpu_detect_running = False
+        logger.error("Bench : résultat de détection GPU non applicable à l'UI")
 
     def _bench_on_target(self, _event=None):
         """Bascule CPU/GPU : valide la faisabilité GPU, adapte les presets
@@ -3649,6 +3684,9 @@ class GhisdiagApp(tk.Tk):
         if want_gpu:
             det = self._bench_gpu_detect
             if det is None:
+                # Encore en cours, ou détection perdue : on la relance (no-op si
+                # elle tourne déjà) pour que l'attente ne soit jamais définitive.
+                self._bench_start_gpu_detect()
                 messagebox.showinfo(
                     "Bench GPU",
                     "Détection des cartes graphiques en cours… réessayez dans "

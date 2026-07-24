@@ -24,6 +24,19 @@ Toutes les modifications notables de ce projet sont documentées ici.
 - Sans question, le comportement est strictement identique aux versions
   précédentes.
 
+### 🩹 Correctif (re-build du 2026-07-24, version inchangée)
+
+- **Bench thermique : cible GPU bloquée sur « Détection des cartes graphiques
+  en cours… »** — quand la détection était très rapide (carte NVIDIA lue via
+  NVML, ~50 ms), son résultat pouvait être publié avant que l'interface ne soit
+  prête : il était alors perdu **définitivement**, et la cible GPU restait
+  refusée jusqu'au redémarrage de l'application (le bench CPU, lui, n'était pas
+  concerné). Constaté en atelier sur une machine NVIDIA RTX.
+- La détection démarre désormais **après** l'interface, **réessaie** si celle-ci
+  n'est pas encore prête, et **se relance automatiquement** à chaque bascule sur
+  la cible GPU tant qu'aucun résultat n'est disponible : l'attente ne peut plus
+  être définitive.
+
 ---
 
 ## [1.8.1] — 2026-07-22

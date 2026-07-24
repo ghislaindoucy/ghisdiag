@@ -150,6 +150,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 - **Champ question optionnel** (500 car.) dans le panneau Analyse IA : pose une question précise en rapport avec le poste, en plus de l'audit automatique
 - La réponse arrive **en tête du rapport IA**, appuyée sur les données réelles du diagnostic ; garde-fou hors-sujet (question sans rapport = déclinée poliment)
 - Visible seulement quand une clé API est configurée ; sans question, comportement inchangé
+- 🩹 *Correctif (re-build du 24/07)* : bench thermique, la cible **GPU** pouvait rester bloquée sur « Détection des cartes graphiques en cours… » sur les machines NVIDIA — la détection se relance maintenant d'elle-même
 
 [📖 Notes complètes →](./RELEASE_NOTES_v1.8.2.md)
 

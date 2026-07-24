@@ -191,6 +191,16 @@ graphique (dépoussiérage, changement de pâte/pads).
   (`ai_report.py`).
 - Validé en atelier (question dans le sujet + question hors-sujet pour vérifier
   le refus poli).
+- 🩹 **Correctif (re-build du 24/07, version inchangée)** — bench thermique :
+  la détection GPU tournait dans un thread lancé pendant la construction de
+  l'UI et publiait son résultat via `after()`. Appelé depuis un autre thread
+  avant `mainloop()`, `after()` lève `RuntimeError` après ~1 s : le thread
+  mourait en silence (exe sans console) et `_bench_gpu_detect` restait `None` à
+  vie → cible GPU refusée en boucle. Visible surtout sur machine NVIDIA
+  (détection NVML ~50 ms, donc terminée trop tôt ; le repli LHM, 1-3 s, passait
+  au travers). Détection déplacée après `mainloop()`, réessais côté thread, et
+  relance à chaque bascule sur la cible GPU. Couvert par
+  `tests/test_bench_gpu_detect.py`.
 
 ### Plus tard / opportuniste
 

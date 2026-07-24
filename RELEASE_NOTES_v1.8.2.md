@@ -46,11 +46,45 @@
 
 ---
 
+## 🩹 Correctif — re-build du 2026-07-24 (version inchangée)
+
+> Si tu as téléchargé l'exécutable avant ce correctif, **re-télécharge-le** :
+> même version 1.8.2, mais binaire différent (SHA-256 ci-dessous).
+
+- **Bench thermique, cible GPU bloquée sur « Détection des cartes graphiques en
+  cours… réessayez dans quelques secondes »** : le message pouvait rester
+  affiché indéfiniment, rendant le bench GPU inaccessible jusqu'au redémarrage
+  de l'application. Le bench CPU n'était pas concerné.
+- Cause : la détection des cartes graphiques tourne en tâche de fond et publie
+  son résultat sur l'interface. Quand elle allait **très vite** — carte NVIDIA
+  lue via NVML, ~50 ms — elle pouvait terminer avant que l'interface ne soit
+  prête à recevoir le résultat, qui était alors perdu sans trace. Les machines
+  sans NVIDIA passaient au travers du problème (détection en 1-3 s via
+  LibreHardwareMonitor, donc jamais trop tôt).
+- Corrigé sur trois plans : détection lancée **après** l'ouverture de la
+  fenêtre, **réessais** si l'interface n'est pas encore prête, et **relance
+  automatique** à chaque bascule sur la cible GPU tant qu'aucun résultat n'est
+  disponible.
+- Couvert par des tests de non-régression (`tests/test_bench_gpu_detect.py`).
+
+---
+
 ## 📦 Fichier
 
+Binaire **re-buildé le 2026-07-24** avec le correctif ci-dessus — l'asset de la
+release v1.8.2 a été remplacé. Ce sont ces valeurs qui font foi :
+
 - **Ghisdiag.exe** `1.8.2.0`
+- Taille : 33.9 MB (35 544 154 octets)
+- SHA-256 : `889b4551d948fa55cf5e89a7dfcdaafba94dff4b732e375c597093851a9cdd31`
+
+<details>
+<summary>Binaire initial du 2026-07-24 (remplacé, sans le correctif GPU)</summary>
+
 - Taille : 33.9 MB (35 528 656 octets)
 - SHA-256 : `2b09a3078da7c16df3ae9ae714539bc4441eaf46b7b64c8f1bdcdb8f11156c94`
+
+</details>
 
 ---
 
@@ -59,3 +93,6 @@
 - Vérifié en atelier : question en rapport avec le diagnostic (réponse
   pertinente en tête de rapport) **et** question hors-sujet (refus poli, audit
   complet quand même produit).
+- Correctif GPU : reproduit puis vérifié sur machine NVIDIA (détection perdue
+  avant correctif / publiée après), plus 5 tests de non-régression. **Reste à
+  confirmer en atelier** sur la machine NVIDIA RTX à l'origine du signalement.
