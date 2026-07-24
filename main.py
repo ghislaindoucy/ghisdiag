@@ -2681,6 +2681,13 @@ class GhisdiagApp(tk.Tk):
         self._log(f"Destination : {out_dir}", "dim")
         self._tick_elapsed()
 
+        # Capture (et vide) la question IA ICI, sur le thread principal : _run
+        # tourne sur un thread de fond où lire une StringVar Tk n'est pas sûr.
+        # La vider maintenant la « consomme » pour ce run : elle ne sera pas
+        # re-posée automatiquement au diagnostic suivant.
+        self._pending_ai_question = self.ai_question_var.get().strip()
+        self.ai_question_var.set("")
+
         threading.Thread(target=self._run, daemon=True).start()
 
     def _tick_elapsed(self):
@@ -2746,7 +2753,8 @@ class GhisdiagApp(tk.Tk):
                 # (le `del data` plus bas ne retire que la liaison locale).
                 diagnostic_data_copy = data.copy()
                 machine_name = data["meta"].get("machine", "UNKNOWN")
-                question = self.ai_question_var.get().strip()
+                # Capturée sur le thread principal dans _start (voir _pending_ai_question).
+                question = getattr(self, "_pending_ai_question", "")
                 thread = threading.Thread(
                     target=self._run_ai_analysis,
                     args=(diagnostic_data_copy, provider_id, ai_key, machine_name, question),
