@@ -46,6 +46,29 @@
 
 ---
 
+## 🩹 Correctif — re-build du 2026-07-24 (version inchangée)
+
+> Si tu as téléchargé l'exécutable avant ce correctif, **re-télécharge-le** :
+> même version 1.8.2, mais binaire différent (SHA-256 ci-dessous).
+
+- **Bench thermique, cible GPU bloquée sur « Détection des cartes graphiques en
+  cours… réessayez dans quelques secondes »** : le message pouvait rester
+  affiché indéfiniment, rendant le bench GPU inaccessible jusqu'au redémarrage
+  de l'application. Le bench CPU n'était pas concerné.
+- Cause : la détection des cartes graphiques tourne en tâche de fond et publie
+  son résultat sur l'interface. Quand elle allait **très vite** — carte NVIDIA
+  lue via NVML, ~50 ms — elle pouvait terminer avant que l'interface ne soit
+  prête à recevoir le résultat, qui était alors perdu sans trace. Les machines
+  sans NVIDIA passaient au travers du problème (détection en 1-3 s via
+  LibreHardwareMonitor, donc jamais trop tôt).
+- Corrigé sur trois plans : détection lancée **après** l'ouverture de la
+  fenêtre, **réessais** si l'interface n'est pas encore prête, et **relance
+  automatique** à chaque bascule sur la cible GPU tant qu'aucun résultat n'est
+  disponible.
+- Couvert par des tests de non-régression (`tests/test_bench_gpu_detect.py`).
+
+---
+
 ## 📦 Fichier
 
 - **Ghisdiag.exe** `1.8.2.0`
