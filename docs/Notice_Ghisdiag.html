@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Exécutable autonome</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 1.8.1 — Document généré le 22 juillet 2026</div>
+  <div class="version">Version 1.8.2 — Document généré le 24 juillet 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -474,6 +474,13 @@ footer.pagefoot{
 <div class="callout tip">
   <b>Garde-fous anti-faux-positifs.</b> Le modèle est explicitement instruit de ne jamais inventer de problème : un poste sain reçoit une analyse riche mais sans alerte fabriquée, et chaque seuil utilisé (ex. RAM &lt; 75&nbsp;% = normal) est documenté dans le prompt d'audit.
 </div>
+
+<h3>Poser une question précise à l'IA</h3>
+<p>En plus de l'audit automatique, un <b>champ question optionnel</b> (500 caractères) apparaît dans le panneau « Analyse IA » dès qu'une clé API est configurée. Vous pouvez y joindre une question en rapport avec le poste — par exemple <i>« pourquoi le PC est-il si long à démarrer ? »</i> ou <i>« ce SSD est-il en fin de vie ? »</i>. L'IA y répond dans une section <b>« Réponse à ta question » placée en tête du rapport</b>, appuyée sur les données réelles du diagnostic, puis produit l'audit complet habituel en dessous. Laisser le champ vide ne change rien au comportement.</p>
+
+<div class="callout">
+  <b>Question hors-sujet.</b> La question doit concerner le poste ou son dépannage. Si elle sort de ce cadre (recette de cuisine, culture générale, autre machine…), l'IA la décline poliment en une phrase et produit quand même l'audit complet.
+</div>
 </section>
 
 <!-- ============ 7. API KEYS ============ -->
@@ -561,7 +568,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 1.8.1. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 1.8.2. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 

@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.8.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.1)
+[![Version](https://img.shields.io/badge/version-1.8.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.2)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -144,6 +144,14 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v1.8.2 (Juillet 2026)
+🤖 **Question libre à l'IA**
+- **Champ question optionnel** (500 car.) dans le panneau Analyse IA : pose une question précise en rapport avec le poste, en plus de l'audit automatique
+- La réponse arrive **en tête du rapport IA**, appuyée sur les données réelles du diagnostic ; garde-fou hors-sujet (question sans rapport = déclinée poliment)
+- Visible seulement quand une clé API est configurée ; sans question, comportement inchangé
+
+[📖 Notes complètes →](./RELEASE_NOTES_v1.8.2.md)
 
 ### v1.8.1 (Juillet 2026)
 🖥️ **Interface défilable sur petits écrans**

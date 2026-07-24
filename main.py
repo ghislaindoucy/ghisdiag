@@ -127,6 +127,10 @@ ZONE_COOL = "#27314a"   # refroidissement (teinte froide)
 TOTAL_MODULES  = len(COLLECTORS)
 _LOG_MAX_LINES = 500
 
+# Longueur max de la question libre posée à l'IA. Aligné sur ai_analyzer.MAX_QUESTION_LEN
+# quand le module IA est présent ; sinon repli (le champ existe mais reste masqué).
+AI_QUESTION_MAXLEN = getattr(ai_analyzer, "MAX_QUESTION_LEN", 500) if _HAS_AI else 500
+
 # Lien de soutien — pour ceux qui veulent récompenser le travail (« offrir un café »)
 PAYPAL_URL = "https://www.paypal.com/paypalme/spiriteom"
 # Dépôt du projet (code source, releases, signalement de bugs)
@@ -215,6 +219,9 @@ class GhisdiagApp(tk.Tk):
         else:
             self.ai_key_vars = {}
             self.ai_provider_var = tk.StringVar(value="")
+
+        # Question libre optionnelle posée à l'IA (limitée, voir _build_analyse_tab).
+        self.ai_question_var = tk.StringVar(value="")
 
         # Spooler state
         self._spooler_busy     = False
@@ -753,25 +760,58 @@ class GhisdiagApp(tk.Tk):
         ai_panel = tk.Frame(parent, bg=SURFACE, pady=8)
         ai_panel.pack(fill="x", padx=28, pady=(0, 6))
 
+        # Rangée d'en-tête : titre + état + bouton de configuration.
+        ai_hdr = tk.Frame(ai_panel, bg=SURFACE)
+        ai_hdr.pack(fill="x")
+
         tk.Label(
-            ai_panel, text="🤖  Analyse IA (optionnel)",
+            ai_hdr, text="🤖  Analyse IA (optionnel)",
             font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=ACCENT,
         ).pack(side="left", padx=(8, 12))
 
         # Libellé d'état (fournisseur actif + clé renseignée ou non), tenu à jour.
         self.ai_status_lbl = tk.Label(
-            ai_panel, text="",
+            ai_hdr, text="",
             font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
         )
         self.ai_status_lbl.pack(side="left")
 
         tk.Button(
-            ai_panel, text="Configurer l'IA…",
+            ai_hdr, text="Configurer l'IA…",
             font=("Segoe UI", 9), bg=ACCENT, fg=BG,
             activebackground=PURPLE, relief="flat", cursor="hand2",
             padx=12, pady=4,
             command=self._open_ai_config,
         ).pack(side="right", padx=(8, 8))
+
+        # Rangée question : champ libre (optionnel) posé à l'IA, en plus de l'audit.
+        # Affichée uniquement quand une clé est active (géré par _refresh_ai_status).
+        self._ai_question_row = tk.Frame(ai_panel, bg=SURFACE)
+
+        tk.Label(
+            self._ai_question_row,
+            text="Question sur le diagnostic (optionnel) :",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+        ).pack(side="left", padx=(8, 8))
+
+        # Compteur de caractères (mis à jour par trace), packé à droite AVANT l'entry
+        # pour que l'entry prenne l'espace restant.
+        self._ai_question_count = tk.Label(
+            self._ai_question_row,
+            text=f"0/{AI_QUESTION_MAXLEN}",
+            font=("Consolas", 8), bg=SURFACE, fg=FG_MUTED,
+        )
+        self._ai_question_count.pack(side="right", padx=(8, 8))
+
+        self._ai_question_entry = tk.Entry(
+            self._ai_question_row, textvariable=self.ai_question_var,
+            font=("Segoe UI", 10), bg=BG, fg=FG,
+            insertbackground=FG, relief="flat", bd=0,
+        )
+        self._ai_question_entry.pack(side="left", fill="x", expand=True, ipady=5, ipadx=8)
+
+        # Limite de longueur + compteur (une seule trace fait les deux).
+        self.ai_question_var.trace_add("write", self._on_ai_question_changed)
 
         self._refresh_ai_status()
 
@@ -2706,9 +2746,10 @@ class GhisdiagApp(tk.Tk):
                 # (le `del data` plus bas ne retire que la liaison locale).
                 diagnostic_data_copy = data.copy()
                 machine_name = data["meta"].get("machine", "UNKNOWN")
+                question = self.ai_question_var.get().strip()
                 thread = threading.Thread(
                     target=self._run_ai_analysis,
-                    args=(diagnostic_data_copy, provider_id, ai_key, machine_name),
+                    args=(diagnostic_data_copy, provider_id, ai_key, machine_name, question),
                     daemon=True,
                 )
                 thread.start()
@@ -2790,10 +2831,36 @@ class GhisdiagApp(tk.Tk):
             return
         pid = self.ai_provider_var.get()
         name = ai_analyzer.provider_label(pid)
-        if self._active_ai_key().strip():
+        has_key = bool(self._active_ai_key().strip())
+        if has_key:
             lbl.configure(text=f"{name} — un audit IA sera généré après le diagnostic", fg=GREEN)
         else:
             lbl.configure(text=f"{name} — clé non renseignée (cliquez sur Configurer)", fg=FG_MUTED)
+        # Le champ question n'a de sens que si une clé IA est active.
+        self._toggle_ai_question_row(has_key)
+
+    def _toggle_ai_question_row(self, show: bool):
+        """Affiche/masque la rangée de question selon qu'une clé IA est active."""
+        row = getattr(self, "_ai_question_row", None)
+        if row is None:
+            return
+        if show:
+            if not row.winfo_ismapped():
+                row.pack(fill="x", pady=(8, 2))
+        elif row.winfo_ismapped():
+            row.pack_forget()
+
+    def _on_ai_question_changed(self, *_):
+        """Plafonne la question à AI_QUESTION_MAXLEN caractères et met à jour le compteur."""
+        text = self.ai_question_var.get()
+        if len(text) > AI_QUESTION_MAXLEN:
+            # Tronque sans re-déclencher une boucle infinie de trace (set d'une valeur
+            # plus courte ne repassera pas la condition).
+            text = text[:AI_QUESTION_MAXLEN]
+            self.ai_question_var.set(text)
+        counter = getattr(self, "_ai_question_count", None)
+        if counter is not None:
+            counter.configure(text=f"{len(text)}/{AI_QUESTION_MAXLEN}")
 
     def _on_ai_provider_changed(self, *_):
         self._save_ai_prefs()
@@ -3004,17 +3071,20 @@ class GhisdiagApp(tk.Tk):
         self._ai_popup = None
 
     def _run_ai_analysis(self, diagnostic_data: dict, provider_id: str,
-                         api_key: str, machine_name: str):
+                         api_key: str, machine_name: str, question: str = ""):
         """Lance l'analyse IA en thread séparé (ne bloque pas l'UI)."""
         name = ai_analyzer.provider_label(provider_id)
         # Ouvrir la popup d'attente depuis le thread UI
         self.after(0, lambda: self._open_ai_waiting_popup(name))
         try:
             self.after(0, lambda: self._log(f"🤖  Analyse IA ({name}) en cours…", "info"))
+            if question:
+                self.after(0, lambda: self._log(f"   Question jointe : {question}", "dim"))
 
             progress_msg = lambda m: self.after(0, lambda msg=m: self._log(f"   {msg}", "dim"))
             analysis_text = analyze_diagnostic(
-                diagnostic_data, provider_id, api_key, progress_callback=progress_msg
+                diagnostic_data, provider_id, api_key,
+                progress_callback=progress_msg, question=question,
             )
 
             if not analysis_text:
@@ -3030,6 +3100,7 @@ class GhisdiagApp(tk.Tk):
                 provider_label=name,
                 model_label=ai_analyzer.model_label(provider_id),
                 app_version=VERSION,
+                question=question,
             )
 
             self.ai_report_path = html_path

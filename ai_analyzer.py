@@ -152,8 +152,43 @@ EXIGENCES SUR LES SOLUTIONS (pour les VRAIS problèmes) :
 FORMAT : markdown simple — titres, listes, gras, blocs de code. PAS de tableaux markdown (| ... |), le rendu ne les supporte pas : utilise des listes à puces structurées."""
 
 
-def _build_user_prompt(diagnostic_data: dict) -> str:
-    """Construit le prompt utilisateur (données + plan d'audit), mutualisé entre fournisseurs."""
+# Longueur max de la question libre du technicien (aligné sur la limite de l'UI).
+MAX_QUESTION_LEN = 500
+
+
+def _build_question_block(question: str) -> str:
+    """Bloc d'instructions pour la question libre du technicien (vide si pas de question).
+
+    Cadre le modèle : il répond à la question SI ELLE EST DANS LE SUJET (diagnostic /
+    panne / réparation Windows de ce poste), refuse poliment sinon, et place sa réponse
+    en section de tête — puis produit l'audit complet dans tous les cas.
+    """
+    question = (question or "").strip()
+    if not question:
+        return ""
+    # Neutralise backticks et sauts de ligne : la question reste une donnée, pas une
+    # instruction capable de casser le formatage ou de détourner le prompt.
+    q = question[:MAX_QUESTION_LEN].replace("`", "'").replace("\r", " ").replace("\n", " ")
+    return f"""QUESTION DU TECHNICIEN — à traiter EN PRIORITÉ, avant l'audit :
+« {q} »
+
+Règles pour cette question :
+- Réponds-y UNIQUEMENT si elle porte sur CE poste, son diagnostic, une panne ou une réparation matérielle/logicielle Windows. Appuie ta réponse sur les données du diagnostic ci-dessous et sois aussi concret et actionnable que dans le reste de l'audit (commandes exactes si pertinent).
+- Si elle est HORS-SUJET (cuisine, culture générale, autre machine, tout ce qui ne relève pas du dépannage de ce poste), n'y réponds PAS : indique en une phrase courtoise qu'elle sort du cadre du diagnostic Ghisdiag.
+- Dans TOUS les cas, produis ensuite l'audit complet habituel normalement.
+- Présente ta réponse dans une section « ## Réponse à ta question » placée TOUT EN HAUT du rapport, AVANT le résumé exécutif.
+
+---
+
+"""
+
+
+def _build_user_prompt(diagnostic_data: dict, question: str = "") -> str:
+    """Construit le prompt utilisateur (données + plan d'audit), mutualisé entre fournisseurs.
+
+    Si `question` est non vide, un bloc d'instructions est ajouté en tête pour que le
+    modèle y réponde dans le sujet (refus poli sinon) ; sinon comportement inchangé.
+    """
     # JSON COMPACT (sans indentation) : l'indentation gonflait le volume de ~50%
     # (169k vs 109k chars) et risquait de tronquer les sections les plus utiles
     # (events/smart). Les modèles parsent le JSON compact sans problème.
@@ -167,7 +202,7 @@ def _build_user_prompt(diagnostic_data: dict) -> str:
         logger.warning(f"Données diagnostiques tronquées ({len(diag_json)} chars → {max_len})")
         diag_json = diag_json[:max_len] + "\n[… données tronquées …]"
 
-    return f"""Voici le rapport de diagnostic complet d'un poste Windows (généré par Ghisdiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
+    return f"""{_build_question_block(question)}Voici le rapport de diagnostic complet d'un poste Windows (généré par Ghisdiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
 
 ```json
 {diag_json}
@@ -364,6 +399,7 @@ def analyze_diagnostic(
     provider_id: str,
     api_key: str,
     progress_callback: Optional[callable] = None,
+    question: str = "",
 ) -> Optional[str]:
     """
     Envoie les données diagnostiques au fournisseur IA choisi pour une analyse complète.
@@ -373,6 +409,8 @@ def analyze_diagnostic(
         provider_id: clé du fournisseur dans PROVIDERS (ex. "anthropic", "mistral")
         api_key: clé API (déchiffrée) du fournisseur
         progress_callback: fonction pour la progression (optionnel)
+        question: question libre du technicien, en rapport avec le diagnostic (optionnel).
+                  Si fournie, l'IA y répond en tête de rapport (refus poli si hors-sujet).
 
     Returns:
         Texte de l'analyse (markdown), ou None.
@@ -394,7 +432,7 @@ def analyze_diagnostic(
         if progress_callback:
             progress_callback(f"Préparation des données pour {label}…")
 
-        user_prompt = _build_user_prompt(diagnostic_data)
+        user_prompt = _build_user_prompt(diagnostic_data, question)
 
         if progress_callback:
             progress_callback(f"Envoi des données à {label}…")

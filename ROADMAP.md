@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.8.1** (2026-07-22) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.1)
+**Version actuelle : 1.8.2** (2026-07-24) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.2)
 
 ---
 
@@ -172,6 +172,25 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v1.8.2 — 🤖 Question libre à l'IA ✅ *livré*
+
+- **Champ question optionnel** (500 car., compteur en direct) dans le panneau
+  Analyse IA, affiché seulement quand une clé API est active
+  (`_toggle_ai_question_row`). La question est propagée du thread d'analyse
+  jusqu'au prompt et au rapport.
+- Prompt : `_build_question_block()` injecté en tête du prompt utilisateur
+  (`ai_analyzer.py`). Sans question → prompt strictement identique (zéro
+  régression). Garde-fou : réponse **seulement si dans le sujet** (poste /
+  panne / réparation Windows), **refus poli** sinon, puis audit complet dans
+  tous les cas. Réponse placée en section « Réponse à ta question » en tête.
+- **Sécurité prompt** : question neutralisée (backticks et sauts de ligne
+  retirés, tronquée à 500) — traitée comme donnée, pas comme instruction
+  (anti-injection).
+- Rapport : la question posée est rappelée dans l'encart méta du rapport IA
+  (`ai_report.py`).
+- Validé en atelier (question dans le sujet + question hors-sujet pour vérifier
+  le refus poli).
 
 ### Plus tard / opportuniste
 
