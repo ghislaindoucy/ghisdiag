@@ -363,8 +363,14 @@ footer.pagefoot{
   <li>Vitesses de ventilateurs relevées pendant le test.</li>
 </ul>
 
+<div class="callout">
+  <b>« Throttling : indéterminé » — pourquoi ?</b> La détection du throttling repose entièrement sur la <b>fréquence du processeur</b>. Certaines machines n'en exposent aucune (capteur non pris en charge par le moteur de capteurs) : Ghisdiag affiche alors <b>indéterminé</b>, et non « non ». C'est délibéré — annoncer « pas de throttling » sans avoir lu une seule fréquence reviendrait à certifier l'absence d'un défaut qu'on n'a pas cherché. Les températures, elles, restent parfaitement valables.
+</div>
+
 <h3>Comparaison avant / après</h3>
 <p>Chaque session est enregistrée (étiquette « Avant », « Après » ou « Libre »). Ghisdiag permet de sélectionner deux sessions comparables (même durée de charge) et génère un <b>rapport HTML autonome</b> avec les courbes superposées et un verdict clair, par exemple : <i>« −12&nbsp;°C en charge après nettoyage »</i>.</p>
+
+<p>Avant de chiffrer quoi que ce soit, Ghisdiag vérifie que les deux sessions sont <b>réellement</b> comparables : même protocole (durées, intensité, <b>noyau de charge</b>), mais aussi même déroulé — un test coupé par l'arrêt d'urgence n'a jamais atteint son régime établi, et son « plateau » n'est que le sommet d'une montée en température. Si les conditions diffèrent, le rapport annonce <b>« comparaison non concluante »</b> et explique lequel des deux tests n'est pas exploitable, plutôt que d'attribuer l'écart à l'intervention. Le rapport contient dans tous les cas un tableau <i>« ce qui s'est réellement passé »</i>.</p>
 
 <div class="callout warn">
   <b>Sécurité.</b> Le test s'arrête automatiquement si la température CPU dépasse 95&nbsp;°C, et un avertissement de responsabilité est affiché avant chaque lancement. Un bouton d'arrêt manuel est disponible à tout moment.
