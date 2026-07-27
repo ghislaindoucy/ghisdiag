@@ -3,7 +3,12 @@ param(
     [string]$ProfileName = "",
     [string]$FilePath    = "",
     [string]$Password    = "",
-    [string]$Auth        = ""
+    [string]$Auth        = "",
+    # Sauvegarde : exporter les cles en clair (portable vers un autre PC) au lieu
+    # du chiffrement DPAPI par defaut (restaurable uniquement sur la meme machine).
+    # Desactive par defaut — exporter en masse des PSK en clair est le comportement
+    # exact des voleurs d'identifiants WiFi, et les moteurs AV le detectent comme tel.
+    [switch]$IncludeKeys
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -46,6 +51,20 @@ function New-WifiProfileXml([string]$Ssid, [string]$HexSsid, [string]$Pwd, [bool
     }
     $x += "</WLANProfile>"
     return $x
+}
+
+# Lit le nom reel du profil dans un XML exporte par netsh.
+# netsh prefixe les fichiers exportes par le nom de l'interface ("Wi-Fi 3-MonSSID.xml"),
+# donc le BaseName ne sert que de repli si le XML est illisible.
+function Get-WifiProfileNameFromXml([string]$Path, [string]$Fallback) {
+    try {
+        $doc = New-Object System.Xml.XmlDocument
+        $doc.Load($Path)
+        # local-name() evite d'avoir a declarer le namespace WLANProfile
+        $node = $doc.DocumentElement.SelectSingleNode("*[local-name()='name']")
+        if ($node -and $node.InnerText.Trim()) { return $node.InnerText.Trim() }
+    } catch {}
+    return $Fallback
 }
 
 # Extrait les noms de profils utilisateurs depuis la sortie de "netsh wlan show profiles"
@@ -253,7 +272,11 @@ switch ($Action) {
         foreach ($name in $names) {
             # @() force le tableau meme si Get-ChildItem retourne $null ou 1 objet (StrictMode .Count)
             $before = @(Get-ChildItem -Path $tempDir -Filter "*.xml" -ErrorAction SilentlyContinue).Count
-            $null   = netsh wlan export profile name="$name" folder="$tempDir" key=clear 2>&1
+            if ($IncludeKeys) {
+                $null = netsh wlan export profile name="$name" folder="$tempDir" key=clear 2>&1
+            } else {
+                $null = netsh wlan export profile name="$name" folder="$tempDir" 2>&1
+            }
             $after  = @(Get-ChildItem -Path $tempDir -Filter "*.xml" -ErrorAction SilentlyContinue).Count
             if ($after -gt $before) { $exported += $name }
             else { $errors += "Echec export : $name" }
@@ -273,6 +296,7 @@ switch ($Action) {
                 zip_path       = $FilePath
                 profiles_count = $exported.Count
                 profiles       = $exported
+                keys_in_clear  = [bool]$IncludeKeys
                 errors         = $errors
             } | ConvertTo-Json -Depth 3
         } catch {
@@ -316,14 +340,15 @@ switch ($Action) {
         $errors   = @()
 
         foreach ($xml in $xmlFiles) {
+            $label  = Get-WifiProfileNameFromXml $xml.FullName $xml.BaseName
             $result = $null
             try { $result = netsh wlan add profile filename="$($xml.FullName)" user=all 2>&1 } catch {}
             $output = ($result -join " ").Trim()
             # Succes FR : "ajout" / "mis a jour" — EN : "added" / "updated"
             if ($output -match "(?i)ajout|added|mis.+jour|updated") {
-                $imported += $xml.BaseName
+                $imported += $label
             } else {
-                $errors += "$($xml.BaseName) : $output"
+                $errors += "$label : $output"
             }
         }
 

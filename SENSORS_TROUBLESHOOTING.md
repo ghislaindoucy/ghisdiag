@@ -1,5 +1,42 @@
 # Dépannage — Pas de température CPU / bench thermique impossible
 
+## Avant tout : activer le journal détaillé
+
+La plupart des chemins capteurs attrapent leurs exceptions et les tracent en
+`DEBUG`, alors que le journal tourne en `INFO` par défaut. Un « N/A » dans
+l'interface ne laisse donc **aucune trace** exploitable dans `ghisdiag.log`.
+
+Lancez Ghisdiag avec `GHISDIAG_DEBUG=1` pour lever ce voile :
+
+```powershell
+$env:GHISDIAG_DEBUG = "1"; .\Ghisdiag.exe
+```
+
+En mode debug, le journal s'ouvre sur un bloc de contexte qui répond d'emblée aux
+questions les plus fréquentes — version, exe gelé ou sources, build onefile ou
+onedir, chemin des ressources, élévation effective, et **quels modules optionnels
+n'ont pas pu s'importer, avec la cause exacte** :
+
+```
+[DEBUG] main: ──────── Contexte d'exécution ────────
+[DEBUG] main: Ghisdiag 1.8.2 — Python 3.12.10
+[DEBUG] main: Exécutable : E:\Ghisdiag\Ghisdiag.exe
+[DEBUG] main: Gelé : True | Ressources : E:\Ghisdiag\_internal
+[DEBUG] main: Administrateur : True
+[DEBUG] main: Modules — monitor=True stream=True sensor_health=True ia=True historique=True
+[DEBUG] main: Imports optionnels : tous chargés
+[DEBUG] main: ──────────────────────────────────────
+```
+
+Un `monitor=False` ou un `stream=False` explique à lui seul un affichage vide, et
+la ligne `Import raté — <module> → <erreur>` qui suit donne la cause.
+
+Journal : `%LOCALAPPDATA%\Ghisdiag\ghisdiag.log` (rotation à 2 Mo, portée à 10 Mo
+en mode debug ; les clés API ne sont jamais tracées — les journaux HTTP restent
+volontairement en `INFO`).
+
+---
+
 ## Symptôme
 - Aucune température CPU dans le suivi temps réel
 - Le bench thermique ne démarre pas ou ne produit que des valeurs `None`

@@ -24,6 +24,13 @@ wheels/
 *.manifest
 *.spec
 
+# Exceptions : ces deux fichiers DEFINISSENT le build, ils ne sont pas des artefacts.
+# Les versionner est ce qui permet a GitHub Actions de reproduire exactement le
+# binaire compile en local — base de l'attestation de provenance (voir
+# docs/antivirus-guide.md).
+!Ghisdiag.manifest
+!Ghisdiag.spec
+
 # Virtual environments
 venv/
 ENV/

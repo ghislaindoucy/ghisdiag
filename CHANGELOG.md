@@ -4,6 +4,84 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [2.0.0] — 2026-07-27
+
+> **Ghisdiag change de format de distribution.** L'application n'est plus un
+> exécutable unique mais un **dossier portable**, livré en archive `Ghisdiag.zip`.
+> Ce changement casse l'habitude « je télécharge un .exe et je double-clique »,
+> d'où le passage en version majeure — d'où aussi le reste de cette entrée, car
+> ce format débloque plusieurs problèmes de fond.
+
+### 📦 Distribution : passage en mode `onedir`
+
+- L'archive `Ghisdiag.zip` (~34 Mo, soit la taille de l'ancien exe) se décompresse
+  en un dossier `Ghisdiag\` contenant `Ghisdiag.exe` et son sous-dossier
+  `_internal\`. **Garder le dossier entier** — l'exe seul ne démarre pas.
+- **Pourquoi :** l'ancien format décompressait 34 Mo dans le `%TEMP%` de la machine
+  cliente *à chaque lancement*. Sur clé USB en atelier, c'était le goulot
+  d'étranglement de chaque démarrage, et ça laissait un dossier `_MEI` chez le
+  client — parfois orphelin après un plantage. Le nouveau format ne décompresse
+  rien : Windows charge les DLL directement depuis le dossier.
+- Ce même schéma « je m'extrais dans TEMP puis je m'exécute » est celui des
+  *droppers* : il pesait lourd dans le score heuristique des antivirus.
+
+### 🛡️ Antivirus — réduction des faux positifs
+
+Ghisdiag était signalé comme *trojan* par plusieurs moteurs. C'est un faux positif
+structurel, documenté en détail dans le nouveau
+[`docs/transparence-systeme.md`](docs/transparence-systeme.md) — document destiné
+autant aux utilisateurs qu'aux analystes antivirus, et à joindre à tout signalement.
+
+- **Sauvegarde WiFi : plus de mots de passe en clair par défaut.** L'export en
+  clair reste disponible — il est indispensable pour restaurer après une
+  réinstallation de Windows ou sur une autre machine — mais il demande désormais
+  une confirmation explicite qui en énonce la conséquence. L'export en masse de
+  clés WiFi en clair vers une archive est la signature comportementale exacte de
+  la famille `PWS:Win32/WifiStealer`.
+- **`upx=False`** — la compression UPX est un marqueur de packer qui coûtait des
+  points de score, même sur un binaire sain.
+- **Build public et vérifiable** — nouveau workflow GitHub Actions qui compile
+  depuis le code source taggé et génère une **attestation de provenance SLSA
+  signée**. N'importe qui peut vérifier qu'une archive publiée vient bien de ce
+  code source : `gh attestation verify Ghisdiag.zip --repo ghislaindoucy/ghisdiag`.
+- `Ghisdiag.spec` et `Ghisdiag.manifest` sont désormais **versionnés** et
+  consommés tels quels par `build.bat` **et** par la CI : les deux compilent avec
+  exactement les mêmes options.
+
+### 🩹 Correctifs
+
+- **UAC : le manifeste était inopérant depuis toujours.** PyInstaller réécrit le
+  `<requestedExecutionLevel>` à partir de son paramètre `uac_admin` et forçait
+  `asInvoker`, ignorant le `requireAdministrator` déclaré dans `Ghisdiag.manifest`.
+  L'application compensait en se relançant elle-même en mode élevé — soit un
+  **double lancement du process à chaque démarrage**, particulièrement coûteux
+  depuis une clé USB. Corrigé par `uac_admin=True`.
+- **Températures disque absentes au démarrage du moniteur.** La première lecture
+  n'était déclenchée qu'au 5ᵉ tick, soit 10 s après l'ouverture ; les disques
+  affichaient « N/A » pendant tout ce temps, alors que le CPU et le GPU ont un
+  repli immédiat via le flux LHM. La lecture part maintenant dès le premier tick.
+- **Températures disque retardées par la lecture CPU.** Le cache n'était publié
+  qu'après le repli WMI de la température CPU — une requête qui coûte 1 s, et
+  jusqu'à 6 s sur une machine sans PawnIO, où elle se déclenchait à *chaque*
+  cycle. GPU et disques sont désormais publiés dès qu'ils sont disponibles,
+  indépendamment du CPU.
+- **Restauration WiFi : noms de profils lisibles.** La liste affichait les noms de
+  fichiers préfixés par l'interface (`Wi-Fi 3-MonReseau`) au lieu des noms de
+  profils réels.
+
+### 🔧 Développement
+
+- **Nouveau : `GHISDIAG_DEBUG=1`** bascule le journal en `DEBUG` et ouvre chaque
+  session sur un bloc de contexte — version, exe gelé ou sources, chemin des
+  ressources, élévation effective, et **quels modules optionnels n'ont pas pu
+  s'importer, avec la cause exacte**. La plupart des chemins capteurs attrapent
+  leurs exceptions et les tracent en `DEBUG` : sans ce commutateur, une panne
+  silencieuse en atelier ne laissait aucune trace exploitable. Les journaux HTTP
+  restent volontairement en `INFO` pour qu'aucune clé API ne se retrouve dans un
+  fichier qu'on partagerait.
+
+---
+
 ## [1.8.2] — 2026-07-24
 
 > **Poser une question à l'IA.** En plus de l'audit automatique, tu peux

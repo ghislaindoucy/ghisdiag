@@ -16,14 +16,21 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
+# Causes des imports optionnels ratés. Ces blocs s'exécutent AVANT la config du
+# logging (qui dépend de prefs), donc on mémorise l'exception ici pour la tracer
+# plus bas si GHISDIAG_DEBUG est actif. Sans ça, un module manquant ne se voit
+# qu'à travers un « N/A » muet dans l'interface.
+_IMPORT_ERRORS: dict[str, str] = {}
+
 try:
     from collectors.realtime_monitor import (
         get_cpu_percent, get_ram_percent, get_disk_io_percent, get_temperatures,
         get_gpu_disk_temps, get_cpu_temp_acpi,
     )
     _HAS_MONITOR = True
-except Exception:
+except Exception as _exc:
     _HAS_MONITOR = False
+    _IMPORT_ERRORS["collectors.realtime_monitor"] = f"{type(_exc).__name__}: {_exc}"
 
 # Flux capteurs persistant (LibreHardwareMonitor ouvert une seule fois) pour le
 # moniteur temps reel : evite le cout d'un read_once a chaque tick et rafraichit
@@ -31,19 +38,21 @@ except Exception:
 try:
     from collectors.sensors import SensorStream as _SensorStream, lhm_available as _lhm_available
     _HAS_STREAM = True
-except Exception:
+except Exception as _exc:
     _SensorStream = None
     _lhm_available = None
     _HAS_STREAM = False
+    _IMPORT_ERRORS["collectors.sensors"] = f"{type(_exc).__name__}: {_exc}"
 
 # Verdict << pourquoi la temperature CPU est absente >> (PawnIO / elevation /
 # backend). Sert a afficher une raison a cote d'un CPU : N/A muet.
 try:
     from collectors import sensors_health as _sensors_health
     _HAS_SENSOR_HEALTH = True
-except Exception:
+except Exception as _exc:
     _sensors_health = None
     _HAS_SENSOR_HEALTH = False
+    _IMPORT_ERRORS["collectors.sensors_health"] = f"{type(_exc).__name__}: {_exc}"
 
 try:
     from thermal_bench import (
@@ -66,24 +75,40 @@ try:
         load_report as diag_load_report,
     )
     _HAS_HISTORY = True
-except Exception:
+except Exception as _exc:
     _HAS_HISTORY = False
+    _IMPORT_ERRORS["diag_compare"] = f"{type(_exc).__name__}: {_exc}"
 
 from prefs    import LOG_DIR, load_prefs, save_prefs
 from security import is_admin, request_elevation, is_safe_output_dir
 
 # ── Logging (avec rotation pour éviter la croissance illimitée) ──────────────
+# GHISDIAG_DEBUG=1 bascule le journal en DEBUG. Beaucoup de chemins de code
+# attrapent leurs exceptions et les tracent en DEBUG (capteurs, températures
+# disque, collecteurs PowerShell) : sans ce commutateur, une panne silencieuse
+# en atelier ne laisse aucune trace exploitable dans ghisdiag.log.
+DEBUG_LOG = os.environ.get("GHISDIAG_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
 _log_handler = logging.handlers.RotatingFileHandler(
     LOG_DIR / "ghisdiag.log",
-    maxBytes=2 * 1024 * 1024,
+    # Le mode DEBUG est bien plus bavard : sans marge supplémentaire, la rotation
+    # écrase les premières lignes — souvent les plus utiles — avant qu'on les lise.
+    maxBytes=(10 if DEBUG_LOG else 2) * 1024 * 1024,
     backupCount=3,
     encoding="utf-8",
 )
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if DEBUG_LOG else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[_log_handler],
 )
+
+# Les bibliothèques HTTP tracent chaque requête en DEBUG : c'est du bruit, et
+# surtout un risque de faire figurer une clé API dans un journal qu'on partage
+# (rapport de bug, signalement de faux positif antivirus). On les laisse en INFO.
+for _noisy_logger in ("urllib3", "requests", "charset_normalizer", "httpx", "httpcore"):
+    logging.getLogger(_noisy_logger).setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action, run_ps_stream
@@ -94,9 +119,36 @@ try:
     from ai_analyzer import analyze_diagnostic, test_api_key
     from ai_report import generate_ai_report
     _HAS_AI = True
-except ImportError:
+except ImportError as _exc:
     _HAS_AI = False
+    _IMPORT_ERRORS["ai_analyzer"] = f"{type(_exc).__name__}: {_exc}"
     logger.warning("Modules d'analyse IA non disponibles (requests/cryptography manquants)")
+
+if DEBUG_LOG:
+    # Contexte d'exécution : la première chose à lire dans un journal rapporté du
+    # terrain. Sans ces lignes, impossible de savoir si le log vient d'un exe ou
+    # des sources, d'un build onefile ou onedir, d'une clé USB, avec ou sans
+    # élévation — et les drapeaux _HAS_* disent d'emblée quel module a échoué à
+    # s'importer, ce qui est la cause la plus fréquente d'une valeur « N/A ».
+    logger.debug("──────── Contexte d'exécution ────────")
+    logger.debug("Ghisdiag %s — Python %s", VERSION, sys.version.split()[0])
+    logger.debug("Exécutable : %s", sys.executable)
+    logger.debug("Gelé : %s | Ressources : %s",
+                 getattr(sys, "frozen", False), getattr(sys, "_MEIPASS", "(sources)"))
+    try:
+        # bool() explicite : is_admin() renvoie l'entier brut de IsUserAnAdmin(),
+        # qui s'afficherait « 0 » / « 1 » dans le journal.
+        logger.debug("Administrateur : %s", bool(is_admin()))
+    except Exception:
+        logger.debug("Administrateur : indéterminé", exc_info=True)
+    logger.debug("Modules — monitor=%s stream=%s sensor_health=%s ia=%s historique=%s",
+                 _HAS_MONITOR, _HAS_STREAM, _HAS_SENSOR_HEALTH, _HAS_AI, _HAS_HISTORY)
+    if _IMPORT_ERRORS:
+        for _mod, _err in _IMPORT_ERRORS.items():
+            logger.debug("Import raté — %s → %s", _mod, _err)
+    else:
+        logger.debug("Imports optionnels : tous chargés")
+    logger.debug("──────────────────────────────────────")
 
 # ── Palette Catppuccin Mocha — alignée sur le rapport HTML (assets/report.css)
 BG        = "#1e1e2e"   # base   — fond principal
@@ -171,7 +223,14 @@ class GhisdiagApp(tk.Tk):
         self._monitor_tick_id = None
         self._temp_cache      = {"cpu": None, "gpu": None, "disks": []}
         self._temp_loading    = False
-        self._temp_tick       = 0
+        # Démarré à 5 (le seuil) pour que la 1re lecture GPU/disques parte dès le
+        # premier tick. À 0, elle n'avait lieu qu'au 5e tick, soit 10 s après
+        # l'ouverture : pendant tout ce temps les disques affichaient « N/A »,
+        # alors que le CPU et le GPU, eux, ont un repli immédiat via le flux LHM.
+        self._temp_tick       = 5
+        # Distingue « pas encore mesuré » de « rien à afficher » : sans ça, la
+        # première seconde ressemble à une panne de capteur.
+        self._temp_fetched_once = False
         self._sensor_reason   = None   # raison d'un CPU temp N/A (PawnIO/admin…)
         self._temp_stream     = None   # SensorStream persistant (temp CPU continue)
 
@@ -2473,13 +2532,20 @@ class GhisdiagApp(tk.Tk):
         if self._wifi_busy:
             return
 
-        if not messagebox.askyesno(
+        # Oui = clés en clair (portable) / Non = chiffrement DPAPI (même PC) / Annuler
+        include_keys = messagebox.askyesnocancel(
             "Sauvegarder les profils WiFi",
-            "Exporter tous les profils WiFi dans un fichier ZIP ?\n\n"
-            "⚠  Le fichier contiendra les mots de passe en clair.\n"
-            "Conservez-le dans un endroit sûr.",
+            "Inclure les mots de passe en clair dans la sauvegarde ?\n\n"
+            "OUI — obligatoire pour restaurer après une RÉINSTALLATION de\n"
+            "Windows ou sur une AUTRE machine. Les mots de passe sont écrits\n"
+            "en clair dans le ZIP : le fichier devient aussi sensible qu'un\n"
+            "carnet de mots de passe.\n\n"
+            "NON — les clés restent chiffrées par Windows. Utile seulement\n"
+            "tant que l'installation actuelle est en place (profil supprimé\n"
+            "par erreur). Inutilisable après réinstallation.",
             icon="warning",
-        ):
+        )
+        if include_keys is None:
             return
 
         zip_path = filedialog.asksaveasfilename(
@@ -2504,11 +2570,10 @@ class GhisdiagApp(tk.Tk):
 
         def _worker():
             try:
-                data = run_ps_action(
-                    "collectors/wifi_manager.ps1",
-                    ["-Action", "backup-all", "-FilePath", zip_path],
-                    timeout=120,
-                )
+                args = ["-Action", "backup-all", "-FilePath", zip_path]
+                if include_keys:
+                    args.append("-IncludeKeys")
+                data = run_ps_action("collectors/wifi_manager.ps1", args, timeout=120)
                 def _update():
                     self._wifi_busy = False
                     self.btn_wifi_backup.configure(state="normal", text="💾  Sauvegarder")
@@ -2518,7 +2583,11 @@ class GhisdiagApp(tk.Tk):
                         n = data.get("profiles_count", 0)
                         errs = data.get("errors", [])
                         self.wifi_log_var.set(f"{n} profil(s) sauvegardé(s) → {Path(zip_path).name}")
-                        msg = f"{n} profil(s) exporté(s) avec succès.\n\n{zip_path}"
+                        mode = ("Mots de passe EN CLAIR — restaurable sur n'importe quel PC.\n"
+                                "Traitez ce fichier comme un carnet de mots de passe."
+                                if data.get("keys_in_clear") else
+                                "Clés chiffrées par Windows — restaurable sur ce PC uniquement.")
+                        msg = f"{n} profil(s) exporté(s) avec succès.\n\n{zip_path}\n\n{mode}"
                         if errs:
                             msg += "\n\nAvertissements :\n" + "\n".join(errs[:5])
                             messagebox.showwarning("Sauvegarde partielle", msg)
@@ -3323,6 +3392,9 @@ class GhisdiagApp(tk.Tk):
     def _monitor_resume(self):
         self._monitor_paused = False
         self._mon_status_var.set("")
+        # Le cache a vieilli pendant la pause (diagnostic) : relancer la lecture
+        # dès le premier tick plutôt que d'attendre 10 s de plus.
+        self._temp_tick = 5
         self._monitor_tick()
 
     def _monitor_tick(self):
@@ -3374,6 +3446,10 @@ class GhisdiagApp(tk.Tk):
             parts = [f"{d.get('model','?')[:12]} : {d.get('temp','?')}°C"
                      for d in disks_t[:2] if isinstance(d, dict)]
             self._mon_temp_disk_var.set("  ".join(parts) if parts else "SSD/HDD : N/A")
+        elif not self._temp_fetched_once:
+            # La 1re mesure smartctl est en cours : afficher « N/A » ici ferait
+            # croire à une panne alors qu'on n'a simplement pas encore répondu.
+            self._mon_temp_disk_var.set("SSD/HDD : mesure…")
         else:
             self._mon_temp_disk_var.set("SSD/HDD : N/A")
 
@@ -3387,17 +3463,29 @@ class GhisdiagApp(tk.Tk):
             if not _HAS_MONITOR:
                 return
             gd = get_gpu_disk_temps()
-            cache = {"cpu": None, "gpu": gd.get("gpu"), "disks": gd.get("disks") or []}
+
+            # Publication immédiate de GPU/disques, AVANT le repli CPU. Ce repli
+            # est une requête WMI qui coûte ~1 s (jusqu'à 6 s, son timeout) et se
+            # déclenche à chaque cycle sur une machine sans PawnIO : publier après
+            # lui retardait d'autant des températures disque déjà mesurées.
+            self._temp_cache = {"cpu": None, "gpu": gd.get("gpu"),
+                                "disks": gd.get("disks") or []}
+            self._temp_fetched_once = True
 
             sample = self._temp_stream.latest() if self._temp_stream is not None else None
             stream_cpu = sample.get("cpu_ref") if sample else None
+            cpu_acpi = None
             if stream_cpu is None:
                 # Le flux LHM ne donne pas de temp CPU : repli zone thermique ACPI.
-                cache["cpu"] = get_cpu_temp_acpi()
-            self._temp_cache = cache
+                cpu_acpi = get_cpu_temp_acpi()
+                if cpu_acpi is not None:
+                    # Republier sans écraser GPU/disques déjà affichés.
+                    cache = dict(self._temp_cache)
+                    cache["cpu"] = cpu_acpi
+                    self._temp_cache = cache
 
             # Raison à afficher si aucune temp CPU (ni flux, ni ACPI).
-            has_cpu = stream_cpu is not None or cache["cpu"] is not None
+            has_cpu = stream_cpu is not None or cpu_acpi is not None
             if _HAS_SENSOR_HEALTH and not has_cpu:
                 try:
                     self._sensor_reason = _sensors_health.cpu_status(probe=False)["label"]
@@ -3409,6 +3497,9 @@ class GhisdiagApp(tk.Tk):
             logger.debug("Fetch températures : %s", exc)
         finally:
             self._temp_loading = False
+            # Même en cas d'échec : on a essayé, donc on peut passer de
+            # « mesure… » à « N/A » — qui devient une information juste.
+            self._temp_fetched_once = True
 
     # ══ Onglet Bench thermique ═══════════════════════════════════════════════
 
