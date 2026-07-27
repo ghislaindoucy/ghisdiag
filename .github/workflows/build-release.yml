@@ -1,0 +1,98 @@
+name: Build & attest release binary
+
+# Compile Ghisdiag publiquement, sur un runner GitHub, à partir du code source
+# taggé — puis génère une attestation de provenance signée (SLSA).
+#
+# Pourquoi : sans certificat de signature payant, la provenance vérifiable est le
+# meilleur argument disponible face aux éditeurs antivirus. N'importe qui — dont un
+# analyste traitant un signalement de faux positif — peut vérifier que l'archive
+# publiée correspond exactement à ce code source public, avec :
+#
+#   gh attestation verify Ghisdiag.zip --repo ghislaindoucy/ghisdiag
+#
+# Déclenchement :
+#   - push d'un tag v*  → build + attestation (c'est la release)
+#   - pull request      → build seul, sans attestation : valide que la compilation
+#                         passe AVANT de poser un tag. Sans ce déclencheur, la
+#                         première exécution réelle du workflow serait la release
+#                         elle-même — mauvais moment pour découvrir une erreur.
+#   - manuellement      → depuis l'onglet Actions (une fois le fichier sur main)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write        # requis pour signer l'attestation
+  attestations: write    # requis pour la publier
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install numpy
+
+      # Mode onedir : produit un DOSSIER dist/Ghisdiag/ (exe + DLL), pas un exe unique.
+      - name: Compiler avec PyInstaller
+        run: python -m PyInstaller --clean --noconfirm Ghisdiag.spec
+
+      - name: Vérifier la sortie de compilation
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist\Ghisdiag\Ghisdiag.exe)) {
+            throw "dist\Ghisdiag\Ghisdiag.exe introuvable — le .spec n'est pas en mode onedir ?"
+          }
+
+      - name: Créer l'archive de distribution
+        shell: pwsh
+        run: Compress-Archive -Path dist\Ghisdiag\* -DestinationPath dist\Ghisdiag.zip -Force
+
+      - name: Empreintes SHA-256
+        shell: pwsh
+        run: |
+          foreach ($p in @('dist\Ghisdiag.zip', 'dist\Ghisdiag\Ghisdiag.exe')) {
+            $h = (Get-FileHash $p -Algorithm SHA256).Hash
+            $size = (Get-Item $p).Length
+            Write-Host "$p"
+            Write-Host "   SHA-256 : $h"
+            Write-Host "   Taille  : $size octets"
+          }
+
+      # On atteste l'archive (ce que les utilisateurs téléchargent) ET l'exe
+      # lui-même (ce qu'un analyste antivirus soumettra à son moteur).
+      # Pas d'attestation sur les pull requests : elle n'a de sens que pour un
+      # artefact réellement publié, et en produire une par PR polluerait le
+      # registre de provenance du dépôt.
+      - name: Générer l'attestation de provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/Ghisdiag.zip
+            dist/Ghisdiag/Ghisdiag.exe
+
+      - name: Publier l'archive comme artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ghisdiag-onedir
+          path: dist/Ghisdiag.zip
+          retention-days: 90

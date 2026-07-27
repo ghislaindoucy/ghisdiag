@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 1.8.2** (2026-07-24) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.2)
+**Version actuelle : 2.0.0** (2026-07-27) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.0)
 
 ---
 
@@ -172,6 +172,36 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.0.0 — 📦 Distribution en dossier portable ✅ *livré*
+
+- **Passage de PyInstaller `onefile` à `onedir`.** Sortie du build : le dossier
+  `dist\Ghisdiag\` (1126 fichiers, ~78 Mo) et l'archive `dist\Ghisdiag.zip`
+  (~34 Mo, soit la taille de l'ancien exe) publiée en release. Motivation
+  première : l'usage sur clé USB en atelier, où `onefile` décompressait 34 Mo
+  dans le `%TEMP%` du client à chaque lancement.
+- **`Ghisdiag.spec` et `Ghisdiag.manifest` versionnés** (exceptions dans
+  `.gitignore`) et consommés tels quels par `build.bat` **et** par la CI :
+  une seule source de vérité pour les options de compilation. `build.bat` ne
+  régénère plus ces fichiers, et produit le ZIP en fin de course.
+- **Workflow GitHub Actions** (`.github/workflows/build-release.yml`) : compile
+  sur tag `v*` et génère une **attestation de provenance SLSA** sur l'archive et
+  sur l'exe. C'est le principal levier anti-faux-positif disponible sans
+  certificat de signature payant.
+- **Antivirus** : `upx=False`, sauvegarde WiFi sans `key=clear` par défaut,
+  et nouveau `docs/transparence-systeme.md` recensant toutes les opérations
+  privilégiées — document à joindre aux signalements de faux positifs.
+- **Correctif UAC** : `EXE(manifest=…)` ne suffisait pas ; PyInstaller réécrit le
+  `<requestedExecutionLevel>` depuis son paramètre `uac_admin` et forçait
+  `asInvoker`. Le `requireAdministrator` du manifeste était donc inopérant depuis
+  toujours, et l'app compensait via `request_elevation()` — un double lancement
+  du process à chaque démarrage. Corrigé par `uac_admin=True`.
+- **Correctifs moniteur** : températures disque publiées dès le premier tick
+  (au lieu du 5ᵉ, soit 10 s) et découplées du repli WMI de la température CPU
+  (1 à 6 s, déclenché à chaque cycle sur une machine sans PawnIO).
+- **`GHISDIAG_DEBUG=1`** : journal en `DEBUG` avec bloc de contexte au démarrage
+  (version, gelé/sources, ressources, élévation, imports optionnels ratés et leur
+  cause). Les journaux HTTP restent en `INFO` pour ne jamais tracer de clé API.
 
 ### v1.8.2 — 🤖 Question libre à l'IA ✅ *livré*
 

@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-1.8.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.8.2)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.0)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -52,8 +52,8 @@ Clé API par fournisseur (chiffrée AES-128), bouton « Tester la clé », aucun
 
 ### 1️⃣ Télécharge et lance
 ```bash
-# Récupère Ghisdiag.exe depuis les releases
-# Double-clique et c'est parti!
+# Récupère Ghisdiag.zip depuis les releases, décompresse-le,
+# puis double-clique sur Ghisdiag.exe dans le dossier obtenu
 ```
 
 ### 2️⃣ Clique sur "Lancer le diagnostic"
@@ -71,13 +71,20 @@ Clé API par fournisseur (chiffrée AES-128), bouton « Tester la clé », aucun
 
 ## 📦 Installation
 
-### Windows (Exe seul)
-1. Télécharge `Ghisdiag.exe` depuis les [releases](https://github.com/ghislaindoucy/ghisdiag/releases)
-2. Double-clique
-3. Accepte les droits administrateur
-4. C'est parti!
+### Windows (archive portable)
+1. Télécharge `Ghisdiag.zip` depuis les [releases](https://github.com/ghislaindoucy/ghisdiag/releases)
+2. Décompresse-le où tu veux — disque local, ou directement sur une clé USB
+3. Double-clique sur `Ghisdiag.exe` dans le dossier obtenu
+4. Accepte les droits administrateur
+5. C'est parti!
 
-**Prérequis :** Windows 10/11, rien d'autre (tout est embarqué dans l'exe)
+**Prérequis :** Windows 10/11, rien d'autre (tout est embarqué dans le dossier)
+
+> ℹ️ Garde le dossier entier : `Ghisdiag.exe` a besoin du sous-dossier `_internal\`
+> posé à côté de lui. Ce format évite de décompresser 34 Mo dans le `%TEMP%` de
+> chaque machine à chaque lancement — c'est plus rapide en usage nomade, ça ne
+> laisse aucune trace chez le client, et c'est moins signalé par les antivirus
+> (voir [docs/antivirus-guide.md](docs/antivirus-guide.md)).
 
 ### Développement (depuis le code source)
 ```bash
@@ -144,6 +151,16 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.0.0 (Juillet 2026)
+📦 **Nouveau format de distribution — dossier portable**
+- Ghisdiag se télécharge désormais en **archive `Ghisdiag.zip`** (~34 Mo, même taille qu'avant) à décompresser : un dossier contenant `Ghisdiag.exe` et son sous-dossier `_internal\`. **Garder le dossier entier.**
+- **Pourquoi :** l'ancien exe unique décompressait 34 Mo dans le `%TEMP%` de la machine cliente **à chaque lancement** — lent en usage nomade, et il laissait des traces chez le client. Le nouveau format ne décompresse rien.
+- 🛡️ **Moins de faux positifs antivirus** : ce schéma d'auto-extraction est celui des *droppers* et pesait lourd dans les scores heuristiques. S'y ajoutent la sauvegarde WiFi sans mots de passe en clair par défaut, l'abandon de la compression UPX, et un **build public vérifiable** (attestation de provenance SLSA via GitHub Actions).
+- 🧹 **Correctifs** : une seule invite UAC au démarrage (le manifeste était inopérant, l'app se relançait elle-même), températures disque affichées dès l'ouverture du moniteur au lieu de 10 s d'attente, noms de profils lisibles à la restauration WiFi.
+- 🔧 Nouveau commutateur `GHISDIAG_DEBUG=1` pour un journal détaillé — utile en atelier.
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.0.0.md)
 
 ### v1.8.2 (Juillet 2026)
 🤖 **Question libre à l'IA**
@@ -320,17 +337,22 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 ---
 
-## 🛠️ Build l'exe toi-même
+## 🛠️ Build toi-même
 
 ```batch
 cd D:\Projets\Ghisdiag
 build.bat
 ```
 
-L'exe généré : `dist/Ghisdiag.exe`
-- Toutes les dépendances embarquées
-- Aucun Python requis chez l'utilisateur
-- ~34 MB
+Le build est piloté par `Ghisdiag.spec`, versionné dans le dépôt et partagé avec
+l'intégration continue — toute option de compilation se change là, nulle part
+ailleurs.
+
+Deux sorties :
+- `dist/Ghisdiag/` — le dossier à copier tel quel sur une clé USB (~78 MB, 1126 fichiers)
+- `dist/Ghisdiag.zip` — l'archive à publier en release (~34 MB)
+
+Toutes les dépendances sont embarquées ; aucun Python requis chez l'utilisateur.
 
 ---
 

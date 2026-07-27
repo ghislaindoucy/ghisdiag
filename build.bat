@@ -23,75 +23,56 @@ py -m pip install numpy --quiet
 py -m pip install requests --quiet
 py -m pip install cryptography --quiet
 
-:: Nettoyage
+:: Nettoyage — on ne supprime PLUS Ghisdiag.spec : il est versionné (voir ci-dessous)
 echo [2/5] Nettoyage des anciens fichiers...
 if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
-if exist Ghisdiag.spec del Ghisdiag.spec
 
-:: Création du manifest UAC (demande élévation admin)
-echo [3/5] Création du manifest UAC...
-(
-echo ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
-echo ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
-echo   ^<assemblyIdentity version="1.8.2.0" processorArchitecture="X86"
-echo     name="Ghisdiag" type="win32"/^>
-echo   ^<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"^>
-echo     ^<security^>^<requestedPrivileges^>
-echo       ^<requestedExecutionLevel level="requireAdministrator" uiAccess="false"/^>
-echo     ^</requestedPrivileges^>^</security^>
-echo   ^</trustInfo^>
-echo ^</assembly^>
-) > Ghisdiag.manifest
+:: Ghisdiag.spec et Ghisdiag.manifest sont désormais versionnés dans le dépôt, et
+:: c'est ce build.bat qui les consomme au lieu de les régénérer. Raison : GitHub
+:: Actions compile avec exactement les mêmes options. PyInstaller ne produit pas un
+:: binaire identique au bit près d'un build à l'autre, mais c'est le binaire compilé
+:: par la CI qui est publié ET attesté : l'attestation lie son empreinte au commit
+:: source public (docs/antivirus-guide.md).
+::
+:: Pour modifier une option de compilation, éditez Ghisdiag.spec.
+:: Pour changer le numéro de version, éditez version_info.txt ET Ghisdiag.manifest.
+echo [3/5] Vérification des fichiers de build...
+if not exist Ghisdiag.spec (
+    echo ERREUR: Ghisdiag.spec introuvable.
+    pause & exit /b 1
+)
+if not exist Ghisdiag.manifest (
+    echo ERREUR: Ghisdiag.manifest introuvable.
+    pause & exit /b 1
+)
 
-:: Compilation
-echo [4/5] Compilation en cours...
-py -m PyInstaller ^
-    --onefile ^
-    --windowed ^
-    --name Ghisdiag ^
-    --manifest Ghisdiag.manifest ^
-    --version-file version_info.txt ^
-    --add-data "collectors;collectors" ^
-    --add-data "assets;assets" ^
-    --add-data "report;report" ^
-    --add-data "licenses;licenses" ^
-    --add-data "THIRD-PARTY-NOTICES.md;." ^
-    --add-binary "tools\smartctl.exe;tools" ^
-    --add-binary "tools\LibreHardwareMonitorLib.dll;tools" ^
-    --add-binary "tools\HidSharp.dll;tools" ^
-    --add-binary "tools\BlackSharp.Core.dll;tools" ^
-    --add-binary "tools\DiskInfoToolkit.dll;tools" ^
-    --add-binary "tools\System.Memory.dll;tools" ^
-    --add-binary "tools\System.Numerics.Vectors.dll;tools" ^
-    --add-binary "tools\System.Runtime.CompilerServices.Unsafe.dll;tools" ^
-    --add-binary "tools\PawnIO_setup.exe;tools" ^
-    --hidden-import tkinter ^
-    --hidden-import tkinter.ttk ^
-    --hidden-import json ^
-    --hidden-import threading ^
-    --hidden-import psutil ^
-    --hidden-import numpy ^
-    --hidden-import requests ^
-    --hidden-import cryptography ^
-    --hidden-import ai_analyzer ^
-    --hidden-import ai_report ^
-    --hidden-import thermal_bench ^
-    --hidden-import thermal_compare ^
-    --hidden-import diag_compare ^
-    --hidden-import report.exec_summary ^
-    --collect-submodules cryptography ^
-    --hidden-import collectors.realtime_monitor ^
-    --hidden-import collectors.sensors ^
-    --hidden-import collectors.pawnio ^
-    --hidden-import collectors.gpu ^
-    --hidden-import collectors.gpu_load ^
-    --icon assets\icon.ico ^
-    main.py
+:: Compilation depuis le .spec versionné — options identiques à celles de la CI.
+:: Mode ONEDIR : la sortie est un DOSSIER dist\Ghisdiag\ (exe + DLL à côté), pas
+:: un fichier unique. Voir l'en-tête de Ghisdiag.spec pour le pourquoi.
+echo [4/6] Compilation en cours...
+py -m PyInstaller --clean --noconfirm Ghisdiag.spec
 
 if errorlevel 1 (
     echo.
     echo ERREUR: La compilation a échoué.
+    pause & exit /b 1
+)
+
+if not exist "dist\Ghisdiag\Ghisdiag.exe" (
+    echo ERREUR: dist\Ghisdiag\Ghisdiag.exe introuvable après compilation.
+    pause & exit /b 1
+)
+
+:: Archive prête à distribuer / à copier sur la clé atelier. Volontairement sans
+:: numéro de version dans le nom : la version vit dans version_info.txt et
+:: Ghisdiag.manifest, en rajouter une ici recréerait un endroit à bumper.
+echo [5/6] Création de l'archive de distribution...
+if exist "dist\Ghisdiag.zip" del "dist\Ghisdiag.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path 'dist\Ghisdiag\*' -DestinationPath 'dist\Ghisdiag.zip' -Force"
+
+if errorlevel 1 (
+    echo ERREUR: La création de l'archive a échoué.
     pause & exit /b 1
 )
 
@@ -107,30 +88,37 @@ if errorlevel 1 (
 ::   C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64\signtool.exe
 :: Ou installez-le via : winget install Microsoft.WindowsSDK.10.0.22621
 ::
-:: echo [5/5] Signature numérique...
+:: En mode onedir, signer AVANT de créer l'archive (déplacer le bloc [5/6] après
+:: celui-ci), et signer l'exe ET les DLL produites par PyInstaller :
+::   dist\Ghisdiag\Ghisdiag.exe et dist\Ghisdiag\_internal\*.dll
+::
+:: echo [6/6] Signature numérique...
 :: signtool sign ^
 ::     /tr http://timestamp.digicert.com ^
 ::     /td sha256 ^
 ::     /fd sha256 ^
 ::     /a ^
-::     dist\Ghisdiag.exe
+::     dist\Ghisdiag\Ghisdiag.exe
 :: if errorlevel 1 (
 ::     echo ERREUR: La signature a échoué. Vérifiez votre certificat.
 ::     pause & exit /b 1
 :: )
 :: echo Signature OK.
 
-echo [5/5] (Signature désactivée — voir commentaires dans build.bat)
+echo [6/6] (Signature désactivée — voir commentaires dans build.bat)
 
 echo.
 echo ============================================================
-echo  Compilation réussie !
-echo  Fichier : dist\Ghisdiag.exe
+echo  Compilation réussie ^(mode onedir^)
+echo.
+echo  Dossier  : dist\Ghisdiag\        ^(à copier sur la clé USB^)
+echo  Exe      : dist\Ghisdiag\Ghisdiag.exe
+echo  Archive  : dist\Ghisdiag.zip     ^(à publier en release^)
 echo ============================================================
 
 :: Pour réduire les faux positifs antivirus, pensez à :
 ::   1. Activer la signature numérique ci-dessus
-::   2. Soumettre dist\Ghisdiag.exe sur https://www.virustotal.com
+::   2. Soumettre dist\Ghisdiag\Ghisdiag.exe sur https://www.virustotal.com
 ::      puis signaler les faux positifs directement aux éditeurs AV
 ::   3. Voir le guide : docs/antivirus-guide.md
 
