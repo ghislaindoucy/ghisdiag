@@ -145,14 +145,30 @@ function Get-Sample {
                             elseif ($n -eq "Core Max")     { $cpuMax = $v }
                             elseif ($n -eq "Core Average") { $cpuAvg = $v }
                             elseif ($n -like "CPU Core #*" -and $n -notlike "*Distance*") { $cpuTemps.Add($v) }
+                            # Intel hybride : coeurs nommes "P-Core #N" / "E-Core #N".
+                            # Sans objet tant que "Core Max" / "Core Average" sont
+                            # presents (ils le sont sur i5-1240P), mais indispensable
+                            # au repli des lignes ~195 si un modele ne les expose pas.
+                            elseif (($n -like "P-Core #*" -or $n -like "E-Core #*") `
+                                    -and $n -notlike "*Distance*") { $cpuTemps.Add($v) }
                             # AMD : "Core (Tctl/Tdie)" = temperature de reference ;
                             # "CCDx (Tdie)" = temperature par die (utilisee comme coeur).
                             elseif ($n -like "*Tctl*")     { if ($null -eq $cpuPkg) { $cpuPkg = $v } }
                             elseif ($n -like "*Tdie*")     { $cpuTemps.Add($v) }
                         }
                         elseif ($s.SensorType -eq "Clock") {
-                            # Intel : "CPU Core #N" ; AMD : "Core #N" (hors "(Effective)"/"(SMU)").
+                            # Intel classique : "CPU Core #N".
+                            # Intel HYBRIDE (Alder Lake et suivants) : "P-Core #N"
+                            # et "E-Core #N". Aucun des deux ne commence par
+                            # "CPU Core", et "P-Core #1" ne matche pas non plus
+                            # "Core #*" (-like est ancre au debut) : sur ces
+                            # machines AUCUNE frequence n'etait collectee, ce qui
+                            # desactivait silencieusement toute la detection de
+                            # throttling du bench. Constate en atelier sur un
+                            # i5-1240P (dump LHM du 27/07/2026).
+                            # AMD : "Core #N" (hors "(Effective)" / "(SMU)").
                             if ($n -like "CPU Core #*") { $cpuClocks.Add($v) }
+                            elseif ($n -like "P-Core #*" -or $n -like "E-Core #*") { $cpuClocks.Add($v) }
                             elseif ($n -like "Core #*" -and $n -notlike "*(*") { $cpuClocks.Add($v) }
                         }
                         elseif ($s.SensorType -eq "Load" -and $n -eq "CPU Total") { $cpuLoad = $v }
