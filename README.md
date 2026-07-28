@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.0)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.1)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -151,6 +151,18 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.0.1 (Juillet 2026)
+🌡️ **Le bench thermique n'affirme plus ce qu'il n'a pas mesuré**
+- **Throttling en trois états** — oui / non / **indéterminé**. Il se déduit d'une comparaison de fréquences ; sans fréquence exploitable, l'outil dit qu'il ne sait pas au lieu de répondre « non ». Les sessions déjà enregistrées sont relues correctement.
+- **Fréquences CPU retrouvées sur les Intel récents** (12ᵉ génération et plus) : leurs capteurs se nomment `P-Core #N` / `E-Core #N`, Ghisdiag ne cherchait que `CPU Core #N` et n'en trouvait aucun — ce qui désactivait **silencieusement** toute la détection de throttling sur ces machines.
+- **Plus de « plateau » sur une charge écourtée** : sur un test coupé avant terme, plateau et ΔT sont laissés vides plutôt qu'inventés à partir d'une simple montée en température.
+- **Limite de puissance (PL1/TDP) enfin détectée** : un portable qui plafonne parce qu'il applique sa limite de puissance l'affiche désormais, au lieu de laisser croire à une surchauffe.
+- **La comparaison avant/après vérifie les conditions de mesure** (noyau de charge, arrêt d'urgence, charge réellement tenue). Si elles diffèrent, le verdict ne chiffre plus de gain.
+- 🩺 **Diagnostic** : la cause exacte d'un refus des capteurs remonte enfin jusqu'à l'utilisateur, et le journal indique au démarrage la version, l'élévation et le backend actif. Trois outils d'atelier ajoutés (`collectors/dump_sensors.ps1`, `dump_power_state.ps1`, `install_sensors_patch.ps1`).
+- 🔧 Seuil d'arrêt d'urgence réglable par `GHISDIAG_EMERGENCY_TEMP_C` (60-99 °C).
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.0.1.md)
 
 ### v2.0.0 (Juillet 2026)
 📦 **Nouveau format de distribution — dossier portable**

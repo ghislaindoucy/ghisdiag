@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.0.0** (2026-07-27) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.0)
+**Version actuelle : 2.0.1** (2026-07-28) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.1)
 
 ---
 
@@ -172,6 +172,24 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.0.1 — 🌡️ Fiabilité du bench thermique ✅ *livré*
+
+- **Ne plus affirmer ce qui n'a pas été mesuré.** `throttling` et `power_limited`
+  passent en tri-état (oui / non / indéterminé) ; sans fréquence relevée, l'outil
+  ne conclut plus. Les sessions au schéma v1 restent relisibles.
+- **Mapping capteur des Intel hybrides** (`P-Core #N` / `E-Core #N`) : aucune
+  fréquence n'était collectée depuis Alder Lake, ce qui désactivait en silence
+  toute la détection de throttling.
+- **Charge écourtée** : plateau et ΔT invalidés plutôt que calculés sur une rampe.
+- **Limite de puissance PL1** détectée en comparant la fenêtre turbo au régime
+  établi, elle-même ancrée sur la charge réelle (un générateur peut mettre
+  plusieurs dizaines de secondes à démarrer).
+- **Conditions de mesure** contrôlées par la comparaison avant/après ; verdict
+  « non concluant » quand les deux sessions ne se comparent pas.
+- **Diagnostic** : cause des refus capteurs remontée, contexte d'exécution
+  journalisé au démarrage, journal de production isolé des tests.
+- Validé sur quatre machines d'atelier et confronté à HWiNFO.
 
 ### v2.0.0 — 📦 Distribution en dossier portable ✅ *livré*
 
