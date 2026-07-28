@@ -59,8 +59,8 @@ qu'on a pu la reproduire, puis la corriger.
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | `<TAILLE>` octets |
-| **SHA-256** | `<SHA256>` |
+| **Taille** | `35 864 458` octets (34,2 Mo) |
+| **SHA-256** | `A7D1B5F494EB9684D98719301CF5A86F74B148218A43473D5AD02FAEC30471B7` |
 
 > Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
 > tag `v2.0.2` — celle qui est jointe à cette release et qui porte l'attestation
