@@ -978,10 +978,16 @@ class ThermalBench:
             if not self._stream.wait_first_sample(STREAM_WARMUP_SEC,
                                                   require_cpu_temp=(cfg.target == "cpu")):
                 self._stream.stop()
+                # Le backend explique souvent lui-meme son refus (DLL absente,
+                # Computer.Open() en echec...). Ce message etait jeté : on le
+                # remonte tel quel, c'est le seul qui designe la vraie cause.
+                cause = getattr(self._stream, "backend_error", "")
                 if self._stream.stalled:
                     self._error("Capteurs figes : " + (self._stream.stall_reason
                                 or "backend bloque")
                                 + ". Lance diagnose_sensors.py pour la cause.")
+                elif cause:
+                    self._error(f"Capteurs indisponibles — {cause}")
                 elif self._stream.latest() is not None:
                     self._error("Capteurs detectes mais aucune temperature CPU "
                                 "exploitable sur cette machine (cpu_ref absent) : "

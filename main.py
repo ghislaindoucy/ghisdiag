@@ -5826,7 +5826,39 @@ _CPU_LOAD_WORKER_FLAG = "--ghisdiag-cpu-load-worker"
 _GPU_LOAD_WORKER_FLAG = "--ghisdiag-gpu-load-worker"
 
 
+def _log_launch_context():
+    """Journalise ce qui conditionne la lecture des capteurs : élévation,
+    origine du binaire, backend actif.
+
+    Sans ces lignes, un rapport d'atelier du type « les températures ne sont
+    pas disponibles » est indiagnostiquable a posteriori : le journal ne dit
+    ni si l'app tournait élevée (sans quoi l'accès MSR est refusé et TOUTE
+    température CPU sort à N/A), ni quel jeu de DLL était chargé. Constaté le
+    28/07/2026 — il a fallu inspecter la machine pour établir des faits que le
+    journal aurait dû contenir.
+    """
+    try:
+        gele = bool(getattr(sys, "frozen", False))
+        admin = is_admin()
+        ligne = (f"Démarrage Ghisdiag {VERSION} — "
+                 f"{'exe compilé' if gele else 'sources'}, "
+                 f"élévation : {'OUI' if admin else 'NON'}")
+        if not admin:
+            ligne += " (sans élévation, la température CPU sera indisponible)"
+        logger.info(ligne)
+        try:
+            from collectors import lhm_backend
+            d = lhm_backend.active_tools_dir()
+            logger.info("Backend capteurs : %s (override : %s)",
+                        d, "oui" if lhm_backend.override_active() else "non")
+        except Exception as exc:
+            logger.warning("Backend capteurs : dossier non résolu — %s", exc)
+    except Exception:
+        logger.debug("Contexte de démarrage non journalisé", exc_info=True)
+
+
 def main():
+    _log_launch_context()
     # Windows : déclarer un AppUserModelID explicite pour que la barre des tâches
     # regroupe l'app sous sa propre identité et affiche SON icône — sans ça, lancé
     # depuis les sources, c'est l'icône de python.exe qui s'affiche.

@@ -97,6 +97,11 @@ def read_once(timeout: float = 10.0) -> Optional[dict]:
         sample = json.loads(line)
         if isinstance(sample, dict) and sample.get("ok"):
             return sample
+        # Le backend a EXPLIQUE pourquoi il echoue ({"ok":false,"error":...}).
+        # Jeter ce message laissait l'utilisateur devant un « capteurs
+        # indisponibles » sans cause — et nous sans diagnostic.
+        if isinstance(sample, dict) and sample.get("error"):
+            logger.warning("Capteurs : le backend a refuse — %s", sample["error"])
         return None
     except Exception as exc:
         logger.debug("sensors.read_once : %s", exc)
@@ -142,6 +147,7 @@ class SensorStream:
         self._stall_reason = ""
         self._start_ts = 0.0
         self._last_line_ts: Optional[float] = None   # derniere sortie (liveness)
+        self._backend_error = ""    # cause exacte renvoyee par sensors.ps1
 
     def start(self) -> bool:
         if not lhm_available():
@@ -166,6 +172,7 @@ class SensorStream:
         self._stall_reason = ""
         self._start_ts = time.monotonic()
         self._last_line_ts = None
+        self._backend_error = ""
         self._thread = threading.Thread(target=self._reader, name="SensorStream", daemon=True)
         self._thread.start()
         self._wdog = threading.Thread(target=self._watchdog, name="SensorWatchdog", daemon=True)
@@ -186,6 +193,14 @@ class SensorStream:
                 except json.JSONDecodeError:
                     continue
                 if not (isinstance(sample, dict) and sample.get("ok")):
+                    # sensors.ps1 emet {"ok":false,"error":"..."} quand il ne
+                    # peut pas ouvrir le materiel (DLL absente, Computer.Open()
+                    # en echec...). Cette ligne etait jetee en silence : le
+                    # bench annoncait alors « les capteurs ne repondent pas »
+                    # alors que la cause exacte venait de passer sous nos yeux.
+                    # On la retient (la PREMIERE : les suivantes se repetent) et
+                    # on la journalise une fois.
+                    self._note_backend_error(sample)
                     continue
                 with self._lock:
                     self._latest = sample
@@ -283,6 +298,24 @@ class SensorStream:
     @property
     def stall_reason(self) -> str:
         return self._stall_reason
+
+    @property
+    def backend_error(self) -> str:
+        """Cause exacte renvoyee par sensors.ps1 quand il refuse d'ouvrir le
+        materiel, ou chaine vide. A joindre a tout message d'indisponibilite :
+        « les capteurs ne repondent pas » sans le pourquoi n'aide personne."""
+        return self._backend_error
+
+    def _note_backend_error(self, sample) -> None:
+        """Retient la PREMIERE erreur du backend et la journalise une fois (le
+        script la repete a chaque tick tant que la cause dure)."""
+        if not isinstance(sample, dict):
+            return
+        err = str(sample.get("error") or "").strip()
+        if not err or self._backend_error:
+            return
+        self._backend_error = err
+        logger.warning("Capteurs : le backend a refuse d'ouvrir le materiel — %s", err)
 
     def stop(self, timeout: float = 3.0) -> None:
         self._running = False
