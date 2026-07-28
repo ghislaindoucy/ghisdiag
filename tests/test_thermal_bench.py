@@ -212,7 +212,7 @@ class BenchTestCase(unittest.TestCase):
 
 _LEGACY_CPU_METRIC_KEYS = {
     "idle_c", "load_max_c", "load_plateau_c", "delta_c", "cpu_load_avg",
-    "load_truncated", "load_sec_real",
+    "load_truncated", "load_sec_real", "load_ramp_sec",
     "gpu_idle_c", "gpu_max_c", "fan_idle_rpm", "fan_load_rpm",
     "clock_max_mhz", "clock_drop_pct", "clock_burst_drop_pct", "clock_samples",
     "throttling", "power_limited", "cooldown_sec", "recovery_margin_c",
@@ -589,6 +589,65 @@ class TestPowerLimitDetection(unittest.TestCase):
         m = compute_metrics(court, BenchConfig(idle_sec=120, load_sec=300))
         self.assertTrue(m["load_truncated"])
         self.assertIs(m["power_limited"], False)
+
+
+class TestSlowLoadStart(unittest.TestCase):
+    """Le generateur de charge ne demarre pas toujours tout de suite.
+
+    Cas reel (atelier, 28/07/2026, MSI Core Ultra) : 39 s se sont ecoulees
+    entre le debut de la phase de charge et la premiere seconde a 100 %. Le
+    CPU y etait a 603 MHz, au repos. La fenetre « burst turbo » tombait donc
+    sur une machine inactive et rendait une chute de -225 %.
+    """
+
+    @staticmethod
+    def _samples(retard_sec, clock_repos=600, clock_burst=4500,
+                 clock_steady=3600, step=2.5):
+        out = [{"t": t, "phase": "idle", "cpu": 48.0, "cpu_load": 12.0,
+                "clock": clock_repos} for t in range(0, 120, 5)]
+        t = 120.0
+        # Phase de charge : le generateur dort d'abord `retard_sec`.
+        while t < 120 + retard_sec:
+            out.append({"t": t, "phase": "load", "cpu": 48.0,
+                        "cpu_load": 12.0, "clock": clock_repos})
+            t += step
+        fin = 120 + 300
+        debut_reel = t
+        while t < fin:
+            frac = (t - debut_reel) / max(1.0, fin - debut_reel)
+            clock = clock_burst if frac < 0.08 else clock_steady
+            out.append({"t": t, "phase": "load", "cpu": 89.0,
+                        "cpu_load": 100.0, "clock": clock})
+            t += step
+        out.append({"t": fin + 5, "phase": "cooldown", "cpu": 55.0,
+                    "cpu_load": 3.0, "clock": clock_repos})
+        return out
+
+    def test_slow_start_does_not_poison_the_burst_window(self):
+        m = compute_metrics(self._samples(39),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertAlmostEqual(m["load_ramp_sec"], 39, delta=3)
+        # La chute burst -> etabli doit rester plausible, jamais negative de
+        # plusieurs centaines de pourcents.
+        self.assertGreater(m["clock_burst_drop_pct"], 0)
+        self.assertLess(m["clock_burst_drop_pct"], 50)
+        self.assertIs(m["power_limited"], True)
+        # Le repos a 600 MHz ne doit pas etre pris pour la frequence maximale.
+        self.assertEqual(m["clock_max_mhz"], 4500)
+
+    def test_immediate_start_reports_no_ramp(self):
+        m = compute_metrics(self._samples(0),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertEqual(m["load_ramp_sec"], 0.0)
+
+    def test_load_never_reaching_full_falls_back(self):
+        """Charge CPU jamais lue ou generateur mort : on ne plante pas."""
+        s = self._samples(0)
+        for x in s:
+            x["cpu_load"] = None
+        m = compute_metrics(s, BenchConfig(idle_sec=120, load_sec=300))
+        self.assertEqual(m["load_ramp_sec"], 0.0)
+        self.assertIsNotNone(m["load_plateau_c"])
 
 
 class TestThrottlingState(unittest.TestCase):

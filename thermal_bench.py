@@ -137,6 +137,18 @@ BURST_WINDOW  = (0.0, 0.10)
 # tout ce qu'on appellerait « plateau » n'est que le sommet d'une rampe.
 LOAD_COMPLETE_FRACTION = 0.9
 
+# Charge CPU (%) a partir de laquelle le generateur est considere comme
+# reellement en train de tourner. Le lancement n'est PAS instantane : vu en
+# atelier sur un MSI (Core Ultra), 39 s se sont ecoulees entre le debut de la
+# phase et la premiere seconde a 100 % — le CPU y etait a 603 MHz, au repos.
+# Decouper les fenetres de frequence sur le debut de la PHASE ferait alors
+# porter le « burst turbo » sur une machine inactive.
+LOAD_ACTIVE_PCT = 90.0
+
+# Retard de demarrage au-dela duquel il vaut la peine de le signaler : le temps
+# perdu ampute d'autant le regime etabli reellement observe.
+LOAD_RAMP_WARN_SEC = 10.0
+
 # Marge de "retour au calme" : le refroidissement est considere termine quand la
 # temperature redescend a T_idle + cette marge.
 RECOVERY_MARGIN_C = 5.0
@@ -517,6 +529,24 @@ def _slice_by_fraction(samples: list[dict], start_f: float, end_f: float) -> lis
     return [s for s in samples if lo <= s["t"] <= hi]
 
 
+def _effective_load(load: list[dict]) -> list[dict]:
+    """Echantillons a partir du moment ou le CPU est REELLEMENT charge.
+
+    Toutes les fenetres de frequence (burst / debut etabli / regime etabli) se
+    decoupent la-dessus, et non sur la phase de charge brute : le generateur
+    peut mettre des dizaines de secondes a demarrer, et ces secondes-la ne
+    disent rien de la machine sous charge.
+
+    Repli sur la phase entiere si aucun echantillon n'atteint le seuil (charge
+    CPU non lue, ou generateur qui n'a jamais demarre) : mieux vaut une fenetre
+    imparfaite que pas de mesure du tout.
+    """
+    for i, s in enumerate(load):
+        if (s.get("cpu_load") or 0) >= LOAD_ACTIVE_PCT:
+            return load[i:]
+    return load
+
+
 def phase_duration(samples: list[dict], phase: str) -> Optional[float]:
     """Duree REELLE d'une phase, mesuree sur les echantillons — par opposition a
     la config, qui ne dit que ce qui etait prevu. None si moins de 2 points."""
@@ -587,10 +617,13 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
                        default=None)
 
     # Frequence / throttling : on compare le debut etabli (10-40 %) a la fin
-    # (dernier tiers) de la phase de charge.
-    clock_early = _median(_vals(_slice_by_fraction(load, *EARLY_WINDOW), "clock"))
-    clock_late  = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW), "clock"))
-    clock_vals  = _vals(load, "clock")
+    # (dernier tiers) de la charge REELLE — voir _effective_load.
+    load_eff = _effective_load(load)
+    load_ramp_sec = (round(load_eff[0]["t"] - load[0]["t"], 1)
+                     if load and load_eff and load_eff is not load else 0.0)
+    clock_early = _median(_vals(_slice_by_fraction(load_eff, *EARLY_WINDOW), "clock"))
+    clock_late  = _median(_vals(_slice_by_fraction(load_eff, *STEADY_WINDOW), "clock"))
+    clock_vals  = _vals(load_eff, "clock")
     clock_max_mhz = round(max(clock_vals)) if clock_vals else None
 
     # TRI-ETAT VOULU : None = "on n'a pas pu mesurer", et surtout PAS False.
@@ -632,7 +665,7 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     # La temperature de reference est celle du PLATEAU, pas le maximum : le pic
     # appartient au burst turbo, le classer thermique ferait passer un bridage de
     # puissance parfaitement normal pour un defaut de refroidissement.
-    clock_burst = _median(_vals(_slice_by_fraction(load, *BURST_WINDOW), "clock"))
+    clock_burst = _median(_vals(_slice_by_fraction(load_eff, *BURST_WINDOW), "clock"))
     clock_burst_drop_pct = None
     if clock_burst and clock_late:
         clock_burst_drop_pct = round((clock_burst - clock_late) / clock_burst * 100, 1)
@@ -653,6 +686,7 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "delta_c":         delta_c,
         "load_truncated":  load_truncated,   # True = plateau/deltaT invalides
         "load_sec_real":   load_sec_real,
+        "load_ramp_sec":   load_ramp_sec,    # retard de demarrage du generateur
         "cpu_load_avg":    cpu_load_avg,
         "gpu_idle_c":      gpu_idle_c,
         "gpu_max_c":       gpu_max_c,

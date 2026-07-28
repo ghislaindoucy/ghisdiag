@@ -62,6 +62,7 @@ try:
         THROTTLE_CLOCK_DROP, THROTTLE_TEMP_FLOOR_C,
         DEFAULT_GPU_EMERGENCY_TEMP_C, DEFAULT_EMERGENCY_TEMP_C,
         _gpu_throttle_floor, throttling_state, _default_emergency_temp,
+        LOAD_RAMP_WARN_SEC,
     )
     from thermal_compare import (compare_sessions, generate_comparison_report,
                                  _protocol_diff)
@@ -4258,6 +4259,12 @@ class GhisdiagApp(tk.Tk):
             note += (f"\nℹ Plateau et ΔT non calculés : la charge a été écourtée"
                      f"{duree}. Le régime établi n'a pas été atteint — la "
                      "température maximale, elle, reste valable.")
+        ramp = m.get("load_ramp_sec")
+        if isinstance(ramp, (int, float)) and ramp >= LOAD_RAMP_WARN_SEC:
+            note += (f"\nℹ Le générateur de charge a mis {ramp:.0f} s à démarrer : "
+                     "la machine est restée au repos pendant ce temps. Les "
+                     "fréquences sont mesurées à partir de la charge réelle, "
+                     "mais le régime établi a duré d'autant moins longtemps.")
         if thr_state is None:
             note += ("\nℹ Fréquence CPU non lisible sur cette machine : le "
                      "throttling n'a pas pu être mesuré — il n'est ni confirmé, "
