@@ -12,7 +12,7 @@ from typing import Any
 
 from .exec_summary import compute_findings
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 DEFAULT_REPORTS_DIR = Path(os.path.expanduser("~")) / "Documents" / "Ghisdiag_Reports"
 

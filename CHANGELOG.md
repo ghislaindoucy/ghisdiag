@@ -4,7 +4,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
-## [Non publié]
+## [2.0.1] — 2026-07-28
 
 ### 🌡️ Bench thermique — ne plus affirmer ce qui n'a pas été mesuré
 
