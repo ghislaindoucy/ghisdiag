@@ -132,14 +132,14 @@ Détails dans [`SENSORS_TROUBLESHOOTING.md`](SENSORS_TROUBLESHOOTING.md).
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | `<TAILLE>` octets |
-| **SHA-256** | `<SHA256>` |
+| **Taille** | `35 843 545` octets (34,2 Mo) |
+| **SHA-256** | `D50829304769F2C24FB9A392AB9835EBABB4FC018627C48A87DA0F93C06701AF` |
 
-> ⚠️ **À renseigner juste avant la publication**, sur le fichier exact qui sera
-> mis en ligne. PyInstaller n'est pas reproductible au bit près : deux
-> compilations du même code donnent des empreintes différentes. L'archive publiée
-> doit être **celle compilée par GitHub Actions** — c'est elle qui porte
-> l'attestation de provenance.
+> Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
+> tag `v2.0.0` — celle qui est jointe à cette release et qui porte l'attestation
+> de provenance. PyInstaller n'étant pas reproductible au bit près, une
+> compilation locale du même code donnerait une empreinte différente : c'est
+> normal, seule celle-ci fait foi.
 
 Vérifier l'intégrité après téléchargement :
 
