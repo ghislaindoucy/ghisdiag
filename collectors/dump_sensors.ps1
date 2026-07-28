@@ -137,6 +137,14 @@ $loadOrder = @(
     "DiskInfoToolkit.dll",
     "LibreHardwareMonitorLib.dll"
 )
+# Mark of the Web : l'Explorateur Windows recopie la marque " vient d'Internet "
+# sur chaque fichier extrait d'une archive telechargee, et .NET refuse alors de
+# charger l'assembly (HRESULT 0x80131515). Meme correctif que collectors\sensors.ps1.
+try {
+    Get-ChildItem -Path $toolsDir -File -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+} catch { }
+
 foreach ($dll in $loadOrder) {
     $p = [System.IO.Path]::Combine($toolsDir, $dll)
     if ([System.IO.File]::Exists($p)) { [System.Reflection.Assembly]::LoadFrom($p) | Out-Null }

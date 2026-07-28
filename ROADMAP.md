@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.0.1** (2026-07-28) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.1)
+**Version actuelle : 2.0.2** (2026-07-28) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.2)
 
 ---
 
@@ -172,6 +172,20 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.0.2 — 🚨 Mark of the Web ✅ *livré*
+
+- **Aucun capteur ne remontait après un téléchargement normal.** L'Explorateur
+  Windows recopie la marque « vient d'Internet » sur chaque fichier extrait d'une
+  archive téléchargée ; .NET refuse alors `LoadFrom` (HRESULT 0x80131515) et plus
+  aucune bibliothèque LibreHardwareMonitor ne se charge.
+- Introduit par le passage en `onedir` (v2.0.0) : en `onefile`, PyInstaller
+  extrayait les DLL lui-même dans `%TEMP%`, sans marque. Invisible en
+  développement et sur clé USB, où les fichiers sont **copiés**.
+- Correctif : `Unblock-File` sur le dossier `tools` avant chargement, dans les
+  trois scripts qui chargent des assemblies.
+- Trouvé grâce à la remontée des causes d'erreur livrée en 2.0.1 — sans elle, le
+  journal ne disait que « les capteurs ne répondent pas ».
 
 ### v2.0.1 — 🌡️ Fiabilité du bench thermique ✅ *livré*
 

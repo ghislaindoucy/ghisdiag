@@ -4,6 +4,32 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [2.0.2] — 2026-07-28
+
+### 🚨 Correctif critique — aucune température ne remontait après téléchargement
+
+**Toute personne ayant téléchargé Ghisdiag depuis GitHub et décompressé l'archive
+avec l'Explorateur Windows n'avait aucun capteur.** Ni température CPU, ni GPU, ni
+ventilateur, ni fréquence : le moniteur et le bench thermique étaient hors service.
+Les versions 2.0.0 et 2.0.1 sont concernées.
+
+**Cause.** Une archive téléchargée par un navigateur porte la marque « vient
+d'Internet » (*Mark of the Web*). En la décompressant, l'Explorateur Windows
+**recopie cette marque sur chaque fichier extrait**. Or .NET refuse de charger un
+composant depuis un emplacement ainsi marqué : le moteur de capteurs ne pouvait
+plus charger une seule de ses bibliothèques.
+
+Le défaut est né du passage en dossier portable (v2.0.0) : auparavant les
+bibliothèques étaient extraites par l'application elle-même, sans marque. Il est
+passé inaperçu parce que le développement et l'usage sur clé USB partent de
+fichiers **copiés**, que Windows ne marque jamais.
+
+**Correctif.** L'application retire la marque de ses propres bibliothèques avant de
+les charger. Rien à faire de votre côté : il n'est plus nécessaire de « débloquer »
+l'archive avant de la décompresser.
+
+---
+
 ## [2.0.1] — 2026-07-28
 
 ### 🌡️ Bench thermique — ne plus affirmer ce qui n'a pas été mesuré

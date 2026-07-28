@@ -67,6 +67,29 @@ $loadOrder = @(
     "LibreHardwareMonitorLib.dll"
 )
 
+# MARK OF THE WEB - sans ceci, TOUS les capteurs tombent.
+#
+# Une archive telechargee avec un navigateur porte un flux alternatif
+# Zone.Identifier. Quand l'Explorateur Windows la decompresse, il RECOPIE cette
+# marque sur chaque fichier extrait. .NET refuse alors de charger un assembly
+# depuis ce dossier : LoadFrom leve " L'operation n'est pas prise en charge "
+# (HRESULT 0x80131515), aucune DLL LHM ne se charge, et l'application ne remonte
+# plus une seule temperature, ni ventilateur, ni frequence.
+#
+# Le passage en distribution `onedir` (v2.0.0) a introduit le probleme : en
+# `onefile`, PyInstaller extrayait lui-meme les DLL dans %TEMP%, sans marque.
+# Depuis, elles sont livrees en fichiers libres dans _internal\tools. Constate
+# le 28/07/2026 sur un dossier Downloads - cas de figure de TOUT utilisateur qui
+# telecharge la release et l'extrait normalement.
+#
+# Unblock-File est idempotent et sans effet si la marque est absente. En cas
+# d'echec (droits insuffisants), on n'interrompt rien : le chargement echouera
+# juste apres et le message d'erreur, lui, remonte desormais jusqu'a l'appelant.
+try {
+    Get-ChildItem -Path $toolsDir -File -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+} catch { }
+
 try {
     foreach ($dll in $loadOrder) {
         $p = [System.IO.Path]::Combine($toolsDir, $dll)
