@@ -13,15 +13,21 @@ thermal_bench). Verifie :
   - urgence GPU : seuil dynamique (slowdown NVML - marge) et raison de
     throttling NVML confirmee par la temperature — mais PAS le bit
     `throttle_thermal` seul a froid (faux positif atelier) ;
-  - compute_metrics : detection de throttling GPU sur chute de clock a chaud.
+  - compute_metrics : detection de throttling GPU sur chute de clock a chaud ;
+  - throttling en TRI-ETAT : sans frequence exploitable le resultat est
+    `None` (indetermine) et surtout pas `False` — l'outil ne doit pas certifier
+    l'absence d'un defaut qu'il n'a pas cherche. Y compris a la relecture des
+    sessions archivees au schema v1 (throttling_state).
 
 Lancement :  py -m unittest discover -s tests -v
 """
 
+import os
 import tempfile
 import threading
 import time
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 import thermal_bench
@@ -206,9 +212,10 @@ class BenchTestCase(unittest.TestCase):
 
 _LEGACY_CPU_METRIC_KEYS = {
     "idle_c", "load_max_c", "load_plateau_c", "delta_c", "cpu_load_avg",
+    "load_truncated", "load_sec_real", "load_ramp_sec",
     "gpu_idle_c", "gpu_max_c", "fan_idle_rpm", "fan_load_rpm",
-    "clock_max_mhz", "clock_drop_pct", "throttling", "power_limited",
-    "cooldown_sec", "recovery_margin_c",
+    "clock_max_mhz", "clock_drop_pct", "clock_burst_drop_pct", "clock_samples",
+    "throttling", "power_limited", "cooldown_sec", "recovery_margin_c",
 }
 
 
@@ -410,6 +417,322 @@ class TestGpuMetrics(unittest.TestCase):
         m = compute_metrics(samples, BenchConfig())    # target cpu par defaut
         self.assertNotIn("gpu_throttling", m)
         self.assertNotIn("gpu_plateau_c", m)
+
+
+class TestThrottlingIndeterminate(unittest.TestCase):
+    """Le throttling ne doit JAMAIS etre annonce absent sans avoir ete mesure.
+
+    Cas reel (atelier, 27/07/2026) : un portable Alder Lake-P ne remonte aucune
+    frequence CPU (`clock: null` du debut a la fin du bench). Le rapport
+    affirmait pourtant « throttling : non », ce qui a fait suspecter un defaut
+    materiel inexistant sur une autre machine.
+    """
+
+    @staticmethod
+    def _cpu_samples(clock=None):
+        """Repos 10 min / charge 10 min / refroidissement 10 min, cible CPU."""
+        samples = []
+        for t in range(0, 600, 10):
+            samples.append({"t": t, "phase": "idle", "cpu": 45.0, "cpu_load": 3.0})
+        for t in range(600, 1200, 10):
+            s = {"t": t, "phase": "load", "cpu": 88.0, "cpu_load": 99.0}
+            if clock is not None:
+                s["clock"] = clock
+            samples.append(s)
+        for t in range(1200, 1800, 10):
+            samples.append({"t": t, "phase": "cooldown", "cpu": 46.0})
+        return samples
+
+    def test_no_clock_yields_indeterminate_not_false(self):
+        m = compute_metrics(self._cpu_samples(clock=None), BenchConfig())
+        self.assertIsNone(m["throttling"])
+        self.assertIsNone(m["power_limited"])
+        self.assertIsNone(m["clock_drop_pct"])
+        self.assertEqual(m["clock_samples"], 0)
+        # Les temperatures, elles, restent parfaitement exploitables.
+        self.assertEqual(m["load_plateau_c"], 88.0)
+
+    def test_stable_clock_yields_measured_false(self):
+        m = compute_metrics(self._cpu_samples(clock=3600), BenchConfig())
+        self.assertIs(m["throttling"], False)
+        self.assertIs(m["power_limited"], False)
+        self.assertGreater(m["clock_samples"], 0)
+
+    def test_gpu_without_clock_nor_nvml_is_indeterminate(self):
+        """AMD/Intel sans NVML et sans clock lisible : aucune des deux sources."""
+        samples = TestGpuMetrics._mk_samples(clock_late=1800, temp_load=70.0)
+        for s in samples:
+            s.pop("gpu_clock", None)
+            s.pop("gpu_throttle", None)
+        m = compute_metrics(samples, BenchConfig(target="gpu"))
+        self.assertIsNone(m["gpu_throttling"])
+        self.assertIsNone(m["gpu_power_limited"])
+        self.assertEqual(m["gpu_clock_samples"], 0)
+
+    def test_gpu_nvml_alone_suffices_to_conclude(self):
+        """NVML a repondu (cle gpu_throttle posee) sans raison de bridage :
+        « pas de throttling » est alors une vraie mesure, pas un defaut."""
+        samples = TestGpuMetrics._mk_samples(clock_late=1800, temp_load=70.0)
+        for s in samples:
+            s.pop("gpu_clock", None)
+        m = compute_metrics(samples, BenchConfig(target="gpu"))
+        self.assertIs(m["gpu_throttling"], False)
+        self.assertIs(m["gpu_power_limited"], False)
+
+
+class TestTruncatedLoad(unittest.TestCase):
+    """Charge ecourtee : pas de plateau, donc pas de « plateau ».
+
+    Cas reel (atelier, 27/07/2026) : arret d'urgence a 25,5 s sur 300 s prevues.
+    Le rapport annoncait « plateau 94 C, deltaT 50 » calcules sur le dernier
+    tiers d'une RAMPE 62 -> 96 C. Aucun regime etabli n'avait existe.
+    """
+
+    @staticmethod
+    def _samples(load_sec, step=5.0):
+        """Repos 120 s, puis une charge en RAMPE de `load_sec` secondes."""
+        out = [{"t": t, "phase": "idle", "cpu": 45.0, "cpu_load": 2.0,
+                "clock": 1600}
+               for t in range(0, 120, 5)]
+        n = max(2, int(load_sec / step))
+        for i in range(n):
+            out.append({"t": 120 + i * step, "phase": "load",
+                        "cpu": 62.0 + (96.0 - 62.0) * i / (n - 1),
+                        "cpu_load": 100.0, "clock": 2700})
+        out.append({"t": 120 + load_sec + 5, "phase": "cooldown",
+                    "cpu": 50.0, "cpu_load": 2.0, "clock": 1600})
+        return out
+
+    def test_truncated_load_invalidates_plateau_and_delta(self):
+        m = compute_metrics(self._samples(25.5),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertTrue(m["load_truncated"])
+        self.assertIsNone(m["load_plateau_c"])
+        self.assertIsNone(m["delta_c"])
+        # Le pic, lui, a bien ete atteint : c'est meme lui qui a coupe le test.
+        self.assertEqual(m["load_max_c"], 96.0)
+        self.assertAlmostEqual(m["load_sec_real"], 25.0, delta=6)
+
+    def test_complete_load_keeps_plateau(self):
+        m = compute_metrics(self._samples(300),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertFalse(m["load_truncated"])
+        self.assertIsNotNone(m["load_plateau_c"])
+        self.assertIsNotNone(m["delta_c"])
+
+    def test_slightly_short_load_still_valid(self):
+        """295 s sur 300 : l'arrondi de fin de phase ne doit rien invalider."""
+        m = compute_metrics(self._samples(295),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertFalse(m["load_truncated"])
+        self.assertIsNotNone(m["load_plateau_c"])
+
+
+class TestPowerLimitDetection(unittest.TestCase):
+    """Limite de puissance PL1 : invisible en comparant debut etabli et fin.
+
+    Cas reel (atelier, i5-1240P) : 2715 MHz pendant le burst turbo, 2112 MHz en
+    regime etabli a 28,1 W — soit son PL1 pile — et 85 C. HWiNFO signalait la
+    limite de puissance sur 100 % du regime etabli ; Ghisdiag rendait
+    `power_limited: false` parce que la chute a lieu AVANT EARLY_WINDOW.
+    """
+
+    @staticmethod
+    def _samples(clock_burst, clock_steady, temp_steady, temp_peak=None):
+        out = [{"t": t, "phase": "idle", "cpu": 44.0, "cpu_load": 2.0,
+                "clock": 1600} for t in range(0, 120, 5)]
+        # 300 s de charge, echantillon toutes les 3 s.
+        for i in range(100):
+            t = 120 + i * 3
+            frac = i / 99.0
+            if frac < 0.08:            # burst turbo
+                clock, temp = clock_burst, (temp_peak or temp_steady)
+            else:                      # regime etabli
+                clock, temp = clock_steady, temp_steady
+            out.append({"t": t, "phase": "load", "cpu": temp,
+                        "cpu_load": 100.0, "clock": clock})
+        out.append({"t": 425, "phase": "cooldown", "cpu": 50.0, "clock": 1600})
+        return out
+
+    def _metrics(self, **kw):
+        return compute_metrics(self._samples(**kw),
+                               BenchConfig(idle_sec=120, load_sec=300))
+
+    def test_power_limit_detected_from_burst_drop(self):
+        m = self._metrics(clock_burst=2715, clock_steady=2112,
+                          temp_steady=85.0, temp_peak=96.0)
+        self.assertIs(m["power_limited"], True)
+        self.assertIs(m["throttling"], False)
+        self.assertGreater(m["clock_burst_drop_pct"], 20)
+        # La comparaison historique, elle, ne voit toujours rien : c'est normal,
+        # les deux fenetres sont dans le regime etabli.
+        self.assertEqual(m["clock_drop_pct"], 0.0)
+
+    def test_hot_plateau_stays_thermal_not_power(self):
+        """Meme chute, mais plateau brulant : c'est le refroidissement, pas PL1."""
+        m = self._metrics(clock_burst=2715, clock_steady=2112,
+                          temp_steady=93.0, temp_peak=96.0)
+        self.assertIs(m["power_limited"], False)
+
+    def test_no_burst_drop_no_power_limit(self):
+        """Frequence tenue de bout en bout : rien a signaler."""
+        m = self._metrics(clock_burst=2700, clock_steady=2690, temp_steady=75.0)
+        self.assertIs(m["power_limited"], False)
+        self.assertIs(m["throttling"], False)
+
+    def test_truncated_run_claims_no_power_limit(self):
+        """Sans regime etabli, on ne peut rien affirmer sur la puissance."""
+        samples = self._samples(clock_burst=2715, clock_steady=2112,
+                                temp_steady=85.0, temp_peak=96.0)
+        court = [s for s in samples
+                 if s["phase"] != "load" or s["t"] < 150]   # ~30 s de charge
+        m = compute_metrics(court, BenchConfig(idle_sec=120, load_sec=300))
+        self.assertTrue(m["load_truncated"])
+        self.assertIs(m["power_limited"], False)
+
+
+class TestSlowLoadStart(unittest.TestCase):
+    """Le generateur de charge ne demarre pas toujours tout de suite.
+
+    Cas reel (atelier, 28/07/2026, MSI Core Ultra) : 39 s se sont ecoulees
+    entre le debut de la phase de charge et la premiere seconde a 100 %. Le
+    CPU y etait a 603 MHz, au repos. La fenetre « burst turbo » tombait donc
+    sur une machine inactive et rendait une chute de -225 %.
+    """
+
+    @staticmethod
+    def _samples(retard_sec, clock_repos=600, clock_burst=4500,
+                 clock_steady=3600, step=2.5):
+        out = [{"t": t, "phase": "idle", "cpu": 48.0, "cpu_load": 12.0,
+                "clock": clock_repos} for t in range(0, 120, 5)]
+        t = 120.0
+        # Phase de charge : le generateur dort d'abord `retard_sec`.
+        while t < 120 + retard_sec:
+            out.append({"t": t, "phase": "load", "cpu": 48.0,
+                        "cpu_load": 12.0, "clock": clock_repos})
+            t += step
+        fin = 120 + 300
+        debut_reel = t
+        while t < fin:
+            frac = (t - debut_reel) / max(1.0, fin - debut_reel)
+            clock = clock_burst if frac < 0.08 else clock_steady
+            out.append({"t": t, "phase": "load", "cpu": 89.0,
+                        "cpu_load": 100.0, "clock": clock})
+            t += step
+        out.append({"t": fin + 5, "phase": "cooldown", "cpu": 55.0,
+                    "cpu_load": 3.0, "clock": clock_repos})
+        return out
+
+    def test_slow_start_does_not_poison_the_burst_window(self):
+        m = compute_metrics(self._samples(39),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertAlmostEqual(m["load_ramp_sec"], 39, delta=3)
+        # La chute burst -> etabli doit rester plausible, jamais negative de
+        # plusieurs centaines de pourcents.
+        self.assertGreater(m["clock_burst_drop_pct"], 0)
+        self.assertLess(m["clock_burst_drop_pct"], 50)
+        self.assertIs(m["power_limited"], True)
+        # Le repos a 600 MHz ne doit pas etre pris pour la frequence maximale.
+        self.assertEqual(m["clock_max_mhz"], 4500)
+
+    def test_immediate_start_reports_no_ramp(self):
+        m = compute_metrics(self._samples(0),
+                            BenchConfig(idle_sec=120, load_sec=300))
+        self.assertEqual(m["load_ramp_sec"], 0.0)
+
+    def test_load_never_reaching_full_falls_back(self):
+        """Charge CPU jamais lue ou generateur mort : on ne plante pas."""
+        s = self._samples(0)
+        for x in s:
+            x["cpu_load"] = None
+        m = compute_metrics(s, BenchConfig(idle_sec=120, load_sec=300))
+        self.assertEqual(m["load_ramp_sec"], 0.0)
+        self.assertIsNotNone(m["load_plateau_c"])
+
+
+class TestThrottlingState(unittest.TestCase):
+    """throttling_state() : lecture unique du drapeau, y compris archives v1."""
+
+    def test_v2_value_trusted(self):
+        v2 = {"throttling": False, "clock_samples": 150, "clock_max_mhz": 3600}
+        self.assertIs(thermal_bench.throttling_state(v2), False)
+
+    def test_v2_none_stays_none(self):
+        v2 = {"throttling": None, "clock_samples": 0, "clock_max_mhz": None}
+        self.assertIsNone(thermal_bench.throttling_state(v2))
+
+    def test_v1_false_without_clock_requalified(self):
+        # Session archivee AVANT le tri-etat : False y etait la valeur par
+        # defaut, pas une mesure.
+        v1 = {"throttling": False, "clock_max_mhz": None}
+        self.assertIsNone(thermal_bench.throttling_state(v1))
+
+    def test_v1_false_with_clock_is_a_real_measure(self):
+        v1 = {"throttling": False, "clock_max_mhz": 3600}
+        self.assertIs(thermal_bench.throttling_state(v1), False)
+
+    def test_v1_true_kept_even_without_clock(self):
+        # Cote GPU un True peut venir d'une raison NVML seule : on ne l'efface pas.
+        v1 = {"gpu_throttling": True, "gpu_clock_max_mhz": None}
+        self.assertIs(thermal_bench.throttling_state(v1, "gpu"), True)
+
+
+class TestEmergencyTempOverride(unittest.TestCase):
+    """Seuil d'arret d'urgence surchargeable en atelier.
+
+    Motif (atelier, 27/07/2026) : sur un i5-1240P, le CPU passe sa premiere
+    minute de charge en fenetre turbo PL2 (40 W pour un PL1 de 28 W) et atteint
+    96 C alors que son TjMax est 100. Couper a 95 C empeche d'atteindre le
+    regime etabli — donc de mesurer ce que le bench est cense mesurer.
+    """
+
+    def setUp(self):
+        self._saved = os.environ.get(thermal_bench.EMERGENCY_TEMP_ENV)
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop(thermal_bench.EMERGENCY_TEMP_ENV, None)
+        else:
+            os.environ[thermal_bench.EMERGENCY_TEMP_ENV] = self._saved
+
+    def _set(self, value):
+        os.environ[thermal_bench.EMERGENCY_TEMP_ENV] = value
+
+    def test_no_override_keeps_default(self):
+        os.environ.pop(thermal_bench.EMERGENCY_TEMP_ENV, None)
+        self.assertEqual(BenchConfig().emergency_temp_c,
+                         thermal_bench.DEFAULT_EMERGENCY_TEMP_C)
+
+    def test_override_applied(self):
+        self._set("99")
+        self.assertEqual(BenchConfig().emergency_temp_c, 99.0)
+
+    def test_override_accepts_comma_decimal(self):
+        self._set("97,5")
+        self.assertEqual(BenchConfig().emergency_temp_c, 97.5)
+
+    def test_override_above_tjmax_refused(self):
+        # 105 depasserait le TjMax : on ne desarme pas le garde-fou.
+        self._set("105")
+        self.assertEqual(BenchConfig().emergency_temp_c,
+                         thermal_bench.DEFAULT_EMERGENCY_TEMP_C)
+
+    def test_garbage_falls_back_to_default(self):
+        self._set("chaud")
+        self.assertEqual(BenchConfig().emergency_temp_c,
+                         thermal_bench.DEFAULT_EMERGENCY_TEMP_C)
+
+    def test_explicit_value_is_clamped_too(self):
+        os.environ.pop(thermal_bench.EMERGENCY_TEMP_ENV, None)
+        cfg = BenchConfig(emergency_temp_c=200).normalized()
+        self.assertEqual(cfg.emergency_temp_c, thermal_bench.EMERGENCY_TEMP_MAX_C)
+
+    def test_override_is_recorded_in_the_session(self):
+        """Le seuil retenu doit figurer dans le JSON : l'UI l'affiche depuis la
+        session, elle ne doit jamais reecrire « 95 °C » en dur."""
+        self._set("99")
+        cfg = BenchConfig(idle_sec=1, load_sec=1, cooldown_sec=1).normalized()
+        self.assertEqual(asdict(cfg)["emergency_temp_c"], 99.0)
 
 
 class TestConfigNormalization(unittest.TestCase):

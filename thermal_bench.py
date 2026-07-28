@@ -42,10 +42,52 @@ logger = logging.getLogger(__name__)
 
 # --- Constantes de protocole / metriques -----------------------------------
 
-SCHEMA_VERSION = 1
+# v2 : `throttling` / `power_limited` (et leurs equivalents GPU) sont passes en
+# TRI-ETAT — True / False / None, None = pas mesurable. En v1 ils valaient False
+# par defaut, y compris quand aucune frequence n'avait ete relevee. Les sessions
+# v1 restent lisibles : throttling_state() requalifie ce False-par-defaut.
+SCHEMA_VERSION = 2
 
 # Seuil d'arret d'urgence (temperature CPU de reference, en degres C).
 DEFAULT_EMERGENCY_TEMP_C = 95.0
+
+# Surcharge d'atelier du seuil d'urgence, par variable d'environnement.
+#
+# Pourquoi : sur un portable Intel P-series, le CPU passe sa premiere minute de
+# charge dans sa fenetre turbo (PL2), bien au-dessus de sa puissance soutenue —
+# vu en atelier : 40 W pour un PL1 de 28 W, 96 C atteints en 31 s sur un
+# i5-1240P dont le TjMax est 100. Couper a 95 C interdit alors d'atteindre le
+# regime etabli, c'est-a-dire precisement ce que le bench doit mesurer.
+#
+# Borne haute a 99 C : on reste sous le TjMax des CPU actuels (100 C). Le CPU se
+# protege seul de toute facon (bridage a TjMax, coupure materielle au-dela) —
+# cette surcharge ne desactive aucune securite materielle, elle repousse
+# seulement le garde-fou LOGICIEL de Ghisdiag.
+EMERGENCY_TEMP_ENV     = "GHISDIAG_EMERGENCY_TEMP_C"
+EMERGENCY_TEMP_MIN_C   = 60.0
+EMERGENCY_TEMP_MAX_C   = 99.0
+
+
+def _default_emergency_temp() -> float:
+    """Seuil d'urgence CPU : valeur par defaut, ou surcharge d'environnement
+    bornee. Toute valeur illisible ou hors bornes retombe sur le defaut."""
+    raw = os.environ.get(EMERGENCY_TEMP_ENV, "").strip()
+    if not raw:
+        return DEFAULT_EMERGENCY_TEMP_C
+    try:
+        val = float(raw.replace(",", "."))
+    except ValueError:
+        logger.warning("%s=%r illisible — seuil par defaut (%.0f C).",
+                       EMERGENCY_TEMP_ENV, raw, DEFAULT_EMERGENCY_TEMP_C)
+        return DEFAULT_EMERGENCY_TEMP_C
+    if not (EMERGENCY_TEMP_MIN_C <= val <= EMERGENCY_TEMP_MAX_C):
+        logger.warning("%s=%.0f hors bornes [%.0f, %.0f] — seuil par defaut.",
+                       EMERGENCY_TEMP_ENV, val,
+                       EMERGENCY_TEMP_MIN_C, EMERGENCY_TEMP_MAX_C)
+        return DEFAULT_EMERGENCY_TEMP_C
+    logger.warning("Seuil d'arret d'urgence force a %.0f C par %s.",
+                   val, EMERGENCY_TEMP_ENV)
+    return val
 
 # Seuil d'arret d'urgence GPU par defaut. Quand NVML expose le seuil slowdown du
 # GPU (`temp_slowdown_c`), le seuil effectif devient min(ce plafond, slowdown -
@@ -82,6 +124,30 @@ def _gpu_throttle_floor(slowdown_c) -> float:
 # regime etabli (plateau / fin de charge) et debut etabli (apres la montee).
 STEADY_WINDOW = (0.66, 1.0)
 EARLY_WINDOW  = (0.10, 0.40)
+
+# Debut BRUT de la charge : la fenetre turbo (Intel PL2, "tau"), avant que le CPU
+# ne retombe sur sa puissance soutenue. EARLY_WINDOW commence deja apres — c'est
+# voulu pour la detection de throttling thermique, mais ca rend la limite de
+# PUISSANCE invisible : sur une charge de 300 s, a 10 % (30 s) le CPU est deja
+# retombe a PL1. Il faut donc comparer le regime etabli a CETTE fenetre-ci.
+BURST_WINDOW  = (0.0, 0.10)
+
+# Fraction de la duree de charge PREVUE en dessous de laquelle la phase de charge
+# est jugee ecourtee : le regime etabli n'a pas eu le temps de s'installer, et
+# tout ce qu'on appellerait « plateau » n'est que le sommet d'une rampe.
+LOAD_COMPLETE_FRACTION = 0.9
+
+# Charge CPU (%) a partir de laquelle le generateur est considere comme
+# reellement en train de tourner. Le lancement n'est PAS instantane : vu en
+# atelier sur un MSI (Core Ultra), 39 s se sont ecoulees entre le debut de la
+# phase et la premiere seconde a 100 % — le CPU y etait a 603 MHz, au repos.
+# Decouper les fenetres de frequence sur le debut de la PHASE ferait alors
+# porter le « burst turbo » sur une machine inactive.
+LOAD_ACTIVE_PCT = 90.0
+
+# Retard de demarrage au-dela duquel il vaut la peine de le signaler : le temps
+# perdu ampute d'autant le regime etabli reellement observe.
+LOAD_RAMP_WARN_SEC = 10.0
 
 # Marge de "retour au calme" : le refroidissement est considere termine quand la
 # temperature redescend a T_idle + cette marge.
@@ -129,7 +195,9 @@ class BenchConfig:
     threads: int             = 0                 # 0 = tous les coeurs logiques (cpu)
     kernel: str              = "python"          # python (FPU) | avx (stress numpy)
     sample_interval_ms: int  = 2000              # periode d'echantillonnage
-    emergency_temp_c: float  = DEFAULT_EMERGENCY_TEMP_C
+    # default_factory : la surcharge d'environnement doit etre lue au moment ou
+    # la config est construite, pas a l'import du module.
+    emergency_temp_c: float  = field(default_factory=_default_emergency_temp)
     output_dir: Optional[str] = None             # None = dossier standard
     target: str              = "cpu"             # cpu | gpu
     gpu_adapter: Optional[str] = None            # index ou sous-chaine du nom
@@ -150,7 +218,11 @@ class BenchConfig:
             threads=max(0, int(self.threads)),
             kernel=kernel,
             sample_interval_ms=max(500, int(self.sample_interval_ms)),
-            emergency_temp_c=float(self.emergency_temp_c),
+            # Borne aussi une valeur passee explicitement : personne ne doit
+            # pouvoir demander un garde-fou au-dela du TjMax.
+            emergency_temp_c=min(EMERGENCY_TEMP_MAX_C,
+                                 max(EMERGENCY_TEMP_MIN_C,
+                                     float(self.emergency_temp_c))),
             output_dir=self.output_dir,
             target=target,
             gpu_adapter=self.gpu_adapter,
@@ -457,6 +529,32 @@ def _slice_by_fraction(samples: list[dict], start_f: float, end_f: float) -> lis
     return [s for s in samples if lo <= s["t"] <= hi]
 
 
+def _effective_load(load: list[dict]) -> list[dict]:
+    """Echantillons a partir du moment ou le CPU est REELLEMENT charge.
+
+    Toutes les fenetres de frequence (burst / debut etabli / regime etabli) se
+    decoupent la-dessus, et non sur la phase de charge brute : le generateur
+    peut mettre des dizaines de secondes a demarrer, et ces secondes-la ne
+    disent rien de la machine sous charge.
+
+    Repli sur la phase entiere si aucun echantillon n'atteint le seuil (charge
+    CPU non lue, ou generateur qui n'a jamais demarre) : mieux vaut une fenetre
+    imparfaite que pas de mesure du tout.
+    """
+    for i, s in enumerate(load):
+        if (s.get("cpu_load") or 0) >= LOAD_ACTIVE_PCT:
+            return load[i:]
+    return load
+
+
+def phase_duration(samples: list[dict], phase: str) -> Optional[float]:
+    """Duree REELLE d'une phase, mesuree sur les echantillons — par opposition a
+    la config, qui ne dit que ce qui etait prevu. None si moins de 2 points."""
+    ts = [s["t"] for s in samples
+          if s.get("phase") == phase and s.get("t") is not None]
+    return round(max(ts) - min(ts), 1) if len(ts) >= 2 else None
+
+
 def _time_to_recover(cool: list[dict], baseline_c: Optional[float],
                      key: str) -> Optional[float]:
     """Delai (s) depuis le debut du refroidissement pour repasser sous
@@ -490,6 +588,23 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     delta_c = (round(load_plateau_c - idle_c, 1)
                if (load_plateau_c is not None and idle_c is not None) else None)
 
+    # CHARGE ECOURTEE : plateau et deltaT n'ont plus de sens.
+    #
+    # STEADY_WINDOW prend le dernier tiers de la phase de charge. Sur une charge
+    # menee a son terme, c'est le regime etabli. Sur une charge coupee au bout de
+    # 25 s sur 300 prevues (arret d'urgence, vu en atelier), ce « dernier tiers »
+    # n'est que le sommet d'une rampe 62 -> 96 C : le publier comme « plateau »
+    # revient a inventer un regime etabli qui n'a jamais existe — et deltaT en
+    # herite. On les met a None plutot que de mentir. load_max_c, lui, RESTE
+    # valide : le pic a bien ete atteint, c'est meme lui qui a coupe le test.
+    load_sec_cfg  = int(getattr(config, "load_sec", 0) or 0)
+    load_sec_real = phase_duration(samples, BenchPhase.LOAD.value)
+    load_truncated = bool(load_sec_real is not None and load_sec_cfg > 0
+                          and load_sec_real < load_sec_cfg * LOAD_COMPLETE_FRACTION)
+    if load_truncated:
+        load_plateau_c = None
+        delta_c = None
+
     # GPU (secondaire).
     gpu_idle_c = _median(_vals(idle_steady, "gpu"))
     gpu_vals   = _vals(load, "gpu")
@@ -502,16 +617,29 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
                        default=None)
 
     # Frequence / throttling : on compare le debut etabli (10-40 %) a la fin
-    # (dernier tiers) de la phase de charge.
-    clock_early = _median(_vals(_slice_by_fraction(load, *EARLY_WINDOW), "clock"))
-    clock_late  = _median(_vals(_slice_by_fraction(load, *STEADY_WINDOW), "clock"))
-    clock_vals  = _vals(load, "clock")
+    # (dernier tiers) de la charge REELLE — voir _effective_load.
+    load_eff = _effective_load(load)
+    load_ramp_sec = (round(load_eff[0]["t"] - load[0]["t"], 1)
+                     if load and load_eff and load_eff is not load else 0.0)
+    clock_early = _median(_vals(_slice_by_fraction(load_eff, *EARLY_WINDOW), "clock"))
+    clock_late  = _median(_vals(_slice_by_fraction(load_eff, *STEADY_WINDOW), "clock"))
+    clock_vals  = _vals(load_eff, "clock")
     clock_max_mhz = round(max(clock_vals)) if clock_vals else None
 
-    throttling = False
-    power_limited = False
+    # TRI-ETAT VOULU : None = "on n'a pas pu mesurer", et surtout PAS False.
+    # Ces deux drapeaux se deduisent UNIQUEMENT d'une comparaison de frequences ;
+    # sans frequence exploitable il n'y a rien a conclure. Ils valaient False par
+    # defaut jusqu'ici : sur une machine qui ne remonte aucune frequence (vu en
+    # atelier sur Alder Lake-P, `clock: null` du debut a la fin), le rapport
+    # affirmait « throttling : non » sans avoir rien mesure — un outil de
+    # diagnostic qui rassure a tort. Tout consommateur doit distinguer les trois
+    # cas (oui / non / indetermine) et ne jamais faire `bool(...)` dessus.
+    throttling: Optional[bool] = None
+    power_limited: Optional[bool] = None
     clock_drop_pct = None
     if clock_early and clock_late:
+        throttling = False
+        power_limited = False
         clock_drop_pct = round((clock_early - clock_late) / clock_early * 100, 1)
         if clock_late < clock_early * (1 - THROTTLE_CLOCK_DROP):
             # Chute de frequence soutenue. A haute temperature (proche du TjMax)
@@ -524,6 +652,29 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
             else:
                 power_limited = True
 
+    # Limite de puissance (PL1 / TDP) : comparer le BURST turbo au regime etabli.
+    #
+    # La comparaison ci-dessus (debut etabli vs fin) ne peut PAS la voir : a 10 %
+    # d'une charge de 300 s, le CPU est deja retombe sur sa puissance soutenue,
+    # donc les deux fenetres montrent la meme frequence et `clock_drop_pct` vaut
+    # 0. Mesure atelier sur i5-1240P : 2715 MHz pendant le burst, 2112 MHz en
+    # regime etabli (-22 %) a 28,1 W pile — soit son PL1 — et HWiNFO signalait la
+    # limite de puissance sur 100 % du regime etabli quand Ghisdiag rendait
+    # `power_limited: false`.
+    #
+    # La temperature de reference est celle du PLATEAU, pas le maximum : le pic
+    # appartient au burst turbo, le classer thermique ferait passer un bridage de
+    # puissance parfaitement normal pour un defaut de refroidissement.
+    clock_burst = _median(_vals(_slice_by_fraction(load_eff, *BURST_WINDOW), "clock"))
+    clock_burst_drop_pct = None
+    if clock_burst and clock_late:
+        clock_burst_drop_pct = round((clock_burst - clock_late) / clock_burst * 100, 1)
+        if (power_limited is False and not throttling
+                and clock_late < clock_burst * (1 - THROTTLE_CLOCK_DROP)
+                and load_plateau_c is not None
+                and load_plateau_c < THROTTLE_TEMP_FLOOR_C):
+            power_limited = True
+
     # Temps de retour au calme : depuis le debut du refroidissement, delai pour
     # repasser sous T_idle + marge. None si jamais atteint dans la fenetre.
     cooldown_sec = _time_to_recover(cool, idle_c, "cpu")
@@ -533,6 +684,9 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "load_max_c":      load_max_c,
         "load_plateau_c":  load_plateau_c,
         "delta_c":         delta_c,
+        "load_truncated":  load_truncated,   # True = plateau/deltaT invalides
+        "load_sec_real":   load_sec_real,
+        "load_ramp_sec":   load_ramp_sec,    # retard de demarrage du generateur
         "cpu_load_avg":    cpu_load_avg,
         "gpu_idle_c":      gpu_idle_c,
         "gpu_max_c":       gpu_max_c,
@@ -540,6 +694,8 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
         "fan_load_rpm":    fan_load_rpm,
         "clock_max_mhz":   clock_max_mhz,
         "clock_drop_pct":  clock_drop_pct,
+        "clock_burst_drop_pct": clock_burst_drop_pct,  # turbo -> regime etabli
+        "clock_samples":   len(clock_vals),   # 0 = throttling indeterminable
         "throttling":      throttling,
         "power_limited":   power_limited,
         "cooldown_sec":    cooldown_sec,
@@ -595,19 +751,28 @@ def _gpu_metrics(idle_steady: list[dict], load: list[dict], cool: list[dict],
 
     gpu_vals_load = _vals(load, "gpu")
     gpu_max = max(gpu_vals_load) if gpu_vals_load else None
-    gpu_throttling = False
-    gpu_power_limited = False
-    if thermal_reason_seen:
-        gpu_throttling = True
-    if gpu_clock_drop_pct is not None and clk_late < clk_early * (1 - THROTTLE_CLOCK_DROP):
-        # Chute de clock soutenue : thermique si chaud (ou raison NVML), sinon
-        # limite de puissance (normale : power cap constructeur).
-        if gpu_throttling or (gpu_max or 0) >= floor:
+
+    # Meme tri-etat que cote CPU (None = indetermine). Cote GPU on dispose de
+    # DEUX sources : les raisons de bridage NVML (la cle `gpu_throttle` n'est
+    # posee sur l'echantillon que si NVML a repondu) et la chute de clock. Il
+    # suffit de l'une des deux pour pouvoir conclure ; sans aucune des deux
+    # (AMD/Intel sans NVML et clock illisible), on ne conclut pas.
+    nvml_answered = any("gpu_throttle" in s for s in load)
+    measurable = nvml_answered or gpu_clock_drop_pct is not None
+    gpu_throttling: Optional[bool] = False if measurable else None
+    gpu_power_limited: Optional[bool] = False if measurable else None
+    if measurable:
+        if thermal_reason_seen:
             gpu_throttling = True
-        else:
+        if gpu_clock_drop_pct is not None and clk_late < clk_early * (1 - THROTTLE_CLOCK_DROP):
+            # Chute de clock soutenue : thermique si chaud (ou raison NVML),
+            # sinon limite de puissance (normale : power cap constructeur).
+            if gpu_throttling or (gpu_max or 0) >= floor:
+                gpu_throttling = True
+            else:
+                gpu_power_limited = True
+        elif power_reason_seen and not gpu_throttling:
             gpu_power_limited = True
-    elif power_reason_seen and not gpu_throttling:
-        gpu_power_limited = True
 
     # Retour au calme de la temperature GPU.
     gpu_cooldown_sec = _time_to_recover(cool, gpu_idle_c, "gpu")
@@ -620,11 +785,36 @@ def _gpu_metrics(idle_steady: list[dict], load: list[dict], cool: list[dict],
         "gpu_hotspot_max_c":  gpu_hotspot_max_c,
         "gpu_clock_max_mhz":  gpu_clock_max_mhz,
         "gpu_clock_drop_pct": gpu_clock_drop_pct,
+        "gpu_clock_samples":  len(clk_vals),
         "gpu_slowdown_c":     gpu_slowdown_c,
         "gpu_throttling":     gpu_throttling,
         "gpu_power_limited":  gpu_power_limited,
         "gpu_cooldown_sec":   gpu_cooldown_sec,
     }
+
+
+def throttling_state(metrics: dict, target: str = "cpu") -> Optional[bool]:
+    """Throttling thermique REELLEMENT mesure : True / False / None.
+
+    Unique lecture autorisee du drapeau `throttling` (ou `gpu_throttling`) par
+    l'UI et la comparaison : un simple `bool(metrics["throttling"])` ecraserait
+    l'indetermine en « non », c'est-a-dire en affirmation d'absence de defaut.
+
+    Retro-compatibilite schema v1 : le drapeau y valait False par defaut, meme
+    sur une session ou aucune frequence n'avait ete relevee. On requalifie donc
+    ce False en None quand la session ne contient AUCUNE frequence de charge —
+    sans frequence, le False n'a jamais ete mesure. (Les sessions v2 ecrivent
+    deja None dans ce cas ; ce repli ne sert qu'aux sessions archivees.)
+    """
+    gpu = (target == "gpu")
+    val = metrics.get("gpu_throttling" if gpu else "throttling")
+    if val is None:
+        return None
+    if ("gpu_clock_samples" if gpu else "clock_samples") in metrics:
+        return bool(val)      # session v2 : le drapeau est deja tri-etat
+    if not val and not metrics.get("gpu_clock_max_mhz" if gpu else "clock_max_mhz"):
+        return None           # session v1 sans aucune frequence : non mesure
+    return bool(val)          # un True v1 reste un True (raison NVML cote GPU)
 
 
 def _machine_info() -> dict:

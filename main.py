@@ -60,9 +60,12 @@ try:
         list_sessions as bench_list_sessions,
         load_session as bench_load_session,
         THROTTLE_CLOCK_DROP, THROTTLE_TEMP_FLOOR_C,
-        DEFAULT_GPU_EMERGENCY_TEMP_C, _gpu_throttle_floor,
+        DEFAULT_GPU_EMERGENCY_TEMP_C, DEFAULT_EMERGENCY_TEMP_C,
+        _gpu_throttle_floor, throttling_state, _default_emergency_temp,
+        LOAD_RAMP_WARN_SEC,
     )
-    from thermal_compare import compare_sessions, generate_comparison_report
+    from thermal_compare import (compare_sessions, generate_comparison_report,
+                                 _protocol_diff)
     _HAS_BENCH = True
 except Exception:
     _HAS_BENCH = False
@@ -3675,6 +3678,10 @@ class GhisdiagApp(tk.Tk):
         self._bench_mode = "single"        # single | compare
         self._bench_compare_data = None    # (avant_samples, apres_samples)
         self._bench_target = "cpu"         # cible du test en cours / affiché
+        # Seuil d'arrêt d'urgence CPU du test affiché : surchargeable, donc
+        # jamais écrit en dur dans le graphe (la ligne rouge doit être là où la
+        # coupure a réellement eu lieu).
+        self._bench_emergency_c = DEFAULT_EMERGENCY_TEMP_C
         self._bench_gpu_detect = None      # None = détection en cours ; dict sinon
         self._bench_gpu_detect_running = False
         self._bench_sess_filter_style()
@@ -3886,7 +3893,8 @@ class GhisdiagApp(tk.Tk):
                 f"Ce test sollicite VOLONTAIREMENT le processeur à {charge_desc} "
                 f"pendant environ {total_min} min, afin de "
                 "mesurer son comportement thermique puis son refroidissement.\n\n"
-                "Des sécurités sont prévues — arrêt automatique au-delà de 95 °C et "
+                "Des sécurités sont prévues — arrêt automatique au-delà de "
+                f"{_default_emergency_temp():.0f} °C et "
                 "arrêt manuel possible à tout moment. Elles réduisent le risque mais "
                 "NE l'éliminent PAS : selon l'état réel du matériel (poussière, pâte "
                 "thermique dégradée, ventilateur ou capteur défaillant, composants "
@@ -3923,6 +3931,7 @@ class GhisdiagApp(tk.Tk):
         self._bench_samples   = []
         self._bench_mode = "single"
         self._bench_compare_data = None
+        self._bench_emergency_c = cfg.emergency_temp_c
         self._bench_total_sec = cfg.idle_sec + cfg.load_sec + cfg.cooldown_sec
         b1 = cfg.idle_sec
         b2 = cfg.idle_sec + cfg.load_sec
@@ -4037,7 +4046,10 @@ class GhisdiagApp(tk.Tk):
                        "thermique confirmé par le pilote) : la charge a été coupée "
                        "automatiquement. Le refroidissement a tout de même été mesuré.")
             else:
-                msg = ("Température CPU au-delà de 95 °C : la charge a été coupée "
+                seuil = (session.get("config") or {}).get("emergency_temp_c")
+                seuil_txt = (f"{seuil:.0f} °C" if isinstance(seuil, (int, float))
+                             else "le seuil de sécurité")
+                msg = (f"Température CPU au-delà de {seuil_txt} : la charge a été coupée "
                        "automatiquement. Le refroidissement a tout de même été mesuré.")
             messagebox.showwarning("Arrêt d'urgence", msg)
 
@@ -4103,6 +4115,9 @@ class GhisdiagApp(tk.Tk):
         cfg = session.get("config", {})
         # Cible de la session affichée (pilote l'emphase GPU/CPU du graphe).
         self._bench_target = cfg.get("target", "cpu")
+        seuil = cfg.get("emergency_temp_c")
+        self._bench_emergency_c = (float(seuil) if isinstance(seuil, (int, float))
+                                   else DEFAULT_EMERGENCY_TEMP_C)
         b1 = cfg.get("idle_sec", 0)
         b2 = b1 + cfg.get("load_sec", 0)
         self._bench_total_sec = max(1, b2 + cfg.get("cooldown_sec", 0))
@@ -4147,11 +4162,12 @@ class GhisdiagApp(tk.Tk):
                     f"{cmp.get('adapter_after')}). Un avant / après n'a de "
                     "sens que sur le même matériel.")
             else:
+                diff = ", ".join(_protocol_diff(cmp)) or "protocole"
                 messagebox.showwarning(
                     "Comparaison impossible",
-                    "Les deux sessions n'ont pas le même protocole (cible "
-                    "CPU/GPU, durée ou intensité de charge différente). Ne "
-                    "comparez que des tests identiques.")
+                    "Les deux sessions n'ont pas été menées avec le même test.\n\n"
+                    f"Ce qui diffère : {diff}.\n\n"
+                    "Ne comparez que des sessions au protocole identique.")
             return
 
         before, after = cmp["before"], cmp["after"]
@@ -4204,7 +4220,13 @@ class GhisdiagApp(tk.Tk):
             line2 += "    •    throttling éliminé"
         elif thr["appeared"]:
             line2 += "    •    throttling apparu"
-        return f"Verdict : {cmp['verdict']}\n{line2}"
+        elif not thr["measured"]:
+            line2 += "    •    throttling non mesuré"
+        # Conditions de mesure : afficher les reserves ICI aussi, pas seulement
+        # dans le rapport HTML — c'est cette ligne que l'atelier lit en premier.
+        notes = "".join(f"\n{'⚠' if i['level'] == 'crit' else 'ℹ'} {i['text']}"
+                        for i in (cmp.get("issues") or ())[:3])
+        return f"Verdict : {cmp['verdict']}\n{line2}{notes}"
 
     # -- Mise en forme des métriques ------------------------------------------
 
@@ -4218,7 +4240,10 @@ class GhisdiagApp(tk.Tk):
         dts = f"{d:+.0f}°C" if d is not None else "—"
         cool = m.get("cooldown_sec")
         cs = f"{cool:.0f} s" if cool is not None else "non atteint"
-        thr = "oui" if m.get("throttling") else "non"
+        # Tri-etat : « non » est une AFFIRMATION (mesuree, throttling ecarte) ;
+        # sans frequence CPU on n'a pas le droit de la faire.
+        thr_state = throttling_state(m, "cpu")
+        thr = "indéterminé" if thr_state is None else ("oui" if thr_state else "non")
         fanl = m.get("fan_load_rpm")
         fans = f"{fanl} tr/min" if fanl else "—"
         line1 = (f"T repos {deg(m.get('idle_c'))}    •    T max {deg(m.get('load_max_c'))}"
@@ -4226,6 +4251,24 @@ class GhisdiagApp(tk.Tk):
         line2 = (f"Throttling thermique : {thr}    •    Retour au calme : {cs}"
                  f"    •    Ventilo en charge : {fans}")
         note = ""
+        if m.get("load_truncated"):
+            reel = m.get("load_sec_real")
+            prevu = (session.get("config") or {}).get("load_sec")
+            duree = (f" ({reel:.0f} s sur {prevu} s prévues)"
+                     if isinstance(reel, (int, float)) and prevu else "")
+            note += (f"\nℹ Plateau et ΔT non calculés : la charge a été écourtée"
+                     f"{duree}. Le régime établi n'a pas été atteint — la "
+                     "température maximale, elle, reste valable.")
+        ramp = m.get("load_ramp_sec")
+        if isinstance(ramp, (int, float)) and ramp >= LOAD_RAMP_WARN_SEC:
+            note += (f"\nℹ Le générateur de charge a mis {ramp:.0f} s à démarrer : "
+                     "la machine est restée au repos pendant ce temps. Les "
+                     "fréquences sont mesurées à partir de la charge réelle, "
+                     "mais le régime établi a duré d'autant moins longtemps.")
+        if thr_state is None:
+            note += ("\nℹ Fréquence CPU non lisible sur cette machine : le "
+                     "throttling n'a pas pu être mesuré — il n'est ni confirmé, "
+                     "ni écarté. Les températures, elles, restent valables.")
         # Limite de puissance (PL1/TDP) : la frequence a chute a temperature
         # moderee. Explique pourquoi la temperature plafonne — ce n'est PAS un
         # defaut de refroidissement (a distinguer du throttling thermique).
@@ -4233,10 +4276,19 @@ class GhisdiagApp(tk.Tk):
             note += ("\nℹ Limite de puissance (PL1/TDP) atteinte : le CPU bride sa "
                      "fréquence à charge soutenue. Normal — la température plafonne "
                      "par conception, ce n'est pas un souci de refroidissement.")
+        # L'interruption passe EN TETE (c'est la reserve la plus lourde) mais ne
+        # remplace plus les autres notes : elles restent vraies.
         if session.get("emergency"):
-            note = "\n⚠ Arrêt d'urgence à 95 °C — résultats partiels."
+            # Seuil lu dans la session, jamais ecrit en dur : il est
+            # surchargeable (GHISDIAG_EMERGENCY_TEMP_C) et annoncer « 95 °C »
+            # sur un run coupe a 99 serait exactement le genre d'affirmation
+            # fausse que ce module doit bannir.
+            seuil = (session.get("config") or {}).get("emergency_temp_c")
+            seuil_txt = f" à {seuil:.0f} °C" if isinstance(seuil, (int, float)) else ""
+            note = (f"\n⚠ Arrêt d'urgence{seuil_txt} — résultats partiels : la charge "
+                    "a été coupée avant son terme.") + note
         elif session.get("aborted"):
-            note = "\n⚠ Test interrompu — résultats partiels."
+            note = "\n⚠ Test interrompu — résultats partiels." + note
         return f"{line1}\n{line2}{note}"
 
     @staticmethod
@@ -4248,7 +4300,8 @@ class GhisdiagApp(tk.Tk):
         dts = f"{d:+.0f}°C" if d is not None else "—"
         cool = m.get("gpu_cooldown_sec")
         cs = f"{cool:.0f} s" if cool is not None else "non atteint"
-        thr = "oui" if m.get("gpu_throttling") else "non"
+        thr_state = throttling_state(m, "gpu")
+        thr = "indéterminé" if thr_state is None else ("oui" if thr_state else "non")
         clk = m.get("gpu_clock_max_mhz"); drop = m.get("gpu_clock_drop_pct")
         clks = "—"
         if clk:
@@ -4267,6 +4320,10 @@ class GhisdiagApp(tk.Tk):
         if hot is not None:
             line2 += f"    •    hotspot {hot:.0f}°C"
         note = ""
+        if thr_state is None:
+            note += ("\nℹ Ni fréquence ni raison de bridage lisibles sur cette "
+                     "carte : le throttling n'a pas pu être mesuré — il n'est ni "
+                     "confirmé, ni écarté.")
         # Limite de puissance (power cap constructeur) : la carte bride sa
         # frequence par conception — a distinguer d'un souci de refroidissement.
         if m.get("gpu_power_limited") and not m.get("gpu_throttling"):
@@ -4275,9 +4332,9 @@ class GhisdiagApp(tk.Tk):
                      "n'est pas un souci de refroidissement.")
         if session.get("emergency"):
             note = ("\n⚠ Arrêt d'urgence GPU (seuil de sécurité ou bridage "
-                    "thermique confirmé) — résultats partiels.")
+                    "thermique confirmé) — résultats partiels.") + note
         elif session.get("aborted"):
-            note = "\n⚠ Test interrompu — résultats partiels."
+            note = "\n⚠ Test interrompu — résultats partiels." + note
         return f"{line1}\n{line2}{note}"
 
     # -- Graphe (tk.Canvas) ----------------------------------------------------
@@ -4334,10 +4391,11 @@ class GhisdiagApp(tk.Tk):
             c.create_line(x0, yy, x1, yy, fill=BORDER)
             c.create_text(x0 - 6, yy, text=str(temp), anchor="e",
                           fill=FG_MUTED, font=("Segoe UI", 8))
-        # Ligne du seuil d'arrêt d'urgence : 95 °C (CPU) ou plafond GPU (90 °C —
-        # le seuil réel peut être abaissé par le slowdown constructeur via NVML).
+        # Ligne du seuil d'arrêt d'urgence : celui du test affiché (CPU, donc
+        # surchargeable) ou plafond GPU (90 °C — le seuil réel peut être abaissé
+        # par le slowdown constructeur via NVML).
         limit = (DEFAULT_GPU_EMERGENCY_TEMP_C if self._bench_target == "gpu"
-                 else 95.0)
+                 else getattr(self, "_bench_emergency_c", DEFAULT_EMERGENCY_TEMP_C))
         ye = Y(limit)
         c.create_line(x0, ye, x1, ye, fill=RED, dash=(4, 3))
         c.create_text(x1 - 2, ye - 7, text=f"{limit:.0f} °C", anchor="e",

@@ -4,6 +4,73 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [Non publié]
+
+### 🌡️ Bench thermique — ne plus affirmer ce qui n'a pas été mesuré
+
+Le bench pouvait rendre des conclusions qu'il n'avait jamais mesurées. Sur un
+portable dont Windows ne remonte aucune fréquence CPU, le rapport affichait
+« Throttling thermique : **non** » — une affirmation d'absence de défaut, alors
+qu'aucune fréquence n'avait été relevée de tout le test. Un outil de diagnostic
+qui rassure à tort fait suspecter du matériel sain, ou dédouane du matériel qui
+chauffe.
+
+- **Throttling : trois états au lieu de deux.** `throttling` et `power_limited`
+  (et leurs équivalents GPU) valent désormais **oui / non / indéterminé**. Ils
+  ne se déduisent que d'une comparaison de fréquences ; sans fréquence
+  exploitable, l'outil dit qu'il ne sait pas. L'interface affiche
+  « indéterminé » et explique pourquoi. Côté GPU, une réponse du pilote NVML
+  suffit à conclure même sans fréquence lisible.
+- **Les sessions déjà enregistrées sont relues correctement** : un
+  `throttling: non` archivé sans aucune fréquence relevée est requalifié en
+  indéterminé à l'affichage — inutile de refaire les tests passés.
+- **La comparaison avant/après contrôle enfin les conditions de mesure.** Elle
+  ne regardait que le protocole *demandé* (durées, intensité) et ignorait
+  totalement ce qui s'était *réellement passé*. Sont désormais comparés et
+  signalés :
+  - le **noyau de charge** (`avx` / `python`), qui fait maintenant partie du
+    protocole : ces deux charges ne dégagent pas la même chaleur ;
+  - les **arrêts d'urgence**, **interruptions** et **refroidissements écourtés** ;
+  - la **durée de charge réellement tenue** face à celle prévue — une charge
+    coupée à 25 s sur 300 s n'a atteint aucun régime établi, son « plateau »
+    n'est que le sommet d'une montée en température.
+- Quand ces conditions ne sont pas comparables, le verdict ne chiffre plus de
+  gain : il annonce **« comparaison non concluante »** et détaille pourquoi.
+  Le rapport HTML gagne un tableau *« ce qui s'est réellement passé »*, affiché
+  systématiquement — y compris quand tout va bien.
+- **Plus de « plateau » sur une charge écourtée.** Le plateau et le ΔT étaient
+  calculés sur le dernier tiers de la phase de charge. Sur un test coupé au bout
+  de 25 s sur 300 prévues, ce « dernier tiers » n'était que le sommet d'une
+  rampe : l'outil annonçait un régime établi qui n'avait jamais existé. Les deux
+  valeurs sont désormais laissées vides, avec l'explication. La température
+  **maximale**, elle, reste affichée — elle a bien été atteinte.
+- **La limite de puissance (PL1/TDP) est enfin détectée.** Elle se déduisait
+  d'une chute de fréquence entre le début et la fin de la charge — or sur un
+  portable, le processeur est déjà retombé sur sa puissance soutenue au bout de
+  30 secondes : les deux mesures étaient identiques et la limitation restait
+  invisible. La comparaison se fait maintenant avec la **fenêtre turbo** du tout
+  début de charge. Concrètement, un portable qui plafonne à 85 °C parce qu'il
+  applique sa limite de puissance affiche enfin *« Normal — ce n'est pas un
+  souci de refroidissement »* au lieu de laisser croire à une surchauffe.
+- **Seuil d'arrêt d'urgence réglable** par la variable d'environnement
+  `GHISDIAG_EMERGENCY_TEMP_C` (bornée à 60-99 °C, jamais au-delà du TjMax). Sur
+  un portable Intel P-series, la première minute de charge se passe en turbo
+  bien au-dessus de la puissance soutenue : couper à 95 °C empêchait d'atteindre
+  le régime établi, donc de mesurer ce que le test est censé mesurer. Les quatre
+  endroits de l'interface qui annonçaient « 95 °C » en dur affichent désormais
+  le seuil réellement appliqué.
+
+### 🌡️ Bench thermique — fréquences CPU sur les Intel récents
+
+- **Les processeurs hybrides remontent enfin leur fréquence.** Sur Alder Lake et
+  suivants (12ᵉ génération et plus), les capteurs se nomment `P-Core #N` et
+  `E-Core #N` ; Ghisdiag ne cherchait que `CPU Core #N` et n'en trouvait aucun.
+  Aucune fréquence n'était donc relevée, ce qui désactivait **silencieusement**
+  toute la détection de throttling sur ces machines — tout en affichant quand
+  même « Throttling : non ». Corrigé côté fréquences et températures.
+
+---
+
 ## [2.0.0] — 2026-07-27
 
 > **Ghisdiag change de format de distribution.** L'application n'est plus un

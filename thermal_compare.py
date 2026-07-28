@@ -5,7 +5,11 @@ Confronte une session « avant » et une session « après » intervention
 (nettoyage, changement de pâte thermique / pads) — cible CPU ou GPU :
 
   - controle que les deux suivent le MEME protocole, y compris la cible
-    cpu|gpu et, pour un bench GPU, le MEME adaptateur (sinon invalide) ;
+    cpu|gpu, le noyau de charge et, pour un bench GPU, le MEME adaptateur
+    (sinon invalide) ;
+  - controle aussi que les deux se sont DEROULEES pareil — arret d'urgence,
+    interruption, charge reellement tenue, refroidissement complet — et le dit
+    (`issues`) : un protocole identique sur le papier ne garantit rien ;
   - calcule la carte des gains sur les metriques de la cible (ΔT repos / max /
     plateau, Δ retour au calme, throttling elimine ; + hotspot / chute de
     clock / power pour le GPU) ;
@@ -15,7 +19,9 @@ Confronte une session « avant » et une session « après » intervention
 
 Garde-fou honnêteté : la température ambiante n'est pas contrôlée. La mesure la
 plus fiable est le **ΔT** (écart à la température de repos), insensible à la
-température de la pièce, contrairement aux températures absolues.
+température de la pièce, contrairement aux températures absolues. Et rien de ce
+qui n'a pas été mesuré n'est affirmé : un throttling non mesurable est rendu
+« indéterminé », jamais « absent ».
 """
 
 import html
@@ -24,7 +30,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from thermal_bench import DEFAULT_EMERGENCY_TEMP_C, DEFAULT_GPU_EMERGENCY_TEMP_C
+from thermal_bench import (DEFAULT_EMERGENCY_TEMP_C, DEFAULT_GPU_EMERGENCY_TEMP_C,
+                           LOAD_COMPLETE_FRACTION, phase_duration,
+                           throttling_state)
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +82,123 @@ def _protocol(session: dict) -> tuple:
     # protocole : comparer un bench CPU a un bench GPU n'a aucun sens — le
     # verdict porterait sur des temperatures CPU relevees incidemment pendant
     # une chauffe GPU. La comparaison GPU<->GPU complete arrive avec M5.
+    #
+    # Le NOYAU de charge en fait partie aussi (cible CPU) : `avx` (stress numpy,
+    # unites vectorielles) et `python` (boucle FPU) ne chauffent pas du tout de
+    # la meme facon. Comparer l'un a l'autre mesure le changement de noyau, pas
+    # l'effet de l'intervention. Sans objet en cible GPU (charge = shader D3D11).
     c = _cfg(session)
-    return (c.get("target", "cpu"),
+    target = c.get("target", "cpu")
+    return (target,
             int(c.get("idle_sec", 0)), int(c.get("load_sec", 0)),
-            int(c.get("cooldown_sec", 0)), int(c.get("intensity", 0)))
+            int(c.get("cooldown_sec", 0)), int(c.get("intensity", 0)),
+            _kernel(session) or "")
+
+
+# Libelles des champs de _protocol(), dans l'ordre du tuple.
+_PROTO_FIELDS = ("cible", "durée de repos", "durée de charge",
+                 "durée de refroidissement", "intensité", "noyau de charge")
+
+
+def _protocol_diff(comparison: dict) -> list[str]:
+    """Champs de protocole qui different entre les deux sessions."""
+    return [name for name, b, a in zip(_PROTO_FIELDS,
+                                       comparison["protocol_before"],
+                                       comparison["protocol_after"]) if b != a]
+
+
+def _kernel(session: dict) -> Optional[str]:
+    """Noyau de charge CPU de la session (None si cible GPU : sans objet)."""
+    c = _cfg(session)
+    if c.get("target", "cpu") != "cpu":
+        return None
+    return c.get("kernel", "python")
 
 
 def _session_total(session: dict) -> int:
     c = _cfg(session)
     return int(c.get("idle_sec", 0)) + int(c.get("load_sec", 0)) + int(c.get("cooldown_sec", 0))
+
+
+# --- Conditions reelles de deroulement --------------------------------------
+#
+# Un protocole identique SUR LE PAPIER (memes durees, meme intensite) ne suffit
+# pas : encore faut-il que les deux sessions se soient DEROULEES pareil. Une
+# session coupee par un arret d'urgence a 25 s sur 300 s de charge prevues n'a
+# jamais atteint de regime etabli — son « plateau » n'est que le sommet d'une
+# rampe. La confronter a un run complet produit un ecart de temperature qui ne
+# doit RIEN a l'intervention. Ces conditions etaient totalement ignorees ici.
+
+def _conditions(session: dict) -> dict:
+    """Etat de deroulement d'une session : ce qui la rend comparable ou non."""
+    load_cfg = int(_cfg(session).get("load_sec", 0))
+    load_real = phase_duration(session.get("samples") or [], "load")
+    return {
+        "kernel":             _kernel(session),
+        "emergency":          bool(session.get("emergency")),
+        "aborted":            bool(session.get("aborted")),
+        "cooldown_truncated": bool(session.get("cooldown_truncated")),
+        "load_sec_cfg":       load_cfg,
+        "load_sec_real":      load_real,
+        "load_truncated":     bool(load_real is not None and load_cfg > 0
+                                   and load_real < load_cfg * LOAD_COMPLETE_FRACTION),
+    }
+
+
+def _load_extent(cond: dict) -> str:
+    """« 25 s sur 300 s prevues », ou chaine vide si la charge est allee au bout."""
+    if not cond["load_truncated"]:
+        return ""
+    return (f" — charge écourtée à {cond['load_sec_real']:.0f} s "
+            f"sur {cond['load_sec_cfg']} s prévues")
+
+
+def _run_issues(cond: dict, role: str) -> list[dict]:
+    """Avertissements sur le deroulement d'UNE session.
+
+    `blocking` : la comparaison chiffree n'a plus de sens (le verdict doit le
+    dire), par opposition a une reserve qui ne touche qu'une metrique.
+    """
+    issues = []
+    extent = _load_extent(cond)
+    if cond["emergency"]:
+        issues.append({"level": "crit", "blocking": True, "text":
+            f"Session « {role} » : arrêt d'urgence, seuil de sécurité atteint{extent}. "
+            "Le régime établi n'a jamais été atteint — le « plateau » et le ΔT ne "
+            "décrivent qu'une montée en température."})
+    elif cond["aborted"]:
+        issues.append({"level": "crit", "blocking": True, "text":
+            f"Session « {role} » : test interrompu avant la fin{extent}. "
+            "Les métriques de charge sont partielles."})
+    elif cond["load_truncated"]:
+        issues.append({"level": "crit", "blocking": True, "text":
+            f"Session « {role} »{extent}. Trop court pour un régime établi : "
+            "le plateau mesuré n'en est pas un."})
+    if cond["cooldown_truncated"]:
+        issues.append({"level": "warn", "blocking": False, "text":
+            f"Session « {role} » : refroidissement écourté. Le temps de retour au "
+            "calme est un minorant — il n'est pas comparable."})
+    return issues
+
+
+def _condition_issues(cond_before: dict, cond_after: dict,
+                      throttling: dict, target: str) -> list[dict]:
+    """Tous les avertissements de conditions, dans l'ordre de gravite."""
+    issues = []
+    kb, ka = cond_before["kernel"], cond_after["kernel"]
+    if kb and ka and kb != ka:
+        issues.append({"level": "crit", "blocking": True, "text":
+            f"Noyaux de charge différents : « {kb} » avant, « {ka} » après. "
+            "Ces deux charges ne dégagent pas la même chaleur — l'écart mesuré "
+            "vient du changement de test, pas de l'intervention."})
+    issues += _run_issues(cond_before, "avant")
+    issues += _run_issues(cond_after, "après")
+    if not throttling["measured"]:
+        subject = "GPU" if target == "gpu" else "CPU"
+        issues.append({"level": "warn", "blocking": False, "text":
+            f"Throttling non mesuré : aucune fréquence {subject} exploitable sur "
+            "au moins une des deux sessions. Il n'est ni confirmé, ni écarté."})
+    return issues
 
 
 def _assign_roles(s1: dict, s2: dict) -> tuple:
@@ -107,7 +223,9 @@ def _gain(before, after):
 
 def compare_sessions(s1: dict, s2: dict) -> dict:
     """Compare deux sessions (CPU ou GPU). Retourne un dict avec compatibilité,
-    gains (clés génériques, sourcées sur les métriques de la cible), verdict."""
+    gains (clés génériques, sourcées sur les métriques de la cible), conditions
+    réelles des deux runs (`conditions_before` / `conditions_after`), réserves
+    (`issues`, `blocking`) et verdict."""
     before, after = _assign_roles(s1, s2)
     target = _target(before)
     compatible = _protocol(before) == _protocol(after)
@@ -129,11 +247,16 @@ def compare_sessions(s1: dict, s2: dict) -> dict:
         b, a = _metric(before, kmap[k]), _metric(after, kmap[k])
         gains[k] = {"before": b, "after": a, "gain": _gain(b, a)}
 
-    thr_b = bool(_metric(before, kmap["throttling"]))
-    thr_a = bool(_metric(after, kmap["throttling"]))
+    # Throttling en TRI-ETAT (True / False / None) : `None` = pas mesurable,
+    # surtout pas « absent ». Un bool() ici transformerait un indetermine en
+    # certificat de bonne sante — c'est exactement ce qui a fait douter d'un
+    # materiel sain en atelier.
+    thr_b = throttling_state(before.get("metrics") or {}, target)
+    thr_a = throttling_state(after.get("metrics") or {}, target)
     throttling = {"before": thr_b, "after": thr_a,
-                  "eliminated": thr_b and not thr_a,
-                  "appeared": (not thr_b) and thr_a}
+                  "measured": thr_b is not None and thr_a is not None,
+                  "eliminated": thr_b is True and thr_a is False,
+                  "appeared": thr_b is False and thr_a is True}
 
     # Complements propres au GPU (affichage rapport ; pas dans le verdict).
     gpu_extras = None
@@ -147,10 +270,20 @@ def compare_sessions(s1: dict, s2: dict) -> dict:
             "power_max_w":    pair("gpu_power_max_w"),
         }
 
-    verdict_text, verdict_level = _verdict(gains, throttling)
+    cond_before, cond_after = _conditions(before), _conditions(after)
+    issues = _condition_issues(cond_before, cond_after, throttling, target)
+    # Un protocole incompatible bloque au meme titre qu'un run tronque : dans les
+    # deux cas les chiffres ne se comparent pas.
+    blocking = (not compatible) or any(i["blocking"] for i in issues)
+
+    verdict_text, verdict_level = _verdict(gains, throttling, blocking)
 
     return {
         "compatible": compatible,
+        "conditions_before": cond_before,
+        "conditions_after": cond_after,
+        "issues": issues,
+        "blocking": blocking,
         "target": target,
         "adapter_before": adapter_before,
         "adapter_after": adapter_after,
@@ -167,13 +300,23 @@ def compare_sessions(s1: dict, s2: dict) -> dict:
     }
 
 
-def _verdict(gains: dict, throttling: dict) -> tuple:
-    """Verdict client + niveau (ok | warn | crit). Basé sur le plateau en charge."""
+def _verdict(gains: dict, throttling: dict, blocking: bool = False) -> tuple:
+    """Verdict client + niveau (ok | warn | crit). Basé sur le plateau en charge.
+
+    `blocking` : les deux sessions ne se comparent pas (protocole différent, run
+    tronqué…). On refuse alors de chiffrer un gain — annoncer « −12 °C » sur des
+    conditions différentes, c'est attribuer à l'intervention un écart qu'elle n'a
+    pas produit. Le détail est dans `issues`.
+    """
     key = gains["load_plateau_c"]["gain"]
     if key is None:
         key = gains["load_max_c"]["gain"]
     elim = throttling["eliminated"]
     appeared = throttling["appeared"]
+
+    if blocking:
+        return ("Comparaison non concluante — les deux sessions ne se comparent "
+                "pas (voir conditions de mesure)", "warn")
 
     if key is None:
         return ("Comparaison incomplète — données de charge manquantes", "warn")
@@ -314,6 +457,36 @@ def _gain_html(g: dict, unit="°C", lower_is_better=True) -> str:
     return f'<div class="card-value">{main}</div><div class="card-sub">{sub}</div>'
 
 
+def _conditions_html(comparison: dict) -> str:
+    """Tableau des conditions REELLES des deux sessions (noyau de charge, charge
+    effectivement tenue, interruptions). Rendu systematiquement, meme quand tout
+    va bien : le lecteur doit pouvoir juger lui-meme de la comparabilite, pas
+    seulement recevoir un verdict."""
+    rows = []
+    for role, cond in (("Avant", comparison.get("conditions_before") or {}),
+                       ("Après", comparison.get("conditions_after") or {})):
+        real, planned = cond.get("load_sec_real"), cond.get("load_sec_cfg") or 0
+        if real is None:
+            load = f"{planned} s prévues (durée réelle inconnue)"
+        else:
+            load = f"{real:.0f} s tenues sur {planned} s prévues"
+        state = []
+        if cond.get("emergency"):
+            state.append("arrêt d'urgence")
+        if cond.get("aborted"):
+            state.append("interrompu")
+        if cond.get("cooldown_truncated"):
+            state.append("refroidissement écourté")
+        cls = "crit" if state else "ok"
+        rows.append(
+            f'<tr><th>{role}</th><td>{html.escape(cond.get("kernel") or "—")}</td>'
+            f'<td>{html.escape(load)}</td>'
+            f'<td class="{cls}">{html.escape(", ".join(state) or "déroulé complet")}'
+            f'</td></tr>')
+    return ('<table class="cond"><tr><th></th><th>Noyau de charge</th>'
+            '<th>Charge</th><th>Déroulé</th></tr>' + "".join(rows) + "</table>")
+
+
 def generate_comparison_report(s1: dict, s2: dict, output_dir,
                                comparison: Optional[dict] = None) -> Path:
     """Génère le rapport HTML de comparaison. Retourne le chemin du fichier."""
@@ -345,7 +518,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
     else:
         hw_label = "CPU"
         hw_name = html.escape(str((after.get("machine") or {}).get("cpu", "?")))
-    _ptarget, pidle, pload, pcool, pintens = cmp["protocol_after"]
+    _ptarget, pidle, pload, pcool, pintens, pkernel = cmp["protocol_after"]
 
     lvl = cmp["verdict_level"]
     verdict = cmp["verdict"]
@@ -386,8 +559,13 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
         for t, v, note in cards
     )
 
-    # Throttling
-    if thr["eliminated"]:
+    # Throttling — tri-etat : ne JAMAIS afficher « absent » sur un indetermine.
+    if not thr["measured"]:
+        subject_freq = "GPU" if gpu else "CPU"
+        thr_html = ('<span class="badge badge-warn">Non mesuré</span> '
+                    f'(aucune fréquence {subject_freq} exploitable — ni confirmé, '
+                    'ni écarté)')
+    elif thr["eliminated"]:
         thr_html = '<span class="badge badge-ok">Éliminé</span> (présent avant, absent après)'
     elif thr["appeared"]:
         thr_html = '<span class="badge badge-crit">Apparu</span> (absent avant, présent après)'
@@ -407,10 +585,19 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
             f'La session « avant » porte sur {ab}, la session « après » sur {aa} : '
             f'un avant/après n\'a de sens que sur le même matériel.</div>')
     elif not cmp["compatible"]:
+        diff = _protocol_diff(cmp)
+        detail = (" : " + ", ".join(diff)) if diff else ""
         incompat_html = (
-            '<div class="alert alert-crit"><b>Protocoles différents.</b> '
-            'Les deux sessions n\'utilisent pas la même cible, durée ou intensité '
-            'de charge : la comparaison n\'est pas fiable.</div>')
+            f'<div class="alert alert-crit"><b>Protocoles différents{html.escape(detail)}.</b> '
+            'Les deux sessions n\'ont pas été menées avec le même test — '
+            'la comparaison n\'est pas fiable.</div>')
+
+    # Conditions de mesure : ce qui s'est REELLEMENT passe pendant les deux runs.
+    issues_html = "".join(
+        f'<div class="alert alert-{"crit" if i["level"] == "crit" else "warn"}">'
+        f'{html.escape(i["text"])}</div>'
+        for i in cmp.get("issues") or ())
+    cond_html = _conditions_html(cmp)
 
     svg = _svg_compare(before, after, target)
 
@@ -433,6 +620,7 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
 <main>
   <div class="verdict verdict-{lvl}">{html.escape(verdict)}</div>
   {incompat_html}
+  {issues_html}
 
   <section class="section">
     <h2 class="section-title">Carte des gains</h2>
@@ -446,10 +634,13 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
   </section>
 
   <section class="section">
-    <h2 class="section-title">Protocole &amp; honnêteté</h2>
-    <p class="line">Protocole identique pour les deux sessions ({"charge GPU" if gpu else "charge CPU"})&nbsp;:
+    <h2 class="section-title">Protocole &amp; conditions de mesure</h2>
+    <p class="line">Protocole demandé ({"charge GPU" if gpu else "charge CPU"}{
+      f", noyau {pkernel}" if pkernel else ""})&nbsp;:
       repos {pidle}&nbsp;s → charge {pload}&nbsp;s à {pintens}&nbsp;% → refroidissement {pcool}&nbsp;s.{
       f' Carte testée&nbsp;: {hw_name}.' if gpu else ''}</p>
+    <p class="line">Ce qui s'est réellement passé&nbsp;:</p>
+    {cond_html}
     <div class="alert alert-info">
       La <b>température ambiante n'est pas contrôlée</b>. La mesure la plus fiable est le
       <b>ΔT</b> (écart à la température de repos)&nbsp;: il reflète l'efficacité du
@@ -500,7 +691,14 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 0 24px; }}
 .badge-crit {{ background: #3a1e1e; color: {_RED}; }}
 .alert {{ border-radius: 8px; padding: 14px 18px; margin: 12px 0; border-left: 4px solid; font-size: 13px; }}
 .alert-info {{ background: #1a2233; border-color: {_ACCENT}; color: {_FG_DIM}; }}
+.alert-warn {{ background: #2a2415; border-color: {_YELLOW}; color: {_FG}; }}
 .alert-crit {{ background: #2a1521; border-color: {_RED}; color: {_FG}; }}
+.cond {{ border-collapse: collapse; margin: 8px 0 4px; font-size: 13px; }}
+.cond th, .cond td {{ padding: 6px 14px 6px 0; text-align: left; }}
+.cond tr:first-child th {{ font-size: 11px; text-transform: uppercase;
+                          letter-spacing: .06em; color: {_FG_MUTED}; font-weight: 600; }}
+.cond th {{ color: {_FG_DIM}; font-weight: 600; }}
+.cond td {{ color: {_FG_DIM}; }}
 .ok {{ color: {_GREEN}; }} .crit {{ color: {_RED}; }} .dim {{ color: {_FG_MUTED}; }}
 footer {{ text-align: center; padding: 28px; color: {_FG_MUTED}; font-size: 12px;
          border-top: 1px solid {_SURFACE}; margin-top: 24px; }}
