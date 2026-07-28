@@ -17,7 +17,28 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-LOG_DIR    = Path(os.path.expanduser("~")) / "AppData" / "Local" / "Ghisdiag"
+def _log_dir() -> Path:
+    """Dossier du journal et des preferences.
+
+    Surchargeable par GHISDIAG_LOG_DIR. Sert d'abord aux TESTS : importer
+    main.py installe un handler de journal, si bien qu'une simple execution de
+    la suite ecrivait ses faux incidents (« Fake GPU 9000 », JSON invalides
+    volontaires, seuils aberrants) dans le journal REEL de l'utilisateur — et
+    poussait dehors, par rotation, les lignes de vrai diagnostic. On a perdu du
+    temps a demeler les deux le 28/07/2026.
+    """
+    forced = os.environ.get("GHISDIAG_LOG_DIR", "").strip()
+    if forced:
+        try:
+            d = Path(forced).expanduser()
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except OSError:
+            pass    # chemin invalide : on retombe sur l'emplacement standard
+    return Path(os.path.expanduser("~")) / "AppData" / "Local" / "Ghisdiag"
+
+
+LOG_DIR = _log_dir()
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 PREFS_FILE = LOG_DIR / "prefs.json"
 

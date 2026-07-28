@@ -19,6 +19,18 @@ Vérifie :
 Lancement :  py -m unittest discover -s tests -v
 """
 
+# ISOLER LE JOURNAL AVANT D'IMPORTER main : son import installe un handler sur
+# le journal REEL de l'utilisateur. Sans cette redirection, chaque execution de
+# la suite y deversait ses faux incidents (« Fake GPU 9000 », JSON invalides
+# volontaires, seuils aberrants) et poussait dehors, par rotation, les lignes de
+# vrai diagnostic. Toute future importation de main depuis les tests doit faire
+# de meme — c'est le seul module qui configure le journal.
+import os
+import tempfile
+
+os.environ.setdefault("GHISDIAG_LOG_DIR",
+                      os.path.join(tempfile.gettempdir(), "ghisdiag_tests"))
+
 import unittest
 from unittest import mock
 
