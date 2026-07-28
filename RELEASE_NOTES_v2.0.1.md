@@ -129,8 +129,8 @@ nouvelle répond « comparaison non concluante » et pointe la charge écourtée
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | `<TAILLE>` octets |
-| **SHA-256** | `<SHA256>` |
+| **Taille** | `35 864 111` octets (34,2 Mo) |
+| **SHA-256** | `DBC72F6A2D7912D19673ACC66A31F2C19B82A6B0C3B7D301070F13A7E9135AF7` |
 
 > Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
 > tag `v2.0.1` — celle qui est jointe à cette release et qui porte l'attestation
