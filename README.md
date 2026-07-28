@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.1)
+[![Version](https://img.shields.io/badge/version-2.0.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.2)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -151,6 +151,14 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.0.2 (Juillet 2026)
+🚨 **Correctif critique — les capteurs ne fonctionnaient pas après téléchargement**
+- Toute personne ayant téléchargé l'archive depuis GitHub et décompressé avec l'Explorateur Windows n'avait **aucune température, aucun ventilateur, aucune fréquence**. Versions 2.0.0 et 2.0.1 concernées.
+- **Cause** : Windows marque « vient d'Internet » chaque fichier extrait d'une archive téléchargée, et .NET refuse alors de charger les bibliothèques du moteur de capteurs. Le défaut est né du passage en dossier portable et échappait aux tests, qui partent de fichiers copiés — jamais marqués.
+- **Correctif** : l'application retire la marque de ses propres bibliothèques avant de les charger. Plus besoin de « débloquer » l'archive.
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.0.2.md)
 
 ### v2.0.1 (Juillet 2026)
 🌡️ **Le bench thermique n'affirme plus ce qu'il n'a pas mesuré**
