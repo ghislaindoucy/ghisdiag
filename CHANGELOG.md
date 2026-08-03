@@ -4,6 +4,33 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [Non publié]
+
+### 🌡️ Bench thermique — un test écourté ne dit plus « pas de throttling »
+
+Quand la charge est coupée avant son terme (arrêt d'urgence au seuil de sécurité,
+test interrompu), le bench affichait encore **« Throttling thermique : non »**.
+Sur un HP Omen Ryzen 9 mesuré en atelier, la charge s'arrêtait au bout de 23 s sur
+300 prévues : les quelques fréquences relevées pendant cette montée en température
+ne montraient évidemment aucune chute, et l'outil en concluait l'absence de
+bridage. C'est la même affirmation non mesurée que la v2.0.1 a chassée ailleurs —
+elle survivait ici.
+
+- **Throttling « indéterminé » sur une charge écourtée.** Un « non » n'est affiché
+  que s'il a eu le temps d'être vrai. Un **oui** reste un oui : une détection sur
+  une fenêtre courte reste une détection.
+- **La bonne cause est annoncée.** La note expliquait systématiquement « fréquence
+  CPU non lisible sur cette machine » — faux sur une machine qui remonte bien ses
+  fréquences mais dont le test a été coupé. L'application distingue désormais les
+  deux cas, et indique quoi faire : refaire un test qui va à son terme (le seuil
+  d'arrêt d'urgence est réglable via `GHISDIAG_EMERGENCY_TEMP_C`).
+- **Comparaison avant/après** : la réserve « throttling non mesuré » précise elle
+  aussi la cause, session par session.
+- Les sessions **déjà enregistrées** se corrigent à la simple relecture, sans
+  refaire les tests.
+
+---
+
 ## [2.0.2] — 2026-07-28
 
 ### 🚨 Correctif critique — aucune température ne remontait après téléchargement

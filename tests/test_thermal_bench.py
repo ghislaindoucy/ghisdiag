@@ -676,6 +676,40 @@ class TestThrottlingState(unittest.TestCase):
         v1 = {"gpu_throttling": True, "gpu_clock_max_mhz": None}
         self.assertIs(thermal_bench.throttling_state(v1, "gpu"), True)
 
+    # -- Charge ecourtee : un « non » n'a pas eu le temps d'etre vrai ----------
+
+    def test_truncated_false_is_undetermined(self):
+        # HP Omen (01/08/2026) : 25 frequences relevees, aucune chute, mais la
+        # charge est coupee a 23 s sur 300 par l'arret d'urgence. Le regime
+        # etabli n'a jamais commence : « non » serait un certificat de bonne
+        # sante delivre sans examen.
+        m = {"throttling": False, "clock_samples": 25, "clock_max_mhz": 3400,
+             "load_truncated": True}
+        self.assertIsNone(thermal_bench.throttling_state(m))
+
+    def test_truncated_true_stays_true(self):
+        # Altyk (27/07/2026) : throttling detecte sur 30 s de burst, confirme
+        # independamment par HWiNFO. Une detection courte reste une detection.
+        m = {"throttling": True, "clock_samples": 12, "clock_max_mhz": 2917,
+             "load_truncated": True}
+        self.assertIs(thermal_bench.throttling_state(m), True)
+
+    def test_complete_false_stays_false(self):
+        m = {"throttling": False, "clock_samples": 150, "clock_max_mhz": 3600,
+             "load_truncated": False}
+        self.assertIs(thermal_bench.throttling_state(m), False)
+
+    def test_truncated_gpu_false_is_undetermined(self):
+        m = {"gpu_throttling": False, "gpu_clock_samples": 30,
+             "gpu_clock_max_mhz": 1800, "load_truncated": True}
+        self.assertIsNone(thermal_bench.throttling_state(m, "gpu"))
+
+    def test_v1_session_without_truncation_flag_unchanged(self):
+        # Les sessions archivees v1 n'ont pas `load_truncated` : leur lecture ne
+        # doit pas bouger d'un pouce.
+        v1 = {"throttling": False, "clock_max_mhz": 3600}
+        self.assertIs(thermal_bench.throttling_state(v1), False)
+
 
 class TestEmergencyTempOverride(unittest.TestCase):
     """Seuil d'arret d'urgence surchargeable en atelier.

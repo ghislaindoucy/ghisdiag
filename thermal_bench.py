@@ -810,6 +810,23 @@ def throttling_state(metrics: dict, target: str = "cpu") -> Optional[bool]:
     val = metrics.get("gpu_throttling" if gpu else "throttling")
     if val is None:
         return None
+
+    # CHARGE ECOURTEE : un False n'a pas ete observe assez longtemps pour valoir
+    # comme absence. Sur l'HP Omen (2026-08-01) la charge est coupee a 23 s sur
+    # 300 prevues par l'arret d'urgence : les frequences relevees pendant cette
+    # rampe ne montrent aucune chute — evidemment, le regime etabli n'a jamais
+    # commence. Rendre « non » ici revient a certifier l'absence d'un defaut sur
+    # un test qui n'est pas alle assez loin pour le voir.
+    #
+    # Un True reste un True : une detection positive sur une fenetre courte
+    # reste une detection (Altyk du 2026-07-27, throttling vu sur 30 s de burst
+    # et confirme independamment par HWiNFO).
+    #
+    # Requalification a la LECTURE, comme le repli v1 ci-dessous : les sessions
+    # deja enregistrees se corrigent sans etre rejouees.
+    if not val and metrics.get("load_truncated"):
+        return None
+
     if ("gpu_clock_samples" if gpu else "clock_samples") in metrics:
         return bool(val)      # session v2 : le drapeau est deja tri-etat
     if not val and not metrics.get("gpu_clock_max_mhz" if gpu else "clock_max_mhz"):
