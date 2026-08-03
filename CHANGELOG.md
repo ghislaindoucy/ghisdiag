@@ -29,6 +29,41 @@ elle survivait ici.
 - Les sessions **déjà enregistrées** se corrigent à la simple relecture, sans
   refaire les tests.
 
+### 🌡️ Bench thermique — la machine était-elle vraiment au repos ?
+
+La température de repos est le point zéro de toute la mesure : le ΔT en dépend,
+et une comparaison avant/après compare deux ΔT. Si la machine travaillait
+pendant la phase de référence — maintenance Windows juste après un démarrage,
+analyse antivirus, application restée ouverte — ce zéro est trop haut, donc le
+ΔT trop bas. Mesuré en atelier : **16,5 % de charge CPU** pendant une phase
+censée être au repos, sans le moindre avertissement.
+
+- **La réserve est affichée**, avec le chiffre et la marche à suivre. Les
+  valeurs sont conservées : contrairement au plateau d'une charge écourtée, un
+  repos chargé reste une mesure — le ΔT est un minimum, pas une invention.
+- **Comparaison avant/après** : le chiffrage est bloqué quand **une seule** des
+  deux sessions a été mesurée sur une machine occupée — c'est cette asymétrie
+  qui fabrique un faux gain. Deux repos également chargés ne bloquent pas.
+- Nouvelle colonne « Repos de référence » dans le tableau des conditions du
+  rapport. Les sessions déjà enregistrées se requalifient à la relecture.
+
+### 🔌 Capteurs — une interruption du flux ne coûte plus le test entier
+
+Quand le moteur de capteurs se figeait (observé sur deux machines, dont une
+**en fin de bench**), le test s'arrêtait là : dix minutes déjà écoulées,
+perdues.
+
+- Le moteur est maintenant **relancé automatiquement** ; le test n'est
+  abandonné qu'après plusieurs échecs consécutifs.
+- Une interruption **pendant la charge** coupe la charge par sécurité — pendant
+  ce silence, la surveillance de température est aveugle — mais le
+  refroidissement est quand même mesuré, et la charge écourtée est signalée
+  comme telle.
+- Les interruptions sont **enregistrées dans la session** (moment, phase,
+  reprise ou non) et affichées. Le plus long silence du flux est mesuré même
+  quand il ne déclenche rien : de quoi voir venir le problème la prochaine
+  fois.
+
 ---
 
 ## [2.0.2] — 2026-07-28
