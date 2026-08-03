@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.0.2-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.2)
+[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -151,6 +151,14 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.0.3 (Août 2026)
+🌡️ **Le bench thermique ne conclut plus à partir d'un test incomplet**
+- **Un test écourté ne dit plus « pas de throttling »**. Quand la charge est coupée avant son terme (arrêt d'urgence au seuil de sécurité), l'outil répondait « Throttling : non » — sur un HP Omen mesuré en atelier, après 23 s de charge sur 300 prévues. Il répond maintenant **indéterminé**, et explique la vraie cause : test trop court, ou fréquences illisibles sur cette machine.
+- **La machine était-elle vraiment au repos ?** La température de repos est le point zéro de toute la mesure. Mesuré en atelier : 16,5 % de charge CPU pendant une phase censée être au repos — repos surévalué, ΔT sous-évalué, aucun avertissement. C'est désormais signalé, et une comparaison avant/après dont **une seule** des deux sessions est concernée ne chiffre plus de gain.
+- **Une interruption des capteurs ne coûte plus le test entier.** Le moteur est relancé automatiquement ; une coupure pendant la charge arrête la charge par sécurité mais laisse mesurer le refroidissement. Les interruptions sont enregistrées dans la session.
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.0.3.md)
 
 ### v2.0.2 (Juillet 2026)
 🚨 **Correctif critique — les capteurs ne fonctionnaient pas après téléchargement**
@@ -451,6 +459,6 @@ Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v1.6.5](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v1.6.5) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
+[⬇️ Télécharge v2.0.3](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>
