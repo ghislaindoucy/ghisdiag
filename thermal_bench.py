@@ -975,7 +975,9 @@ class ThermalBench:
 
         self._cancel = threading.Event()
         self._sensor_stalled = threading.Event()  # backend capteurs fige (watchdog)
+        self._sensor_gap = threading.Event()      # trou du flux, backend relance
         self._stall_msg = ""
+        self._stream_gaps: list[dict] = []
         self._emergency = False           # seuil franchi pendant la charge
         self._cooldown_truncated = False
         self._t0 = 0.0
@@ -1030,7 +1032,8 @@ class ThermalBench:
 
             self._stream = SensorStream(cfg.sample_interval_ms,
                                         on_sample=self._record,
-                                        on_stall=self._on_stall)
+                                        on_stall=self._on_stall,
+                                        on_gap=self._on_gap)
             if not self._stream.start():
                 self._error("Echec du demarrage des capteurs.")
                 return
@@ -1102,6 +1105,16 @@ class ThermalBench:
                 self._finalize(aborted=True, reason="Capteurs figes pendant la charge : "
                                + (self._stall_msg or "backend bloque"))
                 return
+            if reason == "gap":
+                # Le flux s'est tu un instant PUIS est reparti. La charge vient
+                # d'etre coupee par securite (surveillance d'urgence aveugle
+                # pendant le silence), mais tout n'est pas perdu : le
+                # refroidissement se mesure encore, et la charge ecourtee sera
+                # signalee comme telle par les metriques. Avant, ce cas jetait
+                # dix minutes de test deja faites.
+                self._sensor_gap.clear()
+                logger.warning("ThermalBench : charge ecourtee apres un trou du "
+                               "flux capteurs — poursuite vers le refroidissement")
             # En arret d'urgence on poursuit vers le refroidissement : la
             # remontee a froid est une donnee precieuse et c'est plus sur.
 
@@ -1126,24 +1139,53 @@ class ThermalBench:
 
     def _wait(self, seconds: int, watch_emergency: bool) -> str:
         """Attend `seconds`, interruptible.
-        Retourne 'done' | 'cancel' | 'emergency' | 'stall'."""
+        Retourne 'done' | 'cancel' | 'emergency' | 'stall' | 'gap'."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             if self._cancel.wait(timeout=0.2):
                 return "cancel"
             if self._sensor_stalled.is_set():
                 return "stall"
+            # Un trou du flux n'interrompt que la CHARGE (watch_emergency) :
+            # pendant ce silence, la surveillance d'urgence etait aveugle sur un
+            # CPU a 100 %. Au repos ou en refroidissement, il n'y a rien a
+            # proteger : on continue, quitte a avoir des echantillons manquants.
+            if watch_emergency and self._sensor_gap.is_set():
+                return "gap"
             if watch_emergency and self._emergency:
                 return "emergency"
         return "done"
 
     def _on_stall(self, reason: str) -> None:
-        """Callback SensorStream : le backend capteurs s'est fige."""
+        """Callback SensorStream : figeage DEFINITIF (relances epuisees)."""
         self._stall_msg = reason
         self._sensor_stalled.set()
         logger.warning("ThermalBench : capteurs figes — %s", reason)
 
+    def _on_gap(self, gap: dict) -> None:
+        """Callback SensorStream : trou dans le flux, backend relance ou non.
+
+        On garde la trace horodatee sur l'echelle du bench (`t`) et la phase :
+        un trou pendant le repos et un trou pendant la charge n'ont pas les
+        memes consequences, et le lecteur du JSON doit pouvoir en juger.
+        """
+        entry = {
+            "t":         round(time.monotonic() - self._t0, 1) if self._t0 else 0.0,
+            "phase":     self._phase.value,
+            "reason":    gap.get("reason", ""),
+            "recovered": bool(gap.get("recovered")),
+        }
+        self._stream_gaps.append(entry)
+        if entry["recovered"]:
+            self._sensor_gap.set()
+            logger.warning("ThermalBench : trou du flux capteurs pendant %s "
+                           "(%s) — backend relance", entry["phase"], entry["reason"])
+
     def _enter_phase(self, phase: BenchPhase) -> None:
+        # Le drapeau « trou du flux » ne vaut que pour la phase EN COURS : sans
+        # ce reset, un trou survenu pendant le repos couperait la charge des sa
+        # premiere seconde, alors que le flux est revenu depuis longtemps.
+        self._sensor_gap.clear()
         self._phase = phase
         idx = self._PHASE_ORDER.index(phase) + 1
         self._invoke(self._cb.on_phase, phase, idx, len(self._PHASE_ORDER))
@@ -1242,6 +1284,13 @@ class ThermalBench:
             "emergency":   self._emergency,
             "cooldown_truncated": self._cooldown_truncated,
             "abort_reason": reason,
+            # Trous du flux de capteurs : une mesure a trous n'est pas une
+            # mesure continue, et le silence sur ce point a deja coute un bench
+            # entier (27/07). `sensor_max_gap_sec` est le signal avant-coureur :
+            # il monte bien avant que le chien de garde ne coupe.
+            "stream_gaps": list(self._stream_gaps),
+            "sensor_max_gap_sec": (self._stream.max_gap_sec
+                                   if self._stream is not None else None),
             "metrics":     metrics,
             "samples":     self._samples,
         }

@@ -119,17 +119,31 @@ class SensorStream:
     (aucune sortie pendant trop longtemps — cas d'un Open()/Update() bloque sur
     un CPU non supporte), il tue le process et signale l'arret via on_stall, au
     lieu de laisser l'appelant attendre indefiniment.
+
+    Un figeage n'est plus fatal du premier coup : le backend est RELANCE
+    (max_restarts fois) et l'incident remonte via on_gap. Motif d'atelier
+    (27/07/2026) : un figeage survenu en fin de bench faisait perdre les dix
+    minutes de test deja ecoulees, alors que le flux serait reparti. on_stall
+    ne se declenche plus que lorsque les relances sont epuisees.
     """
 
     def __init__(self, interval_ms: int = 2000, duration_sec: int = 0,
                  on_sample: Optional[Callable[[dict], None]] = None,
                  on_stall: Optional[Callable[[str], None]] = None,
                  startup_grace_sec: float = 25.0,
-                 stall_timeout_sec: Optional[float] = None):
+                 stall_timeout_sec: Optional[float] = None,
+                 max_restarts: int = 2,
+                 on_gap: Optional[Callable[[dict], None]] = None):
         self.interval_ms  = max(250, int(interval_ms))
         self.duration_sec = max(0, int(duration_sec))
         self.on_sample    = on_sample
         self.on_stall     = on_stall
+        self.on_gap       = on_gap
+        self._max_restarts = max(0, int(max_restarts))
+        self._restarts     = 0
+        self._gaps: list[dict] = []
+        self._max_gap_sec  = 0.0
+        self._gen          = 0      # generation de lecteur (voir _reader)
         self._startup_grace = max(5.0, float(startup_grace_sec))
         # Delai sans la moindre sortie au-dela duquel on considere le backend
         # fige (apres demarrage). Defaut : 4 intervalles, minimum 8 s.
@@ -155,36 +169,58 @@ class SensorStream:
             return False
         if self._running:
             return True
+        self._stalled = False
+        self._stall_reason = ""
+        self._backend_error = ""
+        self._restarts = 0
+        self._gaps = []
+        self._max_gap_sec = 0.0
+        if not self._spawn():
+            return False
+        self._wdog = threading.Thread(target=self._watchdog, name="SensorWatchdog", daemon=True)
+        self._wdog.start()
+        return True
+
+    def _spawn(self) -> bool:
+        """Lance (ou relance) le backend et son thread lecteur."""
         args = _ps_args([
             "-IntervalMs", str(self.interval_ms),
             "-DurationSec", str(self.duration_sec),
         ])
         try:
-            self._proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 shell=False, creationflags=_NO_WINDOW,
             )
         except OSError as exc:
             logger.error("SensorStream : echec lancement — %s", exc)
             return False
-        self._running = True
-        self._stalled = False
-        self._stall_reason = ""
+        with self._proc_lock:
+            self._proc = proc
+        self._gen += 1
         self._start_ts = time.monotonic()
         self._last_line_ts = None
-        self._backend_error = ""
-        self._thread = threading.Thread(target=self._reader, name="SensorStream", daemon=True)
+        self._running = True
+        self._thread = threading.Thread(target=self._reader, args=(proc, self._gen),
+                                        name="SensorStream", daemon=True)
         self._thread.start()
-        self._wdog = threading.Thread(target=self._watchdog, name="SensorWatchdog", daemon=True)
-        self._wdog.start()
         return True
 
-    def _reader(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
+    def _reader(self, proc=None, gen: Optional[int] = None) -> None:
+        # proc/gen explicites : apres une relance, DEUX lecteurs peuvent
+        # coexister quelques instants. Chacun ne doit toucher qu'a son propre
+        # process, et seul le lecteur courant a le droit d'eteindre le flux —
+        # sinon l'ancien, en sortant, tuerait le nouveau.
+        if proc is None:
+            proc = self._proc
+        assert proc is not None and proc.stdout is not None
         try:
-            for raw in self._proc.stdout:
+            for raw in proc.stdout:
                 # Toute sortie = backend vivant (meme une ligne invalide).
-                self._last_line_ts = time.monotonic()
+                now = time.monotonic()
+                if self._last_line_ts is not None:
+                    self._max_gap_sec = max(self._max_gap_sec, now - self._last_line_ts)
+                self._last_line_ts = now
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
@@ -212,10 +248,11 @@ class SensorStream:
         except Exception:
             logger.debug("SensorStream : lecteur interrompu", exc_info=True)
         finally:
-            self._running = False
+            if gen is None or gen == self._gen:
+                self._running = False
 
     def _watchdog(self) -> None:
-        """Tue le backend s'il cesse de produire (figeage)."""
+        """Surveille le flux ; relance le backend s'il cesse de produire."""
         while self._running:
             time.sleep(0.5)
             if not self._running:
@@ -224,29 +261,51 @@ class SensorStream:
             if self._last_line_ts is None:
                 # Aucune sortie encore : on laisse le delai de demarrage.
                 if now - self._start_ts > self._startup_grace:
-                    self._trigger_stall(
-                        f"aucune donnee capteur en {self._startup_grace:.0f}s "
-                        "(backend fige ?)")
-                    return
+                    if not self._trigger_stall(
+                            f"aucune donnee capteur en {self._startup_grace:.0f}s "
+                            "(backend fige ?)"):
+                        return
             elif now - self._last_line_ts > self._stall_timeout:
-                self._trigger_stall(
-                    f"flux interrompu ({self._stall_timeout:.0f}s sans donnee, "
-                    "backend fige ?)")
-                return
+                if not self._trigger_stall(
+                        f"flux interrompu ({self._stall_timeout:.0f}s sans donnee, "
+                        "backend fige ?)"):
+                    return
 
-    def _trigger_stall(self, reason: str) -> None:
+    def _trigger_stall(self, reason: str) -> bool:
+        """Traite un figeage. Retourne True si le flux a repris, False si l'arret
+        est definitif (relances epuisees ou relance impossible)."""
         if self._stalled:
-            return
+            return False
+        self._terminate_proc()
+        gap = {"reason": reason, "at": time.time(), "recovered": False}
+        if self._restarts < self._max_restarts and self._spawn():
+            self._restarts += 1
+            gap["recovered"] = True
+            self._gaps.append(gap)
+            logger.warning("SensorStream : %s — backend relance (%d/%d)",
+                           reason, self._restarts, self._max_restarts)
+            self._notify_gap(gap)
+            return True
         self._stalled = True
         self._stall_reason = reason
+        self._gaps.append(gap)
         logger.warning("SensorStream : %s — arret du backend", reason)
-        self._terminate_proc()
         self._running = False
+        self._notify_gap(gap)
         if self.on_stall is not None:
             try:
                 self.on_stall(reason)
             except Exception:
                 logger.exception("SensorStream : on_stall a leve")
+        return False
+
+    def _notify_gap(self, gap: dict) -> None:
+        if self.on_gap is None:
+            return
+        try:
+            self.on_gap(dict(gap))
+        except Exception:
+            logger.exception("SensorStream : on_gap a leve")
 
     def _terminate_proc(self) -> None:
         """Termine le process backend, idempotent et thread-safe."""
@@ -298,6 +357,26 @@ class SensorStream:
     @property
     def stall_reason(self) -> str:
         return self._stall_reason
+
+    @property
+    def gaps(self) -> list:
+        """Interruptions du flux, relancees ou non : [{reason, at, recovered}].
+
+        Une session qui en contient a des echantillons manquants — le dire vaut
+        mieux que de laisser croire a une mesure continue.
+        """
+        return list(self._gaps)
+
+    @property
+    def max_gap_sec(self) -> float:
+        """Plus long silence observe entre deux lignes, en secondes.
+
+        Sert de signal AVANT-COUREUR : un backend qui met 6 s a repondre alors
+        que l'intervalle est de 2 s n'a pas encore declenche le chien de garde,
+        mais il n'en est pas loin. Sans cette mesure, le figeage du 27/07 n'a
+        laisse aucune trace exploitable.
+        """
+        return round(self._max_gap_sec, 1)
 
     @property
     def backend_error(self) -> str:

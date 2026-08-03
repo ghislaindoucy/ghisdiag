@@ -31,7 +31,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import thermal_bench
-from thermal_bench import BenchConfig, ThermalBench, compute_metrics
+from thermal_bench import BenchConfig, BenchPhase, ThermalBench, compute_metrics
 
 
 # --- Fakes -------------------------------------------------------------------
@@ -51,11 +51,21 @@ class FakeStream:
 
     sample_fn = staticmethod(_base_sample)   # surchargeable par test
 
-    def __init__(self, interval_ms, on_sample=None, on_stall=None):
+    last = None      # derniere instance creee (pour piloter un trou de flux)
+
+    def __init__(self, interval_ms, on_sample=None, on_stall=None, on_gap=None):
         self._on_sample = on_sample
+        self._on_gap = on_gap
         self._stop_evt = threading.Event()
         self._latest = None
         self._thread = None
+        type(self).last = self
+
+    def emit_gap(self, reason="flux interrompu (test)", recovered=True):
+        """Simule un trou du flux tel que le watchdog le remonte."""
+        if self._on_gap:
+            self._on_gap({"reason": reason, "at": time.time(),
+                          "recovered": recovered})
 
     def start(self) -> bool:
         def loop():
@@ -86,6 +96,14 @@ class FakeStream:
     @property
     def stall_reason(self) -> str:
         return ""
+
+    @property
+    def max_gap_sec(self) -> float:
+        return 0.0
+
+    @property
+    def gaps(self) -> list:
+        return []
 
     def stop(self, timeout=3.0) -> None:
         self._stop_evt.set()
@@ -187,7 +205,7 @@ class BenchTestCase(unittest.TestCase):
         kw.setdefault("output_dir", self._tmp.name)
         return BenchConfig(**kw)
 
-    def run_bench(self, config: BenchConfig):
+    def run_bench(self, config: BenchConfig, on_phase=None):
         """Lance un bench et attend sa fin. Retourne (session, path, erreurs)."""
         done = threading.Event()
         result = {"session": None, "path": None, "errors": []}
@@ -201,7 +219,8 @@ class BenchTestCase(unittest.TestCase):
             result["errors"].append(msg)
             done.set()
 
-        bench = ThermalBench(config, on_finish=on_finish, on_error=on_error)
+        bench = ThermalBench(config, on_finish=on_finish, on_error=on_error,
+                             on_phase=on_phase)
         self.assertTrue(bench.start())
         self.assertTrue(done.wait(timeout=30), "bench non termine en 30 s")
         bench.join(timeout=5)
@@ -649,6 +668,59 @@ class TestSlowLoadStart(unittest.TestCase):
         m = compute_metrics(s, BenchConfig(idle_sec=120, load_sec=300))
         self.assertEqual(m["load_ramp_sec"], 0.0)
         self.assertIsNotNone(m["load_plateau_c"])
+
+
+class TestStreamGap(BenchTestCase):
+    """Un trou du flux de capteurs ne jette plus le bench entier.
+
+    Motif (atelier, 27/07/2026) : « flux interrompu (8s sans donnee, backend
+    fige ?) » observe sur deux machines, sur l'une exactement en fin de bench —
+    dix minutes de test perdues alors que le backend serait reparti.
+    """
+
+    def test_gap_during_load_keeps_the_session(self):
+        def au_demarrage_de_la_charge(phase, idx, total):
+            if phase is BenchPhase.LOAD:
+                FakeStream.last.emit_gap()
+
+        session, path, errors = self.run_bench(
+            self.make_config(load_sec=5),
+            on_phase=au_demarrage_de_la_charge)
+
+        self.assertEqual(errors, [])
+        # La session existe, elle est enregistree, et elle n'est PAS abandonnee.
+        self.assertIsNotNone(session)
+        self.assertFalse(session["aborted"])
+        self.assertIsNotNone(path)
+        # L'incident est trace, avec sa phase.
+        gaps = session["stream_gaps"]
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual(gaps[0]["phase"], "load")
+        self.assertTrue(gaps[0]["recovered"])
+        # La charge a bien ete coupee par securite -> metriques honnetes.
+        self.assertTrue(session["metrics"]["load_truncated"])
+        self.assertIsNone(session["metrics"]["load_plateau_c"])
+        # Et le refroidissement a quand meme ete mesure : c'est tout l'interet.
+        self.assertIn("cooldown", {s["phase"] for s in session["samples"]})
+
+    def test_no_gap_no_trace(self):
+        session, _, errors = self.run_bench(self.make_config())
+        self.assertEqual(errors, [])
+        self.assertEqual(session["stream_gaps"], [])
+        self.assertFalse(session["metrics"]["load_truncated"])
+
+    def test_gap_during_idle_does_not_cut_anything(self):
+        # Au repos il n'y a rien a proteger : on note et on continue.
+        def au_repos(phase, idx, total):
+            if phase is BenchPhase.IDLE:
+                FakeStream.last.emit_gap()
+
+        session, _, errors = self.run_bench(self.make_config(load_sec=3),
+                                            on_phase=au_repos)
+        self.assertEqual(errors, [])
+        self.assertFalse(session["aborted"])
+        self.assertEqual(session["stream_gaps"][0]["phase"], "idle")
+        self.assertFalse(session["metrics"]["load_truncated"])
 
 
 class TestIdleReference(unittest.TestCase):
