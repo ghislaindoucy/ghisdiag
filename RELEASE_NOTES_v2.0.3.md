@@ -82,8 +82,8 @@ correction.
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | `À_RENSEIGNER` octets |
-| **SHA-256** | `À_RENSEIGNER` |
+| **Taille** | `35 900 705` octets (34,2 Mo) |
+| **SHA-256** | `626D8A9C3C6DA9442CF8A07592D53636BD57DD55B041974CB544731C45E8B823` |
 
 > Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
 > tag `v2.0.3` — celle qui est jointe à cette release et qui porte l'attestation
