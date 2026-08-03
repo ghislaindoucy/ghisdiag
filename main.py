@@ -4266,9 +4266,28 @@ class GhisdiagApp(tk.Tk):
                      "fréquences sont mesurées à partir de la charge réelle, "
                      "mais le régime établi a duré d'autant moins longtemps.")
         if thr_state is None:
-            note += ("\nℹ Fréquence CPU non lisible sur cette machine : le "
-                     "throttling n'a pas pu être mesuré — il n'est ni confirmé, "
-                     "ni écarté. Les températures, elles, restent valables.")
+            # Dire la VRAIE cause de l'indetermine. Il y en a deux et elles
+            # n'appellent pas la meme suite : une machine qui ne remonte aucune
+            # frequence ne dira jamais rien du throttling ; une charge ecourtee,
+            # elle, se rejoue. Annoncer « frequence non lisible » sur l'HP Omen
+            # (25 frequences relevees, charge coupee a 23 s) remplacerait un
+            # mensonge par un autre.
+            #
+            # Le drapeau brut tranche : `throttling is None` = rien de mesurable
+            # (aucune frequence exploitable) ; un False requalifie en None par
+            # throttling_state() = mesure faite, mais trop courte pour valoir.
+            if m.get("throttling") is not None and m.get("load_truncated"):
+                note += ("\nℹ Throttling non mesuré : la charge a été écourtée "
+                         "avant le régime établi — sur une simple montée en "
+                         "température, l'absence de chute de fréquence ne prouve "
+                         "rien. Il n'est ni confirmé, ni écarté. Refaire un test "
+                         "qui va à son terme pour trancher (seuil d'arrêt "
+                         "d'urgence réglable via la variable "
+                         "GHISDIAG_EMERGENCY_TEMP_C).")
+            else:
+                note += ("\nℹ Fréquence CPU non lisible sur cette machine : le "
+                         "throttling n'a pas pu être mesuré — il n'est ni confirmé, "
+                         "ni écarté. Les températures, elles, restent valables.")
         # Limite de puissance (PL1/TDP) : la frequence a chute a temperature
         # moderee. Explique pourquoi la temperature plafonne — ce n'est PAS un
         # defaut de refroidissement (a distinguer du throttling thermique).
@@ -4321,9 +4340,18 @@ class GhisdiagApp(tk.Tk):
             line2 += f"    •    hotspot {hot:.0f}°C"
         note = ""
         if thr_state is None:
-            note += ("\nℹ Ni fréquence ni raison de bridage lisibles sur cette "
-                     "carte : le throttling n'a pas pu être mesuré — il n'est ni "
-                     "confirmé, ni écarté.")
+            # Meme distinction que cote CPU : carte muette (ni clock ni raison
+            # NVML) vs charge trop courte pour qu'un « non » veuille dire
+            # quelque chose. Voir _bench_format_metrics.
+            if m.get("gpu_throttling") is not None and m.get("load_truncated"):
+                note += ("\nℹ Throttling GPU non mesuré : la charge a été "
+                         "écourtée avant le régime établi — sur une charge aussi "
+                         "courte, l'absence de bridage ne prouve rien. Il n'est "
+                         "ni confirmé, ni écarté.")
+            else:
+                note += ("\nℹ Ni fréquence ni raison de bridage lisibles sur cette "
+                         "carte : le throttling n'a pas pu être mesuré — il n'est ni "
+                         "confirmé, ni écarté.")
         # Limite de puissance (power cap constructeur) : la carte bride sa
         # frequence par conception — a distinguer d'un souci de refroidissement.
         if m.get("gpu_power_limited") and not m.get("gpu_throttling"):

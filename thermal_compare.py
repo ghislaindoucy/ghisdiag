@@ -181,8 +181,8 @@ def _run_issues(cond: dict, role: str) -> list[dict]:
     return issues
 
 
-def _condition_issues(cond_before: dict, cond_after: dict,
-                      throttling: dict, target: str) -> list[dict]:
+def _condition_issues(cond_before: dict, cond_after: dict, throttling: dict,
+                      target: str, before: dict, after: dict) -> list[dict]:
     """Tous les avertissements de conditions, dans l'ordre de gravite."""
     issues = []
     kb, ka = cond_before["kernel"], cond_after["kernel"]
@@ -194,10 +194,27 @@ def _condition_issues(cond_before: dict, cond_after: dict,
     issues += _run_issues(cond_before, "avant")
     issues += _run_issues(cond_after, "après")
     if not throttling["measured"]:
+        # Dire POURQUOI il n'est pas mesure, session par session. Il y a deux
+        # causes et une seule etait annoncee : sur l'HP Omen (01/08/2026) les
+        # frequences etaient bien la — 11 et 25 relevees — mais la charge a ete
+        # coupee a 23 s ; ecrire « aucune frequence exploitable » y serait faux.
         subject = "GPU" if target == "gpu" else "CPU"
+        key = _METRIC_KEYS["gpu" if target == "gpu" else "cpu"]["throttling"]
+        parts = []
+        for sess, cond, role, state in (
+                (before, cond_before, "avant", throttling["before"]),
+                (after,  cond_after,  "après", throttling["after"])):
+            if state is not None:
+                continue
+            # Drapeau brut a None = rien de mesurable ; un False requalifie en
+            # None par throttling_state() = mesure faite, mais trop courte.
+            tronque = _metric(sess, key) is not None and cond["load_truncated"]
+            parts.append(f"session « {role} » : " + (
+                "charge écourtée avant le régime établi"
+                if tronque else f"aucune fréquence {subject} exploitable"))
         issues.append({"level": "warn", "blocking": False, "text":
-            f"Throttling non mesuré : aucune fréquence {subject} exploitable sur "
-            "au moins une des deux sessions. Il n'est ni confirmé, ni écarté."})
+            "Throttling non mesuré — " + " ; ".join(parts) +
+            ". Il n'est ni confirmé, ni écarté."})
     return issues
 
 
@@ -271,7 +288,8 @@ def compare_sessions(s1: dict, s2: dict) -> dict:
         }
 
     cond_before, cond_after = _conditions(before), _conditions(after)
-    issues = _condition_issues(cond_before, cond_after, throttling, target)
+    issues = _condition_issues(cond_before, cond_after, throttling, target,
+                               before, after)
     # Un protocole incompatible bloque au meme titre qu'un run tronque : dans les
     # deux cas les chiffres ne se comparent pas.
     blocking = (not compatible) or any(i["blocking"] for i in issues)
@@ -561,10 +579,12 @@ def generate_comparison_report(s1: dict, s2: dict, output_dir,
 
     # Throttling — tri-etat : ne JAMAIS afficher « absent » sur un indetermine.
     if not thr["measured"]:
-        subject_freq = "GPU" if gpu else "CPU"
+        # Pas de cause en dur ici : elle est dans les `issues` (frequence
+        # illisible OU charge ecourtee, session par session). Une carte qui
+        # affirmerait « aucune frequence exploitable » sur un run simplement
+        # tronque serait fausse.
         thr_html = ('<span class="badge badge-warn">Non mesuré</span> '
-                    f'(aucune fréquence {subject_freq} exploitable — ni confirmé, '
-                    'ni écarté)')
+                    '(ni confirmé, ni écarté — voir les réserves ci-dessus)')
     elif thr["eliminated"]:
         thr_html = '<span class="badge badge-ok">Éliminé</span> (présent avant, absent après)'
     elif thr["appeared"]:

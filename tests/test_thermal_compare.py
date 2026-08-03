@@ -292,6 +292,45 @@ class TestThrottlingUnknown(unittest.TestCase):
         self.assertFalse(cmp["blocking"])      # les températures restent valables
         self.assertEqual(cmp["verdict_level"], "ok")
 
+    def test_no_clock_issue_names_the_frequency(self):
+        issue = next(i for i in self._cmp()["issues"]
+                     if "Throttling non mesuré" in i["text"])
+        self.assertIn("aucune fréquence CPU exploitable", issue["text"])
+
+    # -- Charge écourtée : autre cause, autre message -------------------------
+
+    def _cmp_truncated(self):
+        """« Avant » coupé à 25 s sur 120 s, mais fréquences bien relevées."""
+        before = {**_CPU_BEFORE, "throttling": False, "load_truncated": True}
+        return compare_sessions(
+            _mk_session("avant", metrics=before, emergency=True,
+                        samples=_load_samples(sec=25, step=5)),
+            _mk_session("apres", metrics=_CPU_AFTER,
+                        started="2026-07-17T12:00:00"))
+
+    def test_truncated_run_is_undetermined_not_absent(self):
+        thr = self._cmp_truncated()["throttling"]
+        self.assertIsNone(thr["before"])       # 120 fréquences, mais 25 s de charge
+        self.assertIs(thr["after"], False)
+        self.assertFalse(thr["measured"])
+
+    def test_truncated_issue_blames_the_load_not_the_frequency(self):
+        # HP Omen (01/08/2026) : les fréquences étaient là (11 et 25 relevées),
+        # c'est la charge qui a été coupée à 23 s. Écrire « aucune fréquence
+        # exploitable » remplacerait un mensonge par un autre.
+        issue = next(i for i in self._cmp_truncated()["issues"]
+                     if "Throttling non mesuré" in i["text"])
+        self.assertIn("session « avant » : charge écourtée", issue["text"])
+        self.assertNotIn("fréquence", issue["text"])
+
+    def test_report_does_not_invent_a_cause(self):
+        cmp = self._cmp_truncated()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = generate_comparison_report(cmp["before"], cmp["after"], tmp, cmp)
+            doc = Path(path).read_text(encoding="utf-8")
+        self.assertIn("Non mesuré", doc)
+        self.assertNotIn("aucune fréquence CPU exploitable", doc)
+
     def test_report_says_not_measured(self):
         cmp = self._cmp()
         with tempfile.TemporaryDirectory() as tmp:
