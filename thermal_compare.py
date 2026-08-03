@@ -32,7 +32,7 @@ from typing import Optional
 
 from thermal_bench import (DEFAULT_EMERGENCY_TEMP_C, DEFAULT_GPU_EMERGENCY_TEMP_C,
                            LOAD_COMPLETE_FRACTION, phase_duration,
-                           throttling_state)
+                           throttling_state, idle_load_pct, idle_polluted)
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,15 @@ def _conditions(session: dict) -> dict:
     """Etat de deroulement d'une session : ce qui la rend comparable ou non."""
     load_cfg = int(_cfg(session).get("load_sec", 0))
     load_real = phase_duration(session.get("samples") or [], "load")
+    # Reference de repos : la metrique quand elle existe, sinon recalculee sur
+    # les echantillons — les sessions enregistrees avant ce controle doivent se
+    # requalifier a la relecture, pas rester muettes.
+    idle_load = _metric(session, "idle_load_pct")
+    if idle_load is None:
+        idle_load = idle_load_pct(session.get("samples") or [])
     return {
+        "idle_load_pct":      idle_load,
+        "idle_polluted":      idle_polluted(idle_load),
         "kernel":             _kernel(session),
         "emergency":          bool(session.get("emergency")),
         "aborted":            bool(session.get("aborted")),
@@ -178,6 +186,13 @@ def _run_issues(cond: dict, role: str) -> list[dict]:
         issues.append({"level": "warn", "blocking": False, "text":
             f"Session « {role} » : refroidissement écourté. Le temps de retour au "
             "calme est un minorant — il n'est pas comparable."})
+    if cond["idle_polluted"]:
+        pct = cond["idle_load_pct"]
+        chiffre = f" ({pct:.0f} % de charge CPU)" if pct is not None else ""
+        issues.append({"level": "warn", "blocking": False, "text":
+            f"Session « {role} » : machine non au repos pendant la phase de "
+            f"référence{chiffre}. Sa température de repos est surévaluée, donc "
+            "son ΔT sous-évalué."})
     return issues
 
 
@@ -193,6 +208,18 @@ def _condition_issues(cond_before: dict, cond_after: dict, throttling: dict,
             "vient du changement de test, pas de l'intervention."})
     issues += _run_issues(cond_before, "avant")
     issues += _run_issues(cond_after, "après")
+    # DEUX references de repos qui ne se valent pas : c'est l'asymetrie qui
+    # fabrique un faux gain. Un repos pollue d'un seul cote decale le point zero
+    # de ce cote-la ; le deltaT « gagne » la difference sans que rien n'ait ete
+    # reparé. Les deux polluees ne bloquent pas : les deux deltaT sont
+    # sous-evalues de la meme facon, la comparaison garde un sens.
+    if cond_before["idle_polluted"] != cond_after["idle_polluted"]:
+        sale = "avant" if cond_before["idle_polluted"] else "après"
+        issues.append({"level": "crit", "blocking": True, "text":
+            f"Les deux tests ne partent pas du même repos : seule la session "
+            f"« {sale} » a été mesurée sur une machine occupée. L'écart de ΔT "
+            "vient en partie de cette différence de point de départ, pas de "
+            "l'intervention."})
     if not throttling["measured"]:
         # Dire POURQUOI il n'est pas mesure, session par session. Il y a deux
         # causes et une seule etait annoncee : sur l'HP Omen (01/08/2026) les
@@ -496,13 +523,24 @@ def _conditions_html(comparison: dict) -> str:
         if cond.get("cooldown_truncated"):
             state.append("refroidissement écourté")
         cls = "crit" if state else "ok"
+        # Le repos est une COLONNE a part : ce n'est pas un incident de
+        # deroulement, c'est l'etat de la machine au point zero de la mesure.
+        pct = cond.get("idle_load_pct")
+        if pct is None:
+            repos, repos_cls = "—", "ok"
+        elif cond.get("idle_polluted"):
+            repos, repos_cls = f"{pct:.0f} % de charge — non représentatif", "crit"
+        else:
+            repos, repos_cls = f"{pct:.0f} % de charge", "ok"
         rows.append(
             f'<tr><th>{role}</th><td>{html.escape(cond.get("kernel") or "—")}</td>'
             f'<td>{html.escape(load)}</td>'
+            f'<td class="{repos_cls}">{html.escape(repos)}</td>'
             f'<td class="{cls}">{html.escape(", ".join(state) or "déroulé complet")}'
             f'</td></tr>')
     return ('<table class="cond"><tr><th></th><th>Noyau de charge</th>'
-            '<th>Charge</th><th>Déroulé</th></tr>' + "".join(rows) + "</table>")
+            '<th>Charge</th><th>Repos de référence</th><th>Déroulé</th></tr>'
+            + "".join(rows) + "</table>")
 
 
 def generate_comparison_report(s1: dict, s2: dict, output_dir,

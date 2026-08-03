@@ -149,6 +149,18 @@ LOAD_ACTIVE_PCT = 90.0
 # perdu ampute d'autant le regime etabli reellement observe.
 LOAD_RAMP_WARN_SEC = 10.0
 
+# Charge CPU (%) au-dela de laquelle la phase de repos ne mesure plus un repos.
+#
+# Vu en atelier (Altyk, 27/07/2026) : 16,5 % de charge CPU mediane pendant la
+# phase de reference — maintenance Windows post-demarrage, analyse Defender. La
+# temperature dite « de repos » en ressort surevaluee, donc le deltaT
+# sous-evalue, et rien ne le signalait : c'est le point de depart de TOUTES les
+# comparaisons du bench qui etait fausse en silence.
+#
+# 10 % : une machine reellement au repos tourne sous les 5 % ; au-dela de 10 %
+# quelque chose travaille, et la reference n'est plus une reference.
+IDLE_LOAD_MAX_PCT = 10.0
+
 # Marge de "retour au calme" : le refroidissement est considere termine quand la
 # temperature redescend a T_idle + cette marge.
 RECOVERY_MARGIN_C = 5.0
@@ -555,6 +567,27 @@ def phase_duration(samples: list[dict], phase: str) -> Optional[float]:
     return round(max(ts) - min(ts), 1) if len(ts) >= 2 else None
 
 
+def idle_load_pct(samples: list[dict]) -> Optional[float]:
+    """Charge CPU mediane pendant la REFERENCE de repos, en %.
+
+    Meme fenetre que `idle_c` (seconde moitie de la phase de repos) : la
+    question posee est « la temperature de reference a-t-elle ete prise sur une
+    machine reellement au repos ? ». Fonction publique : la comparaison s'en
+    sert pour requalifier les sessions archivees, qui n'ont pas la metrique.
+    """
+    idle = [s for s in samples if s.get("phase") == BenchPhase.IDLE.value]
+    return _median(_vals(_slice_by_fraction(idle, 0.5, 1.0) or idle, "cpu_load"))
+
+
+def idle_polluted(load_pct: Optional[float]) -> bool:
+    """True si la phase de repos etait trop chargee pour servir de reference.
+
+    Unique lecture autorisee du seuil : UI, comparaison et metriques passent
+    toutes par ici, pour qu'un seul chiffre fasse foi.
+    """
+    return bool(load_pct is not None and load_pct > IDLE_LOAD_MAX_PCT)
+
+
 def _time_to_recover(cool: list[dict], baseline_c: Optional[float],
                      key: str) -> Optional[float]:
     """Delai (s) depuis le debut du refroidissement pour repasser sous
@@ -578,6 +611,18 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     # T idle : regime etabli (seconde moitie de la phase de repos).
     idle_steady = _slice_by_fraction(idle, 0.5, 1.0) or idle
     idle_c = _median(_vals(idle_steady, "cpu"))
+
+    # REPOS POLLUE : la reference n'en est pas une.
+    #
+    # Tout le bench se lit par rapport a cette temperature de depart. Si la
+    # machine travaillait pendant qu'on la mesurait (maintenance Windows,
+    # analyse antivirus, application restee ouverte), `idle_c` est trop haut et
+    # le deltaT trop bas — la mesure existe, mais elle decrit autre chose que ce
+    # qu'on croit lire. On garde les valeurs (le deltaT reste un MINORANT
+    # exploitable, contrairement au plateau d'une charge ecourtee qui, lui,
+    # n'a jamais existe) et on le dit.
+    idle_load_avg_pct = idle_load_pct(samples)
+    idle_dirty = idle_polluted(idle_load_avg_pct)
 
     # Charge.
     load_cpu = _vals(load, "cpu")
@@ -681,6 +726,8 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
 
     metrics = {
         "idle_c":          idle_c,
+        "idle_load_pct":   idle_load_avg_pct,  # charge CPU pendant la reference
+        "idle_polluted":   idle_dirty,         # True = repos non representatif
         "load_max_c":      load_max_c,
         "load_plateau_c":  load_plateau_c,
         "delta_c":         delta_c,
@@ -928,7 +975,9 @@ class ThermalBench:
 
         self._cancel = threading.Event()
         self._sensor_stalled = threading.Event()  # backend capteurs fige (watchdog)
+        self._sensor_gap = threading.Event()      # trou du flux, backend relance
         self._stall_msg = ""
+        self._stream_gaps: list[dict] = []
         self._emergency = False           # seuil franchi pendant la charge
         self._cooldown_truncated = False
         self._t0 = 0.0
@@ -983,7 +1032,8 @@ class ThermalBench:
 
             self._stream = SensorStream(cfg.sample_interval_ms,
                                         on_sample=self._record,
-                                        on_stall=self._on_stall)
+                                        on_stall=self._on_stall,
+                                        on_gap=self._on_gap)
             if not self._stream.start():
                 self._error("Echec du demarrage des capteurs.")
                 return
@@ -1055,6 +1105,16 @@ class ThermalBench:
                 self._finalize(aborted=True, reason="Capteurs figes pendant la charge : "
                                + (self._stall_msg or "backend bloque"))
                 return
+            if reason == "gap":
+                # Le flux s'est tu un instant PUIS est reparti. La charge vient
+                # d'etre coupee par securite (surveillance d'urgence aveugle
+                # pendant le silence), mais tout n'est pas perdu : le
+                # refroidissement se mesure encore, et la charge ecourtee sera
+                # signalee comme telle par les metriques. Avant, ce cas jetait
+                # dix minutes de test deja faites.
+                self._sensor_gap.clear()
+                logger.warning("ThermalBench : charge ecourtee apres un trou du "
+                               "flux capteurs — poursuite vers le refroidissement")
             # En arret d'urgence on poursuit vers le refroidissement : la
             # remontee a froid est une donnee precieuse et c'est plus sur.
 
@@ -1079,24 +1139,53 @@ class ThermalBench:
 
     def _wait(self, seconds: int, watch_emergency: bool) -> str:
         """Attend `seconds`, interruptible.
-        Retourne 'done' | 'cancel' | 'emergency' | 'stall'."""
+        Retourne 'done' | 'cancel' | 'emergency' | 'stall' | 'gap'."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             if self._cancel.wait(timeout=0.2):
                 return "cancel"
             if self._sensor_stalled.is_set():
                 return "stall"
+            # Un trou du flux n'interrompt que la CHARGE (watch_emergency) :
+            # pendant ce silence, la surveillance d'urgence etait aveugle sur un
+            # CPU a 100 %. Au repos ou en refroidissement, il n'y a rien a
+            # proteger : on continue, quitte a avoir des echantillons manquants.
+            if watch_emergency and self._sensor_gap.is_set():
+                return "gap"
             if watch_emergency and self._emergency:
                 return "emergency"
         return "done"
 
     def _on_stall(self, reason: str) -> None:
-        """Callback SensorStream : le backend capteurs s'est fige."""
+        """Callback SensorStream : figeage DEFINITIF (relances epuisees)."""
         self._stall_msg = reason
         self._sensor_stalled.set()
         logger.warning("ThermalBench : capteurs figes — %s", reason)
 
+    def _on_gap(self, gap: dict) -> None:
+        """Callback SensorStream : trou dans le flux, backend relance ou non.
+
+        On garde la trace horodatee sur l'echelle du bench (`t`) et la phase :
+        un trou pendant le repos et un trou pendant la charge n'ont pas les
+        memes consequences, et le lecteur du JSON doit pouvoir en juger.
+        """
+        entry = {
+            "t":         round(time.monotonic() - self._t0, 1) if self._t0 else 0.0,
+            "phase":     self._phase.value,
+            "reason":    gap.get("reason", ""),
+            "recovered": bool(gap.get("recovered")),
+        }
+        self._stream_gaps.append(entry)
+        if entry["recovered"]:
+            self._sensor_gap.set()
+            logger.warning("ThermalBench : trou du flux capteurs pendant %s "
+                           "(%s) — backend relance", entry["phase"], entry["reason"])
+
     def _enter_phase(self, phase: BenchPhase) -> None:
+        # Le drapeau « trou du flux » ne vaut que pour la phase EN COURS : sans
+        # ce reset, un trou survenu pendant le repos couperait la charge des sa
+        # premiere seconde, alors que le flux est revenu depuis longtemps.
+        self._sensor_gap.clear()
         self._phase = phase
         idx = self._PHASE_ORDER.index(phase) + 1
         self._invoke(self._cb.on_phase, phase, idx, len(self._PHASE_ORDER))
@@ -1195,6 +1284,13 @@ class ThermalBench:
             "emergency":   self._emergency,
             "cooldown_truncated": self._cooldown_truncated,
             "abort_reason": reason,
+            # Trous du flux de capteurs : une mesure a trous n'est pas une
+            # mesure continue, et le silence sur ce point a deja coute un bench
+            # entier (27/07). `sensor_max_gap_sec` est le signal avant-coureur :
+            # il monte bien avant que le chien de garde ne coupe.
+            "stream_gaps": list(self._stream_gaps),
+            "sensor_max_gap_sec": (self._stream.max_gap_sec
+                                   if self._stream is not None else None),
             "metrics":     metrics,
             "samples":     self._samples,
         }

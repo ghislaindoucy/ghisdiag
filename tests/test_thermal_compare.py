@@ -32,6 +32,13 @@ def _load_samples(sec=120, step=10, start=60):
             for t in range(start, start + sec + 1, step)]
 
 
+def _idle_samples(cpu_load, sec=60, step=10):
+    """Phase de repos à une charge CPU donnée (référence propre ou polluée)."""
+    return [{"t": t, "phase": "idle", "cpu": 45.0, "gpu": 40.0,
+             "cpu_load": cpu_load}
+            for t in range(0, sec + 1, step)]
+
+
 def _mk_session(label, target="cpu", metrics=None, adapter=None,
                 started="2026-07-17T10:00:00", samples=None, **extra):
     s = {
@@ -240,6 +247,35 @@ class TestConditions(unittest.TestCase):
         cmp = self._cmp(before_kw={"aborted": True})
         self.assertTrue(cmp["blocking"])
         self.assertTrue(any("interrompu" in i["text"] for i in cmp["issues"]))
+
+    def test_polluted_idle_on_both_sides_warns_without_blocking(self):
+        # Les deux ΔT sont sous-évalués de la même façon : la comparaison garde
+        # un sens, mais le lecteur doit savoir d'où partent les mesures.
+        busy = _idle_samples(16.5) + _load_samples()
+        cmp = self._cmp(before_kw={"samples": busy}, after_kw={"samples": busy})
+        self.assertFalse(cmp["blocking"])
+        self.assertTrue(cmp["conditions_before"]["idle_polluted"])
+        warn = next(i for i in cmp["issues"] if "non au repos" in i["text"])
+        self.assertEqual(warn["level"], "warn")
+        self.assertIn("16 % de charge CPU", warn["text"])
+
+    def test_one_polluted_idle_blocks_the_gain(self):
+        # L'asymétrie fabrique un faux gain de ΔT : c'est elle qui bloque.
+        cmp = self._cmp(
+            before_kw={"samples": _idle_samples(16.5) + _load_samples()},
+            after_kw={"samples": _idle_samples(2.0) + _load_samples()})
+        self.assertTrue(cmp["blocking"])
+        issue = next(i for i in cmp["issues"] if "même repos" in i["text"])
+        self.assertTrue(issue["blocking"])
+        self.assertIn("« avant »", issue["text"])
+        self.assertIn("non concluante", cmp["verdict"])
+
+    def test_quiet_idle_says_nothing(self):
+        cmp = self._cmp(
+            before_kw={"samples": _idle_samples(2.0) + _load_samples()},
+            after_kw={"samples": _idle_samples(3.0) + _load_samples()})
+        self.assertFalse(cmp["blocking"])
+        self.assertEqual([i for i in cmp["issues"] if "repos" in i["text"]], [])
 
     def test_truncated_cooldown_warns_without_blocking(self):
         cmp = self._cmp(after_kw={"cooldown_truncated": True})

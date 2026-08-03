@@ -62,7 +62,7 @@ try:
         THROTTLE_CLOCK_DROP, THROTTLE_TEMP_FLOOR_C,
         DEFAULT_GPU_EMERGENCY_TEMP_C, DEFAULT_EMERGENCY_TEMP_C,
         _gpu_throttle_floor, throttling_state, _default_emergency_temp,
-        LOAD_RAMP_WARN_SEC,
+        LOAD_RAMP_WARN_SEC, idle_polluted, idle_load_pct,
     )
     from thermal_compare import (compare_sessions, generate_comparison_report,
                                  _protocol_diff)
@@ -4231,6 +4231,66 @@ class GhisdiagApp(tk.Tk):
     # -- Mise en forme des métriques ------------------------------------------
 
     @staticmethod
+    def _bench_idle_note(m: dict, session: dict) -> str:
+        """Réserve sur la référence de repos, ou chaîne vide.
+
+        La température de repos est le point zéro de toute la mesure : le ΔT en
+        dépend, et une comparaison avant/après compare deux ΔT. Une machine qui
+        travaillait pendant qu'on la mesurait (maintenance Windows, analyse
+        antivirus) donne un repos trop chaud — donc un ΔT trop petit, et un
+        avant/après qui peut inventer un gain qui n'existe pas. Vu en atelier le
+        27/07 : 16,5 % de charge pendant la phase de repos, aucun avertissement.
+        """
+        # Le drapeau fait foi quand il est là (sessions enregistrées depuis ce
+        # contrôle) ; sinon la charge de repos est RECALCULÉE sur les
+        # échantillons, qui sont dans le JSON. Une session d'atelier archivée
+        # doit se requalifier à la simple relecture, sans qu'on refasse le test.
+        pct = m.get("idle_load_pct")
+        if pct is None:
+            pct = idle_load_pct(session.get("samples") or [])
+        dirty = m.get("idle_polluted")
+        if dirty is None:
+            dirty = idle_polluted(pct)
+        if not dirty:
+            return ""
+        chiffre = f" ({pct:.0f} % de charge CPU)" if isinstance(pct, (int, float)) else ""
+        # « ℹ » et pas « ⚠ » : c'est une réserve sur la mesure, au même titre
+        # que le plateau non calculé — pas un incident de déroulement (arrêt
+        # d'urgence, interruption), qui sont les seuls à porter le ⚠.
+        return ("\nℹ La machine n'était pas au repos pendant la phase de "
+                f"référence{chiffre} — maintenance Windows, analyse antivirus ou "
+                "application restée ouverte. La température de repos est "
+                "surévaluée, donc le ΔT sous-évalué : c'est un minimum, pas la "
+                "vraie amplitude. Pour un chiffre juste, refaire le test sur une "
+                "machine calme depuis quelques minutes.")
+
+    _BENCH_PHASE_FR = {"idle": "le repos", "load": "la charge",
+                       "cooldown": "le refroidissement"}
+
+    @staticmethod
+    def _bench_stream_note(session: dict) -> str:
+        """Réserve sur les trous du flux de capteurs, ou chaîne vide.
+
+        Un bench à trous n'est pas un bench continu. Le dire évite de faire
+        passer une moyenne calculée sur une mesure interrompue pour une mesure
+        suivie de bout en bout.
+        """
+        gaps = session.get("stream_gaps") or ()
+        if not gaps:
+            return ""
+        phases = sorted({GhisdiagApp._BENCH_PHASE_FR.get(g.get("phase"),
+                                                         g.get("phase") or "?")
+                         for g in gaps})
+        combien = "une fois" if len(gaps) == 1 else f"{len(gaps)} fois"
+        note = (f"\nℹ Le flux de capteurs s'est interrompu {combien} (pendant "
+                f"{', '.join(phases)}) puis a repris : des échantillons manquent "
+                "sur ces périodes.")
+        if any(g.get("phase") == "load" for g in gaps):
+            note += (" La charge a été coupée par sécurité — pendant un silence "
+                     "du flux, la surveillance de température est aveugle.")
+        return note
+
+    @staticmethod
     def _bench_format_metrics(m: dict, session: dict) -> str:
         if (session.get("config") or {}).get("target") == "gpu":
             return GhisdiagApp._bench_format_metrics_gpu(m, session)
@@ -4259,6 +4319,9 @@ class GhisdiagApp(tk.Tk):
             note += (f"\nℹ Plateau et ΔT non calculés : la charge a été écourtée"
                      f"{duree}. Le régime établi n'a pas été atteint — la "
                      "température maximale, elle, reste valable.")
+        # Repos pollué : tout le reste se lit par rapport à cette référence.
+        note += GhisdiagApp._bench_idle_note(m, session)
+        note += GhisdiagApp._bench_stream_note(session)
         ramp = m.get("load_ramp_sec")
         if isinstance(ramp, (int, float)) and ramp >= LOAD_RAMP_WARN_SEC:
             note += (f"\nℹ Le générateur de charge a mis {ramp:.0f} s à démarrer : "
@@ -4338,7 +4401,10 @@ class GhisdiagApp(tk.Tk):
         hot = m.get("gpu_hotspot_max_c")
         if hot is not None:
             line2 += f"    •    hotspot {hot:.0f}°C"
-        note = ""
+        # Repos pollué : le ΔT GPU part lui aussi de cette référence (une
+        # machine qui travaille chauffe le châssis, donc la carte).
+        note = (GhisdiagApp._bench_idle_note(m, session)
+                + GhisdiagApp._bench_stream_note(session))
         if thr_state is None:
             # Meme distinction que cote CPU : carte muette (ni clock ni raison
             # NVML) vs charge trop courte pour qu'un « non » veuille dire
