@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Exécutable autonome</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.0.2 — Document généré le 28 juillet 2026</div>
+  <div class="version">Version 2.0.3 — Document généré le 3 août 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -364,7 +364,20 @@ footer.pagefoot{
 </ul>
 
 <div class="callout">
-  <b>« Throttling : indéterminé » — pourquoi ?</b> La détection du throttling repose entièrement sur la <b>fréquence du processeur</b>. Certaines machines n'en exposent aucune (capteur non pris en charge par le moteur de capteurs) : Ghisdiag affiche alors <b>indéterminé</b>, et non « non ». C'est délibéré — annoncer « pas de throttling » sans avoir lu une seule fréquence reviendrait à certifier l'absence d'un défaut qu'on n'a pas cherché. Les températures, elles, restent parfaitement valables.
+  <b>« Throttling : indéterminé » — pourquoi ?</b> La détection du throttling repose entièrement sur la <b>fréquence du processeur</b>, comparée entre le début et la fin de la charge. Ghisdiag affiche <b>indéterminé</b>, et non « non », dans deux situations — la note affichée sous les résultats précise toujours laquelle :
+  <ul>
+    <li><b>Aucune fréquence lisible</b> sur cette machine (capteur non pris en charge par le moteur de capteurs) : il n'y a rien à comparer.</li>
+    <li><b>Charge écourtée</b> — arrêt d'urgence au seuil de sécurité, ou test interrompu. Sur une simple montée en température, l'absence de chute de fréquence ne prouve rien : le régime établi n'a pas commencé. Relancer un test qui va à son terme permet de trancher.</li>
+  </ul>
+  C'est délibéré : annoncer « pas de throttling » sans l'avoir mesuré reviendrait à certifier l'absence d'un défaut qu'on n'a pas cherché. Un <b>oui</b>, lui, reste un oui — une détection sur une fenêtre courte reste une détection. Et les températures restent parfaitement valables dans tous les cas.
+</div>
+
+<div class="callout">
+  <b>La machine doit être au repos au démarrage du test.</b> La température de repos sert de <b>point zéro</b> à toute la mesure : c'est d'elle que se déduit le ΔT, et une comparaison avant/après compare deux ΔT. Si Windows fait sa maintenance, si un antivirus analyse le disque ou si une application travaille pendant la phase de repos, cette référence est trop haute — donc le ΔT trop bas. Ghisdiag mesure la charge CPU pendant cette phase et vous <b>avertit</b> si elle est trop élevée. En comparaison avant/après, si <b>une seule</b> des deux sessions est concernée, le gain n'est plus chiffré : l'écart viendrait en partie du point de départ, pas de l'intervention.
+</div>
+
+<div class="callout">
+  <b>Si les capteurs s'interrompent pendant le test.</b> Le moteur de capteurs est <b>relancé automatiquement</b> ; le test n'est abandonné qu'après plusieurs échecs. Une interruption survenue <b>pendant la charge</b> arrête la charge par sécurité — pendant ce silence, la surveillance de température est aveugle — mais le refroidissement est quand même mesuré, et la charge écourtée est signalée comme telle. Chaque interruption est enregistrée dans la session (moment, phase, reprise ou non).
 </div>
 
 <h3>Comparaison avant / après</h3>
@@ -574,7 +587,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 1.8.2. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 2.0.3. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 

@@ -4,7 +4,7 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
-## [Non publié]
+## [2.0.3] — 2026-08-03
 
 ### 🌡️ Bench thermique — un test écourté ne dit plus « pas de throttling »
 

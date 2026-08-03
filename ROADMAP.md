@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.0.2** (2026-07-28) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.2)
+**Version actuelle : 2.0.3** (2026-08-03) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3)
 
 ---
 
@@ -172,6 +172,29 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.0.3 — 🌡️ Le bench ne conclut plus sur un test incomplet ✅ *livré*
+
+Clôture du chantier « fiabilité du bench thermique » : les 10 défauts relevés en
+atelier sont traités.
+
+- **Charge écourtée = throttling indéterminé** (défaut 10). Un `False` n'est plus
+  rendu comme une absence quand la charge a été coupée avant le régime établi ;
+  un `True` reste un `True`, une détection sur fenêtre courte reste une détection.
+  La note dit la vraie cause : fréquence illisible **ou** test trop court.
+  Requalification à la lecture — les sessions archivées se corrigent seules.
+- **Repos de référence contrôlé** (défaut 4). `idle_load_pct` / `idle_polluted` :
+  au-delà de 10 % de charge CPU pendant la phase de repos, la référence est
+  signalée. Les valeurs sont conservées (le ΔT reste un minorant), mais une
+  comparaison dont **une seule** session est concernée ne chiffre plus de gain —
+  c'est l'asymétrie qui fabriquait un faux gain. Nouvelle colonne « Repos de
+  référence » dans le rapport.
+- **Figeage du flux de capteurs survivable** (défaut 6). Le backend est relancé
+  au lieu d'être abandonné ; une coupure pendant la charge arrête la charge par
+  sécurité mais laisse mesurer le refroidissement. Les trous sont enregistrés
+  (`stream_gaps`), et le plus long silence est mesuré même sous le seuil du chien
+  de garde (`sensor_max_gap_sec`) — la trace qui manquait pour comprendre le cas
+  du 27/07.
 
 ### v2.0.2 — 🚨 Mark of the Web ✅ *livré*
 
