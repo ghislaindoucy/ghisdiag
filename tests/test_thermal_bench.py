@@ -211,7 +211,8 @@ class BenchTestCase(unittest.TestCase):
 # --- Cles de metriques d'un bench CPU AVANT la generalisation GPU ------------
 
 _LEGACY_CPU_METRIC_KEYS = {
-    "idle_c", "load_max_c", "load_plateau_c", "delta_c", "cpu_load_avg",
+    "idle_c", "idle_load_pct", "idle_polluted",
+    "load_max_c", "load_plateau_c", "delta_c", "cpu_load_avg",
     "load_truncated", "load_sec_real", "load_ramp_sec",
     "gpu_idle_c", "gpu_max_c", "fan_idle_rpm", "fan_load_rpm",
     "clock_max_mhz", "clock_drop_pct", "clock_burst_drop_pct", "clock_samples",
@@ -648,6 +649,64 @@ class TestSlowLoadStart(unittest.TestCase):
         m = compute_metrics(s, BenchConfig(idle_sec=120, load_sec=300))
         self.assertEqual(m["load_ramp_sec"], 0.0)
         self.assertIsNotNone(m["load_plateau_c"])
+
+
+class TestIdleReference(unittest.TestCase):
+    """Repos pollue : la reference de temperature n'en est pas une.
+
+    Motif (atelier, 27/07/2026) : phase de repos mesuree a 16,5 % de charge CPU
+    mediane — maintenance Windows post-demarrage. `idle_c` en ressort surevalue
+    et le deltaT sous-evalue, sans le moindre avertissement.
+    """
+
+    @staticmethod
+    def _samples(idle_load, idle_c=45.0):
+        out = [{"t": t, "phase": "idle", "cpu": idle_c, "cpu_load": idle_load,
+                "clock": 1600} for t in range(0, 120, 5)]
+        for i in range(60):
+            out.append({"t": 120 + i * 5, "phase": "load", "cpu": 80.0,
+                        "cpu_load": 100.0, "clock": 2700})
+        out.append({"t": 425, "phase": "cooldown", "cpu": 50.0,
+                    "cpu_load": 2.0, "clock": 1600})
+        return out
+
+    def _metrics(self, idle_load, **kw):
+        return compute_metrics(self._samples(idle_load, **kw),
+                               BenchConfig(idle_sec=120, load_sec=300))
+
+    def test_busy_idle_is_flagged(self):
+        m = self._metrics(16.5)
+        self.assertTrue(m["idle_polluted"])
+        self.assertAlmostEqual(m["idle_load_pct"], 16.5)
+
+    def test_quiet_idle_is_not_flagged(self):
+        m = self._metrics(2.0)
+        self.assertFalse(m["idle_polluted"])
+        self.assertAlmostEqual(m["idle_load_pct"], 2.0)
+
+    def test_values_are_kept_not_erased(self):
+        # Contrairement au plateau d'une charge ecourtee — qui n'a jamais
+        # existe — un repos pollue reste une mesure : le deltaT est un MINORANT
+        # exploitable. On avertit, on n'efface pas.
+        m = self._metrics(16.5)
+        self.assertIsNotNone(m["idle_c"])
+        self.assertIsNotNone(m["delta_c"])
+
+    def test_without_cpu_load_nothing_is_invented(self):
+        samples = self._samples(2.0)
+        for s in samples:
+            if s["phase"] == "idle":
+                s["cpu_load"] = None
+        m = compute_metrics(samples, BenchConfig(idle_sec=120, load_sec=300))
+        self.assertIsNone(m["idle_load_pct"])
+        self.assertFalse(m["idle_polluted"])
+
+    def test_threshold_is_the_only_source_of_truth(self):
+        self.assertTrue(thermal_bench.idle_polluted(
+            thermal_bench.IDLE_LOAD_MAX_PCT + 0.1))
+        self.assertFalse(thermal_bench.idle_polluted(
+            thermal_bench.IDLE_LOAD_MAX_PCT))
+        self.assertFalse(thermal_bench.idle_polluted(None))
 
 
 class TestThrottlingState(unittest.TestCase):

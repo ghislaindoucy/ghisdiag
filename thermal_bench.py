@@ -149,6 +149,18 @@ LOAD_ACTIVE_PCT = 90.0
 # perdu ampute d'autant le regime etabli reellement observe.
 LOAD_RAMP_WARN_SEC = 10.0
 
+# Charge CPU (%) au-dela de laquelle la phase de repos ne mesure plus un repos.
+#
+# Vu en atelier (Altyk, 27/07/2026) : 16,5 % de charge CPU mediane pendant la
+# phase de reference — maintenance Windows post-demarrage, analyse Defender. La
+# temperature dite « de repos » en ressort surevaluee, donc le deltaT
+# sous-evalue, et rien ne le signalait : c'est le point de depart de TOUTES les
+# comparaisons du bench qui etait fausse en silence.
+#
+# 10 % : une machine reellement au repos tourne sous les 5 % ; au-dela de 10 %
+# quelque chose travaille, et la reference n'est plus une reference.
+IDLE_LOAD_MAX_PCT = 10.0
+
 # Marge de "retour au calme" : le refroidissement est considere termine quand la
 # temperature redescend a T_idle + cette marge.
 RECOVERY_MARGIN_C = 5.0
@@ -555,6 +567,27 @@ def phase_duration(samples: list[dict], phase: str) -> Optional[float]:
     return round(max(ts) - min(ts), 1) if len(ts) >= 2 else None
 
 
+def idle_load_pct(samples: list[dict]) -> Optional[float]:
+    """Charge CPU mediane pendant la REFERENCE de repos, en %.
+
+    Meme fenetre que `idle_c` (seconde moitie de la phase de repos) : la
+    question posee est « la temperature de reference a-t-elle ete prise sur une
+    machine reellement au repos ? ». Fonction publique : la comparaison s'en
+    sert pour requalifier les sessions archivees, qui n'ont pas la metrique.
+    """
+    idle = [s for s in samples if s.get("phase") == BenchPhase.IDLE.value]
+    return _median(_vals(_slice_by_fraction(idle, 0.5, 1.0) or idle, "cpu_load"))
+
+
+def idle_polluted(load_pct: Optional[float]) -> bool:
+    """True si la phase de repos etait trop chargee pour servir de reference.
+
+    Unique lecture autorisee du seuil : UI, comparaison et metriques passent
+    toutes par ici, pour qu'un seul chiffre fasse foi.
+    """
+    return bool(load_pct is not None and load_pct > IDLE_LOAD_MAX_PCT)
+
+
 def _time_to_recover(cool: list[dict], baseline_c: Optional[float],
                      key: str) -> Optional[float]:
     """Delai (s) depuis le debut du refroidissement pour repasser sous
@@ -578,6 +611,18 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
     # T idle : regime etabli (seconde moitie de la phase de repos).
     idle_steady = _slice_by_fraction(idle, 0.5, 1.0) or idle
     idle_c = _median(_vals(idle_steady, "cpu"))
+
+    # REPOS POLLUE : la reference n'en est pas une.
+    #
+    # Tout le bench se lit par rapport a cette temperature de depart. Si la
+    # machine travaillait pendant qu'on la mesurait (maintenance Windows,
+    # analyse antivirus, application restee ouverte), `idle_c` est trop haut et
+    # le deltaT trop bas — la mesure existe, mais elle decrit autre chose que ce
+    # qu'on croit lire. On garde les valeurs (le deltaT reste un MINORANT
+    # exploitable, contrairement au plateau d'une charge ecourtee qui, lui,
+    # n'a jamais existe) et on le dit.
+    idle_load_avg_pct = idle_load_pct(samples)
+    idle_dirty = idle_polluted(idle_load_avg_pct)
 
     # Charge.
     load_cpu = _vals(load, "cpu")
@@ -681,6 +726,8 @@ def compute_metrics(samples: list[dict], config: BenchConfig) -> dict:
 
     metrics = {
         "idle_c":          idle_c,
+        "idle_load_pct":   idle_load_avg_pct,  # charge CPU pendant la reference
+        "idle_polluted":   idle_dirty,         # True = repos non representatif
         "load_max_c":      load_max_c,
         "load_plateau_c":  load_plateau_c,
         "delta_c":         delta_c,
