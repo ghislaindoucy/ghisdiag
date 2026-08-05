@@ -80,6 +80,9 @@ Clé API par fournisseur (chiffrée AES-128), bouton « Tester la clé », aucun
 
 **Prérequis :** Windows 10/11, rien d'autre (tout est embarqué dans le dossier)
 
+La **notice d'utilisation** (`Notice_Ghisdiag.pdf`) est livrée dans le dossier, à
+côté de `Ghisdiag.exe` — plus besoin d'aller la chercher sur le dépôt.
+
 > ℹ️ Garde le dossier entier : `Ghisdiag.exe` a besoin du sous-dossier `_internal\`
 > posé à côté de lui. Ce format évite de décompresser 34 Mo dans le `%TEMP%` de
 > chaque machine à chaque lancement — c'est plus rapide en usage nomade, ça ne
@@ -378,7 +381,10 @@ ailleurs.
 
 Deux sorties :
 - `dist/Ghisdiag/` — le dossier à copier tel quel sur une clé USB (~78 MB, 1126 fichiers)
-- `dist/Ghisdiag.zip` — l'archive à publier en release (~34 MB)
+- `dist/Ghisdiag.zip` — l'archive à publier en release (~35 MB)
+
+`docs/Notice_Ghisdiag.pdf` est copiée dans `dist/Ghisdiag/` avant l'archivage, par
+`build.bat` comme par la CI. Le build échoue si elle est absente.
 
 Toutes les dépendances sont embarquées ; aucun Python requis chez l'utilisateur.
 
