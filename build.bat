@@ -64,6 +64,21 @@ if not exist "dist\Ghisdiag\Ghisdiag.exe" (
     pause & exit /b 1
 )
 
+:: Notice utilisateur livrée AVEC l'application, posée à côté de Ghisdiag.exe (et
+:: non dans _internal\, où personne ne va la chercher). Elle est ainsi présente
+:: sur la clé USB d'atelier comme dans l'archive téléchargée.
+:: Erreur bloquante si elle manque : une archive publiée sans notice est un
+:: oubli silencieux, exactement le genre de dérive qu'on cherche à éviter.
+if not exist "docs\Notice_Ghisdiag.pdf" (
+    echo ERREUR: docs\Notice_Ghisdiag.pdf introuvable.
+    pause & exit /b 1
+)
+copy /y "docs\Notice_Ghisdiag.pdf" "dist\Ghisdiag\Notice_Ghisdiag.pdf" >nul
+if errorlevel 1 (
+    echo ERREUR: copie de la notice dans dist\Ghisdiag\ impossible.
+    pause & exit /b 1
+)
+
 :: Archive prête à distribuer / à copier sur la clé atelier. Volontairement sans
 :: numéro de version dans le nom : la version vit dans version_info.txt et
 :: Ghisdiag.manifest, en rajouter une ici recréerait un endroit à bumper.
@@ -113,6 +128,7 @@ echo  Compilation réussie ^(mode onedir^)
 echo.
 echo  Dossier  : dist\Ghisdiag\        ^(à copier sur la clé USB^)
 echo  Exe      : dist\Ghisdiag\Ghisdiag.exe
+echo  Notice   : dist\Ghisdiag\Notice_Ghisdiag.pdf
 echo  Archive  : dist\Ghisdiag.zip     ^(à publier en release^)
 echo ============================================================
 

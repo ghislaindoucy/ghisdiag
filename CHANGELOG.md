@@ -4,6 +4,27 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [Non publié]
+
+### 📖 La notice est livrée avec l'application
+
+`Notice_Ghisdiag.pdf` est désormais copiée dans le dossier de distribution, **à
+côté de `Ghisdiag.exe`** — donc présente dans l'archive téléchargée comme sur la
+clé USB d'atelier. Jusqu'ici elle n'existait que dans le dépôt : personne ne
+l'avait sous la main au moment d'utiliser l'outil. Elle est volontairement placée
+à la racine du dossier et non dans `_internal\`, où personne ne va la chercher.
+
+La copie est faite par `build.bat` **et** par la CI, et le build échoue si le
+fichier est absent — une archive publiée sans notice serait un oubli silencieux.
+
+Trois informations périmées ont par ailleurs été corrigées dans la notice :
+l'espace disque annoncé (chiffre de l'ancien exe unique), le badge de couverture
+« Exécutable autonome » et le seuil d'arrêt d'urgence, présenté comme figé à
+95 °C alors qu'il est réglable depuis la 2.0.1. Elle gagne un encadré sur les
+faux positifs antivirus et la vérification d'attestation.
+
+---
+
 ## [2.0.3] — 2026-08-03
 
 ### 🌡️ Bench thermique — un test écourté ne dit plus « pas de throttling »

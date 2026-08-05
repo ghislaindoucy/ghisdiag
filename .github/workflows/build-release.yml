@@ -62,6 +62,18 @@ jobs:
             throw "dist\Ghisdiag\Ghisdiag.exe introuvable — le .spec n'est pas en mode onedir ?"
           }
 
+      # La notice est posée À CÔTÉ de Ghisdiag.exe, pas dans _internal\ : c'est
+      # un document destiné à l'utilisateur, il doit être visible en ouvrant le
+      # dossier. Erreur bloquante si elle manque — une archive publiée sans
+      # notice serait un oubli silencieux.
+      - name: Joindre la notice utilisateur
+        shell: pwsh
+        run: |
+          if (-not (Test-Path docs\Notice_Ghisdiag.pdf)) {
+            throw "docs\Notice_Ghisdiag.pdf introuvable — la notice doit être livrée dans l'archive."
+          }
+          Copy-Item docs\Notice_Ghisdiag.pdf dist\Ghisdiag\Notice_Ghisdiag.pdf -Force
+
       - name: Créer l'archive de distribution
         shell: pwsh
         run: Compress-Archive -Path dist\Ghisdiag\* -DestinationPath dist\Ghisdiag.zip -Force
