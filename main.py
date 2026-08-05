@@ -82,6 +82,17 @@ except Exception as _exc:
     _HAS_HISTORY = False
     _IMPORT_ERRORS["diag_compare"] = f"{type(_exc).__name__}: {_exc}"
 
+# Blocage de la mise en veille (onglet Setup + bench thermique). Optionnel :
+# sans lui, l'interrupteur se désactive proprement au lieu d'empêcher le
+# démarrage de l'application.
+try:
+    import power_keepalive
+    _HAS_KEEPALIVE = True
+except Exception as _exc:
+    power_keepalive = None
+    _HAS_KEEPALIVE = False
+    _IMPORT_ERRORS["power_keepalive"] = f"{type(_exc).__name__}: {_exc}"
+
 from prefs    import LOG_DIR, load_prefs, save_prefs
 from security import is_admin, request_elevation, is_safe_output_dir
 
@@ -498,6 +509,12 @@ class GhisdiagApp(tk.Tk):
         nb.pack(fill="both", expand=True)
         self._nb = nb
 
+        # Setup / MAJ en tête : c'est le premier geste sur une machine
+        # fraîchement réinstallée (mise à l'heure, comptes, essentiels), et
+        # tkinter sélectionne le 1er onglet — l'app s'ouvre donc dessus.
+        setup_frame = tk.Frame(nb, bg=BG)
+        nb.add(setup_frame, text="  Setup / MAJ  ")
+
         analyse_frame = tk.Frame(nb, bg=BG)
         nb.add(analyse_frame, text="  Analyse  ")
 
@@ -510,9 +527,6 @@ class GhisdiagApp(tk.Tk):
 
         wifi_frame = tk.Frame(nb, bg=BG)
         nb.add(wifi_frame, text="  WiFi  ")
-
-        setup_frame = tk.Frame(nb, bg=BG)
-        nb.add(setup_frame, text="  Setup / MAJ  ")
 
         self._build_analyse_tab(analyse_frame)
         if _HAS_BENCH:
@@ -3952,6 +3966,12 @@ class GhisdiagApp(tk.Tk):
                 "Impossible de démarrer les capteurs (LibreHardwareMonitor).")
             return
 
+        # Le test dure jusqu'à ~17 min sans aucune interaction : une machine qui
+        # s'endort en pleine charge coupe la mesure et rend la session
+        # inexploitable. On bloque la veille pour la durée du test, écran libre
+        # (l'extinction de l'écran ne suspend rien).
+        self._bench_keepalive(True)
+
         self._bench_running = True
         self._bench_set_controls(False)
         self._bench_btn.config(text="■   Arrêter", bg=RED,
@@ -3966,9 +3986,29 @@ class GhisdiagApp(tk.Tk):
                    self._bench_intens_cb, self._bench_dur_cb):
             cb.config(state=state)
 
+    def _bench_keepalive(self, block: bool):
+        """Pose ou lève le blocage de veille propre au bench.
+
+        Passe par une raison distincte de celle de l'interrupteur du panneau
+        Setup : si le technicien l'a activé de son côté, la fin du bench ne doit
+        pas le lui retirer.
+        """
+        if not _HAS_KEEPALIVE:
+            return
+        try:
+            if block:
+                if not power_keepalive.acquire(self._KEEPALIVE_BENCH):
+                    logger.warning("Bench : blocage de la veille refusé par Windows")
+            else:
+                power_keepalive.release(self._KEEPALIVE_BENCH)
+        except Exception as exc:
+            logger.debug("Bench keepalive : %s", exc)
+        self._keepalive_sync_ui()
+
     def _bench_reset_button(self):
         self._bench_running = False
         self._bench = None
+        self._bench_keepalive(False)
         self._bench_set_controls(True)
         self._bench_btn.config(text="▶   Démarrer le test", bg=ACCENT,
                                activebackground=ACCENT_HOVER, state="normal")
@@ -4626,6 +4666,14 @@ class GhisdiagApp(tk.Tk):
             self._temp_stream_stop()
         except Exception:
             pass
+        # Rend la veille au système. L'état meurt de toute façon avec le
+        # processus ; on le relâche explicitement pour ne pas laisser le PC
+        # éveillé pendant les quelques instants de la fermeture.
+        if _HAS_KEEPALIVE:
+            try:
+                power_keepalive.shutdown()
+            except Exception:
+                pass
         self.destroy()
 
     # ── Driver PawnIO (température/fréquence CPU) au démarrage ────────────────
@@ -4687,20 +4735,530 @@ class GhisdiagApp(tk.Tk):
         sub_nb = ttk.Notebook(parent, style="Setup.TNotebook")
         sub_nb.pack(fill="both", expand=True)
 
+        # « Heure & veille » en tête : sur une machine fraîchement réinstallée,
+        # remettre l'horloge à l'heure est le préalable à tout le reste (winget,
+        # activation, certificats HTTPS refusent une horloge fausse).
+        heure_frame    = tk.Frame(sub_nb, bg=BG)
         comptes_frame  = tk.Frame(sub_nb, bg=BG)
         maj_frame      = tk.Frame(sub_nb, bg=BG)
         pcneuf_frame   = tk.Frame(sub_nb, bg=BG)
         recup_frame    = tk.Frame(sub_nb, bg=BG)
 
+        sub_nb.add(heure_frame,   text="  Heure & veille  ")
         sub_nb.add(comptes_frame, text="  Comptes  ")
         sub_nb.add(maj_frame,     text="  Mises à jour  ")
         sub_nb.add(pcneuf_frame,  text="  PC Neuf  ")
         sub_nb.add(recup_frame,   text="  Récupération  ")
 
+        self._build_time_panel(heure_frame)
         self._build_comptes_panel(comptes_frame)
         self._build_maj_panel(maj_frame)
         self._build_pcneuf_panel(pcneuf_frame)
         self._build_recuperation_panel(recup_frame)
+
+    # ── Panneau Heure & veille ────────────────────────────────────────────────
+
+    _JOURS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi",
+                 "samedi", "dimanche")
+    _MOIS_FR  = ("janvier", "février", "mars", "avril", "mai", "juin",
+                 "juillet", "août", "septembre", "octobre", "novembre",
+                 "décembre")
+    # Serveurs de temps proposés. Le premier est celui de Windows ; les pools
+    # NTP servent de repli quand time.windows.com est filtré par le réseau.
+    _NTP_SERVERS = ("time.windows.com", "fr.pool.ntp.org", "pool.ntp.org")
+
+    # Raisons de blocage de veille. Deux demandeurs indépendants : la case à
+    # cocher du technicien et le bench thermique. Chacun lève la sienne.
+    _KEEPALIVE_UI    = "interrupteur"
+    _KEEPALIVE_BENCH = "bench-thermique"
+
+    def _build_time_panel(self, parent: tk.Frame):
+        inner = self._scrollable(parent)
+
+        # ── État actuel ───────────────────────────────────────────────────────
+        sec1 = tk.Frame(inner, bg=BG, pady=16)
+        sec1.pack(fill="x", padx=28)
+        tk.Label(sec1, text="🕒  Heure, date et fuseau horaire",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(sec1,
+                 text="Une horloge fausse fait échouer winget, l'activation Windows "
+                      "et toute connexion HTTPS : c'est le premier réglage d'une "
+                      "machine fraîchement réinstallée.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+                 wraplength=760, justify="left").pack(anchor="w", pady=(2, 12))
+
+        state_box = tk.Frame(sec1, bg=SURFACE, padx=16, pady=14)
+        state_box.pack(fill="x")
+
+        self._time_now_var = tk.StringVar(value="…")
+        tk.Label(state_box, textvariable=self._time_now_var,
+                 font=("Segoe UI", 16, "bold"), bg=SURFACE, fg=ACCENT).pack(anchor="w")
+
+        self._time_tz_state_var  = tk.StringVar(value="Fuseau horaire : …")
+        self._time_src_var       = tk.StringVar(value="Source de temps : …")
+        self._time_net_var       = tk.StringVar(value="")
+        for var in (self._time_tz_state_var, self._time_src_var, self._time_net_var):
+            tk.Label(state_box, textvariable=var, font=("Segoe UI", 9),
+                     bg=SURFACE, fg=FG_DIM, wraplength=760,
+                     justify="left").pack(anchor="w", pady=(4, 0))
+
+        tk.Button(state_box, text="🔄  Actualiser", font=("Segoe UI", 9),
+                  bg=SURFACE2, fg=FG, activebackground=ACCENT, relief="flat",
+                  cursor="hand2", padx=12, pady=5,
+                  command=self._time_refresh).pack(anchor="w", pady=(12, 0))
+
+        # ── Mise à l'heure : Internet ─────────────────────────────────────────
+        sec2 = tk.Frame(inner, bg=BG, pady=8)
+        sec2.pack(fill="x", padx=28)
+
+        net_box = tk.Frame(sec2, bg=SURFACE, padx=16, pady=14)
+        net_box.pack(fill="x")
+        tk.Label(net_box, text="🌐  Synchroniser sur Internet",
+                 font=("Segoe UI", 11, "bold"), bg=SURFACE, fg=FG).pack(anchor="w")
+        tk.Label(net_box,
+                 text="Interroge un serveur de temps (NTP) et cale l'horloge dessus. "
+                      "Demande une connexion : sans réseau, utilisez la saisie manuelle "
+                      "ci-dessous.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(2, 10))
+
+        net_row = tk.Frame(net_box, bg=SURFACE)
+        net_row.pack(fill="x")
+        tk.Label(net_row, text="Serveur", font=("Segoe UI", 9),
+                 bg=SURFACE, fg=FG_DIM, width=10, anchor="w").pack(side="left")
+        self._time_server_var = tk.StringVar(value=self._NTP_SERVERS[0])
+        ttk.Combobox(net_row, textvariable=self._time_server_var,
+                     values=list(self._NTP_SERVERS), state="readonly",
+                     style="PD.TCombobox", width=24).pack(side="left")
+        tk.Button(net_row, text="🌐  Synchroniser maintenant",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
+                  padx=14, pady=6,
+                  command=self._time_sync_internet).pack(side="left", padx=(12, 0))
+
+        # ── Mise à l'heure : manuelle ─────────────────────────────────────────
+        man_box = tk.Frame(sec2, bg=SURFACE, padx=16, pady=14)
+        man_box.pack(fill="x", pady=(12, 0))
+        tk.Label(man_box, text="✍  Saisie manuelle",
+                 font=("Segoe UI", 11, "bold"), bg=SURFACE, fg=FG).pack(anchor="w")
+        tk.Label(man_box,
+                 text="Pour une machine sans connexion. Les champs sont pré-remplis "
+                      "avec l'heure actuelle du PC : corrigez ce qui est faux.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(2, 10))
+
+        man_row = tk.Frame(man_box, bg=SURFACE)
+        man_row.pack(fill="x")
+        tk.Label(man_row, text="Date", font=("Segoe UI", 9),
+                 bg=SURFACE, fg=FG_DIM, width=10, anchor="w").pack(side="left")
+        self._time_date_var = tk.StringVar()
+        tk.Entry(man_row, textvariable=self._time_date_var, width=12,
+                 font=("Segoe UI", 10), bg=SURFACE2, fg=FG, relief="flat",
+                 insertbackground=FG).pack(side="left")
+        tk.Label(man_row, text="JJ/MM/AAAA", font=("Segoe UI", 8),
+                 bg=SURFACE, fg=FG_MUTED).pack(side="left", padx=(6, 18))
+
+        tk.Label(man_row, text="Heure", font=("Segoe UI", 9),
+                 bg=SURFACE, fg=FG_DIM, anchor="w").pack(side="left")
+        self._time_hour_var = tk.StringVar()
+        tk.Entry(man_row, textvariable=self._time_hour_var, width=10,
+                 font=("Segoe UI", 10), bg=SURFACE2, fg=FG, relief="flat",
+                 insertbackground=FG).pack(side="left", padx=(8, 0))
+        tk.Label(man_row, text="HH:MM:SS", font=("Segoe UI", 8),
+                 bg=SURFACE, fg=FG_MUTED).pack(side="left", padx=(6, 0))
+
+        man_btns = tk.Frame(man_box, bg=SURFACE)
+        man_btns.pack(fill="x", pady=(10, 0))
+        tk.Button(man_btns, text="↻  Reprendre l'heure du PC", font=("Segoe UI", 9),
+                  bg=SURFACE2, fg=FG, activebackground=ACCENT, relief="flat",
+                  cursor="hand2", padx=12, pady=5,
+                  command=self._time_prefill_manual).pack(side="left")
+        tk.Button(man_btns, text="✔  Appliquer cette date et heure",
+                  font=("Segoe UI", 10, "bold"), bg=ACCENT, fg=BG,
+                  activebackground=ACCENT_HOVER, relief="flat", cursor="hand2",
+                  padx=14, pady=6,
+                  command=self._time_apply_manual).pack(side="left", padx=(10, 0))
+
+        # ── Fuseau horaire ────────────────────────────────────────────────────
+        tz_box = tk.Frame(sec2, bg=SURFACE, padx=16, pady=14)
+        tz_box.pack(fill="x", pady=(12, 0))
+        tk.Label(tz_box, text="🗺  Fuseau horaire",
+                 font=("Segoe UI", 11, "bold"), bg=SURFACE, fg=FG).pack(anchor="w")
+        tk.Label(tz_box,
+                 text="Un fuseau erroné décale l'horloge d'une heure entière même "
+                      "après une synchronisation réussie.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(2, 10))
+
+        tz_row = tk.Frame(tz_box, bg=SURFACE)
+        tz_row.pack(fill="x")
+        self._time_tz_var = tk.StringVar(value="Chargement…")
+        self._time_tz_cb  = ttk.Combobox(tz_row, textvariable=self._time_tz_var,
+                                         values=[], state="disabled",
+                                         style="PD.TCombobox", width=52)
+        self._time_tz_cb.pack(side="left")
+        tk.Button(tz_row, text="✔  Appliquer le fuseau", font=("Segoe UI", 10),
+                  bg=SURFACE2, fg=FG, activebackground=ACCENT, relief="flat",
+                  cursor="hand2", padx=14, pady=6,
+                  command=self._time_apply_tz).pack(side="left", padx=(10, 0))
+
+        # Correspondance libellé affiché -> identifiant Windows du fuseau.
+        self._time_tz_ids: dict[str, str] = {}
+
+        # ── Mise en veille ────────────────────────────────────────────────────
+        sec3 = tk.Frame(inner, bg=BG, pady=8)
+        sec3.pack(fill="x", padx=28, pady=(0, 20))
+
+        veille_box = tk.Frame(sec3, bg=SURFACE, padx=16, pady=14)
+        veille_box.pack(fill="x")
+        tk.Label(veille_box, text="☕  Mise en veille",
+                 font=("Segoe UI", 11, "bold"), bg=SURFACE, fg=FG).pack(anchor="w")
+        tk.Label(veille_box,
+                 text="Empêche le PC de s'endormir pendant une intervention longue "
+                      "(installation, copie, test). Windows ne permet ce blocage que "
+                      "tant que le programme qui le demande tourne : il s'arrête donc "
+                      "à la fermeture de Ghisdiag.",
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(2, 10))
+
+        self._time_block_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(veille_box, text="Empêcher la mise en veille",
+                       variable=self._time_block_var,
+                       font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+                       activebackground=SURFACE, selectcolor=SURFACE2,
+                       relief="flat", cursor="hand2",
+                       command=self._time_toggle_block).pack(anchor="w")
+
+        self._time_display_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(veille_box, text="Garder aussi l'écran allumé",
+                       variable=self._time_display_var,
+                       font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+                       activebackground=SURFACE, selectcolor=SURFACE2,
+                       relief="flat", cursor="hand2",
+                       command=self._time_toggle_block).pack(anchor="w", padx=(24, 0))
+
+        self._time_block_status_var = tk.StringVar(
+            value="Le PC peut se mettre en veille normalement.")
+        tk.Label(veille_box, textvariable=self._time_block_status_var,
+                 font=("Segoe UI", 9), bg=SURFACE, fg=FG_DIM,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(8, 0))
+
+        tk.Label(veille_box,
+                 text="Le bench thermique active ce blocage tout seul le temps du "
+                      "test : une machine qui s'endort en pleine charge ruine la mesure.",
+                 font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED,
+                 wraplength=740, justify="left").pack(anchor="w", pady=(6, 0))
+
+        # ── Journal du panneau ────────────────────────────────────────────────
+        self._time_log_var = tk.StringVar(value="")
+        tk.Label(sec3, textvariable=self._time_log_var, font=("Segoe UI", 9),
+                 bg=BG, fg=FG_DIM, wraplength=760,
+                 justify="left").pack(anchor="w", pady=(10, 0))
+
+        # Verrou propre au panneau. La lecture d'état ne prend PAS `_setup_busy`
+        # (verrou des actions du sous-onglet Setup) : elle est déclenchée au
+        # démarrage et durerait assez longtemps pour faire renoncer en silence
+        # la vérification « PC Neuf », planifiée 200 ms plus tard.
+        self._time_busy = False
+
+        self._time_tick()
+        self.after(400, self._time_refresh)
+        self.after(900, self._time_load_zones)
+
+    def _time_tick(self):
+        """Horloge vivante : c'est elle qui rend une dérive visible d'un coup."""
+        now = datetime.now()
+        self._time_now_var.set(
+            f"{self._JOURS_FR[now.weekday()]} {now.day} "
+            f"{self._MOIS_FR[now.month - 1]} {now.year}  —  {now:%H:%M:%S}")
+        self.after(1000, self._time_tick)
+
+    def _time_prefill_manual(self):
+        now = datetime.now()
+        self._time_date_var.set(now.strftime("%d/%m/%Y"))
+        self._time_hour_var.set(now.strftime("%H:%M:%S"))
+
+    def _time_refresh(self):
+        """Relit l'état système (fuseau, service de temps, connectivité)."""
+        if self._time_busy:
+            return
+        self._time_busy = True
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/time_manager.ps1",
+                                     ["-Action", "status"], timeout=30)
+                self.after(0, lambda: self._time_show_state(data))
+            except Exception as exc:
+                def _err(e=exc):
+                    self._time_busy = False
+                    self._time_log_var.set(f"Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _time_show_state(self, data: dict):
+        self._time_busy = False
+        if not data.get("success"):
+            self._time_log_var.set(f"Erreur : {data.get('error', '?')}")
+            return
+        st = data.get("state") or {}
+
+        tz_name = st.get("timezone_name") or st.get("timezone_id") or "inconnu"
+        self._time_tz_state_var.set(f"Fuseau horaire : {tz_name}")
+
+        # `time_source` est nul quand w32tm n'a pas pu répondre : on ne présente
+        # pas son message d'erreur comme si c'était une source de temps.
+        src = st.get("time_source")
+        svc = st.get("w32time_status") or "?"
+        self._time_src_var.set(
+            f"Source de temps : {src}   —   service W32Time : {svc}"
+            if src else
+            f"Source de temps : non lisible   —   service W32Time : {svc}")
+
+        if st.get("internet"):
+            self._time_net_var.set("Connexion Internet détectée : la synchronisation "
+                                   "est possible.")
+        else:
+            self._time_net_var.set("Aucune connexion Internet détectée : utilisez la "
+                                   "saisie manuelle.")
+
+        if st.get("domain_joined"):
+            self._time_log_var.set(
+                "Machine membre d'un domaine : l'heure est normalement imposée par "
+                "le contrôleur de domaine. La synchronisation se contentera de "
+                "demander un rafraîchissement.")
+
+        # Positionne la liste des fuseaux sur celui de la machine.
+        self._time_tz_current = st.get("timezone_id")
+        self._time_select_current_tz()
+
+        if not self._time_date_var.get():
+            self._time_prefill_manual()
+
+    def _time_load_zones(self):
+        """Charge la liste des fuseaux Windows (~140 entrées) en tâche de fond."""
+        def _worker():
+            try:
+                data = run_ps_action("collectors/time_manager.ps1",
+                                     ["-Action", "list-timezones"], timeout=60)
+                self.after(0, lambda: self._time_fill_zones(data))
+            except Exception as exc:
+                def _err(e=exc):
+                    self._time_tz_var.set("Liste indisponible")
+                    self._time_log_var.set(f"Fuseaux horaires : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _time_fill_zones(self, data: dict):
+        if not data.get("success"):
+            self._time_tz_var.set("Liste indisponible")
+            self._time_log_var.set(f"Fuseaux horaires : {data.get('error', '?')}")
+            return
+        zones = data.get("timezones") or []
+        self._time_tz_ids = {}
+        labels = []
+        for z in zones:
+            label = z.get("name") or z.get("id")
+            if not label:
+                continue
+            self._time_tz_ids[label] = z.get("id")
+            labels.append(label)
+        self._time_tz_cb.config(values=labels, state="readonly")
+        self._time_select_current_tz()
+
+    def _time_select_current_tz(self):
+        """Sélectionne dans la liste le fuseau réellement actif sur la machine."""
+        current = getattr(self, "_time_tz_current", None)
+        if not current or not self._time_tz_ids:
+            return
+        for label, tz_id in self._time_tz_ids.items():
+            if tz_id == current:
+                self._time_tz_var.set(label)
+                return
+
+    def _time_sync_internet(self):
+        if self._setup_busy:
+            return
+        server = self._time_server_var.get().strip()
+        self._setup_busy = True
+        self._time_log_var.set(f"Synchronisation sur {server}…")
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/time_manager.ps1",
+                                     ["-Action", "sync-internet", "-Server", server],
+                                     timeout=120)
+                def _update():
+                    self._setup_busy = False
+                    if data.get("success"):
+                        self._time_log_var.set(f"✓ {data.get('message', 'Heure synchronisée.')}")
+                        self._time_prefill_manual()
+                        self._time_show_state({"success": True,
+                                               "state": data.get("state") or {}})
+                    else:
+                        # Échec fréquent en atelier (pas de réseau, port 123
+                        # filtré) : on renvoie explicitement vers l'autre chemin.
+                        self._time_log_var.set(
+                            f"✗ {data.get('error', 'Synchronisation impossible.')}\n"
+                            "→ Réglez l'heure à la main dans « Saisie manuelle ».")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._time_log_var.set(
+                        f"✗ Synchronisation impossible : {e}\n"
+                        "→ Réglez l'heure à la main dans « Saisie manuelle ».")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _parse_manual_datetime(date_str: str, hour_str: str) -> tuple[str, str]:
+        """(valeur 'yyyy-MM-dd HH:mm:ss', erreur). Une seule des deux est remplie.
+
+        Les secondes sont facultatives à la saisie — personne ne les tape.
+        """
+        date_str = (date_str or "").strip()
+        hour_str = (hour_str or "").strip()
+        if not date_str or not hour_str:
+            return "", "Renseignez la date ET l'heure."
+        for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
+            try:
+                dt = datetime.strptime(f"{date_str} {hour_str}", fmt)
+            except ValueError:
+                continue
+            if not 2000 <= dt.year <= 2100:
+                return "", f"Année hors plage (2000-2100) : {dt.year}."
+            return dt.strftime("%Y-%m-%d %H:%M:%S"), ""
+        return "", ("Date ou heure illisible. Format attendu : "
+                    "JJ/MM/AAAA et HH:MM:SS.")
+
+    def _time_apply_manual(self):
+        if self._setup_busy:
+            return
+        value, err = self._parse_manual_datetime(self._time_date_var.get(),
+                                                 self._time_hour_var.get())
+        if err:
+            self._time_log_var.set(f"✗ {err}")
+            return
+
+        pretty = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        if not messagebox.askyesno(
+                "Régler l'horloge",
+                "L'horloge de ce PC va être réglée sur :\n\n"
+                f"    {self._JOURS_FR[pretty.weekday()]} {pretty.day} "
+                f"{self._MOIS_FR[pretty.month - 1]} {pretty.year} à "
+                f"{pretty:%H:%M:%S}\n\n"
+                "Continuer ?"):
+            return
+
+        self._setup_busy = True
+        self._time_log_var.set("Réglage de l'horloge…")
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/time_manager.ps1",
+                                     ["-Action", "set-manual", "-DateTime", value],
+                                     timeout=30)
+                def _update():
+                    self._setup_busy = False
+                    if data.get("success"):
+                        self._time_log_var.set(f"✓ {data.get('message', 'Horloge réglée.')}")
+                        self._time_show_state({"success": True,
+                                               "state": data.get("state") or {}})
+                    else:
+                        self._time_log_var.set(f"✗ {data.get('error', '?')}")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._time_log_var.set(f"✗ Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _time_apply_tz(self):
+        if self._setup_busy:
+            return
+        label = self._time_tz_var.get()
+        tz_id = self._time_tz_ids.get(label)
+        if not tz_id:
+            self._time_log_var.set("✗ Choisissez un fuseau horaire dans la liste.")
+            return
+        self._setup_busy = True
+        self._time_log_var.set(f"Application du fuseau « {label} »…")
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/time_manager.ps1",
+                                     ["-Action", "set-timezone", "-TimeZoneId", tz_id],
+                                     timeout=30)
+                def _update():
+                    self._setup_busy = False
+                    if data.get("success"):
+                        self._time_log_var.set(f"✓ {data.get('message', 'Fuseau appliqué.')}")
+                        self._time_prefill_manual()
+                        self._time_show_state({"success": True,
+                                               "state": data.get("state") or {}})
+                    else:
+                        self._time_log_var.set(f"✗ {data.get('error', '?')}")
+                self.after(0, _update)
+            except Exception as exc:
+                def _err(e=exc):
+                    self._setup_busy = False
+                    self._time_log_var.set(f"✗ Erreur : {e}")
+                self.after(0, _err)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # -- Blocage de la mise en veille ------------------------------------------
+
+    def _time_toggle_block(self):
+        """Applique l'interrupteur de veille et rend compte de ce que Windows a
+        RÉELLEMENT accordé (l'appel peut être refusé)."""
+        if not _HAS_KEEPALIVE:
+            self._time_block_var.set(False)
+            self._time_block_status_var.set(
+                "Blocage indisponible : module de gestion d'énergie non chargé.")
+            return
+
+        want    = self._time_block_var.get()
+        display = self._time_display_var.get()
+
+        def _worker():
+            if want:
+                ok = power_keepalive.acquire(self._KEEPALIVE_UI,
+                                             keep_display=display)
+            else:
+                power_keepalive.release(self._KEEPALIVE_UI)
+                ok = False
+            self.after(0, lambda: self._time_block_result(want, ok, display))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _time_block_result(self, want: bool, ok: bool, display: bool):
+        if want and not ok:
+            self._time_block_var.set(False)
+            self._time_block_status_var.set(
+                "✗ Windows a refusé le blocage de la mise en veille.")
+            return
+        if want:
+            suffix = " L'écran reste allumé." if display else ""
+            self._time_block_status_var.set(
+                "✓ Mise en veille bloquée tant que Ghisdiag est ouvert." + suffix)
+        else:
+            self._time_block_status_var.set(
+                "Le PC peut se mettre en veille normalement.")
+
+    def _keepalive_sync_ui(self):
+        """Remet l'interrupteur en accord avec l'état réel (le bench pose et
+        retire sa propre raison sans passer par la case à cocher)."""
+        if not _HAS_KEEPALIVE or not hasattr(self, "_time_block_status_var"):
+            return
+        if self._time_block_var.get():
+            return          # l'interrupteur manuel prime sur l'affichage
+        if power_keepalive.is_active():
+            self._time_block_status_var.set(
+                "✓ Mise en veille bloquée pendant le bench thermique.")
+        else:
+            self._time_block_status_var.set(
+                "Le PC peut se mettre en veille normalement.")
 
     # ── Panneau Comptes ───────────────────────────────────────────────────────
     def _build_comptes_panel(self, parent: tk.Frame):

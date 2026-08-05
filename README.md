@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.1.0)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -34,6 +34,11 @@
 
 - **Réparation système** — SFC, DISM, vidage des journaux Windows pour une base de test propre
 - **PC Neuf** — installation en 1 clic de logiciels essentiels (via winget), icônes du bureau
+
+### 🕒 Heure & veille (onglet Setup / MAJ, en tête)
+
+- **Mise à l'heure** — synchronisation Internet (NTP) **ou** saisie manuelle pour une machine sans réseau, plus le choix du fuseau horaire
+- **Blocage de la mise en veille** pendant une intervention longue — activé automatiquement par le bench thermique le temps du test
 
 ### 🤖 Analyse IA multi-fournisseurs
 
@@ -154,6 +159,16 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.1.0 (Août 2026)
+⚙️ **Setup / MAJ passe en premier onglet, et sait régler l'heure**
+- **« Setup / MAJ » en tête** — c'est l'onglet du premier geste sur une machine fraîchement réinstallée ; il était le dernier. L'application s'ouvre désormais dessus.
+- **Nouveau sous-onglet « Heure & veille »** — horloge vivante, fuseau actif, source de temps et état du service W32Time. Une horloge fausse fait échouer winget, l'activation Windows et toute connexion HTTPS.
+- **Deux chemins pour la mise à l'heure** : synchronisation Internet (NTP) **ou** saisie manuelle. En atelier, la machine n'a souvent pas encore de réseau : la synchro n'est pas un passage obligé, et son échec renvoie explicitement vers la saisie manuelle. Choix du fuseau horaire dans la liste Windows complète.
+- **Blocage de la mise en veille**, avec option « garder l'écran allumé ». **Le bench thermique l'active tout seul** : un test dure jusqu'à ~17 min sans interaction, et une machine qui s'endormait en pleine charge ruinait la mesure.
+- 📖 La **notice PDF est maintenant livrée dans l'archive**, à côté de `Ghisdiag.exe`.
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.1.0.md)
 
 ### v2.0.3 (Août 2026)
 🌡️ **Le bench thermique ne conclut plus à partir d'un test incomplet**
@@ -465,6 +480,6 @@ Merci beaucoup, ça fait toujours plaisir et ça encourage à continuer ! 🙏
 
 **Fait avec ❤️ pour les PC qui souffrent.**
 
-[⬇️ Télécharge v2.0.3](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
+[⬇️ Télécharge v2.1.0](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.1.0) • [Changelog](./CHANGELOG.md) • [Rapport d'erreur](https://github.com/ghislaindoucy/ghisdiag/issues)
 
 </div>

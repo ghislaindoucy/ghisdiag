@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Dossier portable</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.0.3 — Document généré le 5 août 2026</div>
+  <div class="version">Version 2.1.0 — Document généré le 5 août 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -175,7 +175,7 @@ footer.pagefoot{
   <li><span class="t">Vue d'ensemble de l'application — les 5 onglets</span></li>
   <li><span class="t">Onglet Analyse — le diagnostic complet</span></li>
   <li><span class="t">Onglet Bench thermique — mesurer le refroidissement</span></li>
-  <li><span class="t">Onglets Dépannage, WiFi et Setup/MAJ</span></li>
+  <li><span class="t">Onglets Dépannage, WiFi et Setup/MAJ (heure, fuseau, veille)</span></li>
   <li><span class="t">L'analyse IA — pourquoi et comment</span></li>
   <li><span class="t">Obtenir et configurer ses clés API (5 fournisseurs)</span></li>
   <li><span class="t">Glossaire technique</span></li>
@@ -218,9 +218,14 @@ footer.pagefoot{
 <span class="section-tag">02 — Vue d'ensemble</span>
 <h2 class="title">Les 5 onglets de l'application</h2>
 
-<p>L'interface de Ghisdiag est organisée en cinq onglets, chacun couvrant un aspect de la maintenance d'un poste Windows.</p>
+<p>L'interface de Ghisdiag est organisée en cinq onglets, chacun couvrant un aspect de la maintenance d'un poste Windows. Depuis la version 2.1.0, <b>« Setup / MAJ » est le premier onglet</b> — c'est celui du premier geste sur une machine fraîchement réinstallée — et l'application s'ouvre donc dessus.</p>
 
 <div class="grid5">
+  <div class="card c5">
+    <div class="ic">⚙️</div>
+    <h4>Setup / MAJ</h4>
+    <p>Heure, date et fuseau horaire, blocage de la mise en veille, comptes utilisateurs, mises à jour winget, configuration d'un PC neuf, récupération.</p>
+  </div>
   <div class="card c1">
     <div class="ic">🔍</div>
     <h4>Analyse</h4>
@@ -240,11 +245,6 @@ footer.pagefoot{
     <div class="ic">📶</div>
     <h4>WiFi</h4>
     <p>Profils enregistrés, mots de passe, scan et connexion à un réseau.</p>
-  </div>
-  <div class="card c5">
-    <div class="ic">⚙️</div>
-    <h4>Setup / MAJ</h4>
-    <p>Comptes utilisateurs, mises à jour winget, configuration d'un PC neuf, récupération.</p>
   </div>
 </div>
 
@@ -434,11 +434,29 @@ footer.pagefoot{
 <h3>Onglet Setup / MAJ</h3>
 <table>
 <tr><th>Sous-onglet</th><th>Fonctions</th></tr>
+<tr><td>Heure &amp; veille</td><td>Mise à l'heure par synchronisation Internet (NTP) <b>ou</b> par saisie manuelle, choix du fuseau horaire, blocage de la mise en veille</td></tr>
 <tr><td>Comptes</td><td>Création, renommage de comptes, gestion de l'expiration de mot de passe</td></tr>
 <tr><td>Mises à jour</td><td>Mise à niveau via winget, liste des applications à mettre à jour</td></tr>
 <tr><td>PC Neuf</td><td>Installation silencieuse des applications essentielles (navigateur, lecteur vidéo, éditeur de code…) et création d'icônes bureau</td></tr>
 <tr><td>Récupération</td><td>Gestion de la partition de récupération et de BitLocker</td></tr>
 </table>
+
+<h4>Heure &amp; veille — le premier réglage d'une machine réinstallée</h4>
+<p>Une horloge fausse n'est pas un détail de confort : <b>winget refuse de fonctionner, l'activation Windows échoue et toute connexion HTTPS est rejetée</b> parce que les certificats paraissent invalides. Le sous-onglet affiche l'heure en direct, le fuseau actif, la source de temps déclarée par Windows et l'état du service W32Time.</p>
+<ul>
+  <li><b>Synchroniser sur Internet</b> — cale l'horloge sur un serveur de temps NTP (<code>time.windows.com</code>, <code>fr.pool.ntp.org</code> ou <code>pool.ntp.org</code>) ;</li>
+  <li><b>Saisie manuelle</b> — règle date et heure à la main. Ce n'est pas un repli de dépit : en atelier, la machine sort d'une réinstallation et n'a souvent <b>pas encore de réseau</b>. Si la synchronisation échoue, le message renvoie explicitement vers ce chemin ;</li>
+  <li><b>Fuseau horaire</b> — liste Windows complète, positionnée d'office sur celui de la machine. Un fuseau erroné décale l'horloge d'une heure entière <i>même après une synchronisation réussie</i> ;</li>
+  <li>Sur une machine <b>membre d'un domaine</b>, l'heure est imposée par l'annuaire : Ghisdiag ne modifie pas la liste de serveurs de temps et se contente de demander un rafraîchissement.</li>
+</ul>
+<p>La date saisie est vérifiée avant d'être appliquée (format, date impossible, année hors 2000-2100) puis <b>confirmée en toutes lettres</b> — une faute de frappe ne doit pas envoyer la machine à une date arbitraire.</p>
+
+<h4>Empêcher la mise en veille</h4>
+<p>Un interrupteur bloque la mise en veille pendant une intervention longue, avec une option pour garder aussi l'écran allumé. <b>Le bench thermique l'active automatiquement</b> le temps du test : un bench dure jusqu'à 17&nbsp;minutes sans la moindre interaction, et une machine qui s'endort en pleine charge rend la session inexploitable.</p>
+
+<div class="callout">
+  <b>Le blocage s'arrête à la fermeture de Ghisdiag.</b> Windows ne l'accorde que le temps de vie du programme qui le demande : ce n'est pas un réglage permanent du système, et il n'a pas à être « désactivé » avant de quitter l'application. Si Windows refuse la demande, la case revient d'elle-même sur inactif plutôt que d'afficher un blocage qui n'existe pas.
+</div>
 </section>
 
 <!-- ============ 6. IA - WHY/HOW ============ -->
@@ -595,7 +613,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 2.0.3. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 2.1.0. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 
