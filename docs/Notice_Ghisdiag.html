@@ -161,10 +161,10 @@ footer.pagefoot{
   <div class="tagline">Diagnostic système complet, bench thermique CPU et GPU et analyse experte assistée par IA, pour les techniciens SAV et tout utilisateur avancé.</div>
   <div class="badges">
     <span class="badge">Windows 10 / 11</span>
-    <span class="badge">Exécutable autonome</span>
+    <span class="badge">Dossier portable</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.0.3 — Document généré le 3 août 2026</div>
+  <div class="version">Version 2.0.3 — Document généré le 5 août 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -203,6 +203,10 @@ footer.pagefoot{
 
 <div class="callout">
   <b>Aucune installation requise.</b> Décompressez <code>Ghisdiag.zip</code> où vous voulez — disque local ou clé USB — puis lancez <code>Ghisdiag.exe</code> par un double-clic. <b>Conservez le dossier entier</b> : l'exécutable a besoin du sous-dossier <code>_internal\</code> placé à côté de lui. Les droits administrateur sont nécessaires car l'outil interroge le matériel, les services Windows, le registre et l'observateur d'événements.
+</div>
+
+<div class="callout warn">
+  <b>Si votre antivirus signale Ghisdiag.</b> C'est un <b>faux positif</b> connu : l'outil lit les capteurs matériels, interroge le registre et sauvegarde les profils WiFi — un cumul de comportements que les moteurs heuristiques rapprochent de ceux d'un logiciel malveillant. Chaque archive publiée est compilée par GitHub à partir du code source public et accompagnée d'une <b>attestation de provenance signée</b>, vérifiable par&nbsp;: <code>gh attestation verify Ghisdiag.zip --repo ghislaindoucy/ghisdiag</code>. Le détail de ces comportements et de leur justification figure dans <code>docs/transparence-systeme.md</code>, sur le dépôt du projet.
 </div>
 
 <h3>Pourquoi ce document ?</h3>
@@ -386,7 +390,11 @@ footer.pagefoot{
 <p>Avant de chiffrer quoi que ce soit, Ghisdiag vérifie que les deux sessions sont <b>réellement</b> comparables : même protocole (durées, intensité, <b>noyau de charge</b>), mais aussi même déroulé — un test coupé par l'arrêt d'urgence n'a jamais atteint son régime établi, et son « plateau » n'est que le sommet d'une montée en température. Si les conditions diffèrent, le rapport annonce <b>« comparaison non concluante »</b> et explique lequel des deux tests n'est pas exploitable, plutôt que d'attribuer l'écart à l'intervention. Le rapport contient dans tous les cas un tableau <i>« ce qui s'est réellement passé »</i>.</p>
 
 <div class="callout warn">
-  <b>Sécurité.</b> Le test s'arrête automatiquement si la température CPU dépasse 95&nbsp;°C, et un avertissement de responsabilité est affiché avant chaque lancement. Un bouton d'arrêt manuel est disponible à tout moment.
+  <b>Sécurité.</b> Le test s'arrête automatiquement si la température dépasse le seuil d'arrêt d'urgence : <b>95&nbsp;°C</b> côté CPU, <b>90&nbsp;°C</b> côté GPU — abaissé automatiquement quand la carte annonce son propre seuil de bridage, de façon à couper avant elle. Un avertissement de responsabilité est affiché avant chaque lancement, et un bouton d'arrêt manuel reste disponible à tout moment. L'interface indique toujours le seuil réellement appliqué.
+</div>
+
+<div class="callout">
+  <b>Le seuil CPU est réglable.</b> Sur certains portables, le processeur passe sa première minute de charge dans sa fenêtre turbo, bien au-dessus de sa puissance soutenue : il atteint 95&nbsp;°C avant d'avoir atteint son régime établi, et le test se coupe donc avant d'avoir mesuré ce qu'il devait mesurer. La variable d'environnement <code>GHISDIAG_EMERGENCY_TEMP_C</code> permet de remonter ce garde-fou, dans la limite de <b>60 à 99&nbsp;°C</b> (toute valeur illisible ou hors bornes est ignorée, le seuil par défaut s'applique). Elle ne désactive aucune protection matérielle : le processeur se bride puis se coupe de lui-même à son TjMax.
 </div>
 </section>
 
@@ -573,7 +581,7 @@ footer.pagefoot{
 <ul>
   <li>Windows 10 ou Windows 11 ;</li>
   <li>Droits administrateur (requis pour les collecteurs système) ;</li>
-  <li>~20&nbsp;Mo d'espace disque, aucune dépendance à installer ;</li>
+  <li>~34&nbsp;Mo à télécharger, ~80&nbsp;Mo d'espace disque une fois l'archive décompressée, aucune dépendance à installer ;</li>
   <li>Connexion Internet uniquement nécessaire pour l'analyse IA et les mises à jour winget.</li>
 </ul>
 
