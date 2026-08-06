@@ -28,7 +28,7 @@ COLLECTORS = [
     ("smart",        "Santé disques (SMART)", "collectors/smart.ps1",         75),
 ]
 
-VERSION = "2.0.3"
+VERSION = "2.1.0"
 AUTHORS = "Ghislain DOUCY & Claude Code"
 
 # Limite de taille de sortie d'un collecteur PowerShell (protection mémoire/DoS)

@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.0.3** (2026-08-03) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.0.3)
+**Version actuelle : 2.1.0** (2026-08-05) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.1.0)
 
 ---
 
@@ -11,7 +11,15 @@ en un seul exécutable (PyInstaller, ~34 MB), sans aucune dépendance à install
 machine cible. Pensé pour le technicien SAV : on branche, on lance, on repart avec un
 rapport.
 
-### Ce qu'il fait (4 onglets)
+### Ce qu'il fait (5 onglets)
+
+**⚙️ Setup / MAJ** — premier onglet, celui du premier geste sur une machine
+- Heure & veille : mise à l'heure par Internet (NTP) **ou** saisie manuelle
+  (atelier sans réseau), fuseau horaire, blocage de la mise en veille
+- Comptes locaux (création, renommage, expiration de mot de passe)
+- Mises à jour logicielles via winget
+- PC Neuf : installation silencieuse des essentiels + icônes du bureau
+- Récupération : partition de récupération, BitLocker
 
 **🔍 Analyse** — le cœur du produit
 - 8 collecteurs PowerShell exécutés en parallèle (~20 s) : système, performances,
@@ -32,12 +40,6 @@ rapport.
 **📶 WiFi**
 - Profils enregistrés : consultation (avec mot de passe), suppression, sauvegarde/restauration
 - Scan des réseaux et connexion
-
-**⚙️ Setup / MAJ**
-- Comptes locaux (création, renommage, expiration de mot de passe)
-- Mises à jour logicielles via winget
-- PC Neuf : installation silencieuse des essentiels + icônes du bureau
-- Récupération : partition de récupération, BitLocker
 
 ### Architecture (pour mémoire)
 
@@ -172,6 +174,29 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.1.0 — ⚙️ Setup en tête, heure et veille ✅ *livré*
+
+- **« Setup / MAJ » passe en 1er onglet** (il était 5e) : c'est l'onglet du
+  premier geste sur une machine fraîchement réinstallée, et l'application
+  s'ouvre désormais dessus.
+- **Nouveau sous-onglet « Heure & veille »** (`collectors/time_manager.ps1`) :
+  horloge vivante, fuseau actif, source de temps et état du service W32Time.
+  Mise à l'heure par **synchronisation NTP** (`w32tm`, serveur au choix) **ou**
+  par **saisie manuelle** — les deux chemins sont indépendants parce que la
+  machine d'atelier n'a souvent pas encore de réseau ; l'échec de la synchro
+  renvoie vers la saisie manuelle. Choix du fuseau dans la liste Windows
+  complète. Machine du domaine détectée : pas de réécriture de la liste de
+  pairs NTP, seulement une demande de rafraîchissement.
+- **Blocage de la mise en veille** (`power_keepalive.py`,
+  `SetThreadExecutionState` porté par un thread dédié) avec option écran
+  allumé. **Activé automatiquement par le bench thermique** : un test dure
+  jusqu'à ~17 min sans interaction, et rien n'empêchait jusqu'ici la machine de
+  s'endormir en pleine charge — ce qui rendait la session inexploitable.
+  Demandes distinctes pour l'interrupteur et le bench, état réel confirmé par
+  Windows (un refus n'est pas affiché comme un succès).
+- **Notice PDF livrée dans l'archive**, à côté de `Ghisdiag.exe` (préparé en
+  2.0.3, effectif à ce build).
 
 ### v2.0.3 — 🌡️ Le bench ne conclut plus sur un test incomplet ✅ *livré*
 

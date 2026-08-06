@@ -19,7 +19,7 @@
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = ['tkinter', 'tkinter.ttk', 'json', 'threading', 'psutil', 'numpy', 'requests', 'cryptography', 'ai_analyzer', 'ai_report', 'thermal_bench', 'thermal_compare', 'diag_compare', 'report.exec_summary', 'collectors.realtime_monitor', 'collectors.sensors', 'collectors.pawnio', 'collectors.gpu', 'collectors.gpu_load']
+hiddenimports = ['tkinter', 'tkinter.ttk', 'json', 'threading', 'psutil', 'numpy', 'requests', 'cryptography', 'ai_analyzer', 'ai_report', 'thermal_bench', 'thermal_compare', 'diag_compare', 'power_keepalive', 'report.exec_summary', 'collectors.realtime_monitor', 'collectors.sensors', 'collectors.pawnio', 'collectors.gpu', 'collectors.gpu_load']
 hiddenimports += collect_submodules('cryptography')
 
 

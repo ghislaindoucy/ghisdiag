@@ -4,7 +4,53 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
-## [Non publié]
+## [2.1.0] — 2026-08-05
+
+### ⚙️ « Setup / MAJ » devient le premier onglet
+
+C'est l'onglet du premier geste sur une machine fraîchement réinstallée. Il était
+le cinquième et dernier ; il passe en tête, et l'application s'ouvre donc dessus.
+L'ordre des autres onglets ne change pas.
+
+### 🕒 Régler l'heure, la date et le fuseau horaire
+
+Nouveau sous-onglet **« Heure & veille »**, en tête du Setup. Une horloge fausse
+fait échouer winget, l'activation Windows et toute connexion HTTPS : c'est le
+préalable à tout le reste, et il fallait jusqu'ici sortir de Ghisdiag pour le
+régler.
+
+- **Horloge vivante** : jour, date et heure à la seconde, avec le fuseau actif,
+  la source de temps déclarée par Windows et l'état du service W32Time.
+- **Deux chemins volontairement indépendants.** *Synchroniser sur Internet* cale
+  l'horloge sur un serveur NTP (`time.windows.com`, `fr.pool.ntp.org`,
+  `pool.ntp.org`). *Saisie manuelle* règle date et heure à la main — c'est le cas
+  courant en atelier : machine réinstallée, pas encore de réseau. La synchro
+  n'est donc jamais un passage obligé, et **son échec renvoie explicitement vers
+  la saisie manuelle** au lieu d'être une impasse.
+- **Fuseau horaire** choisi dans la liste Windows complète (~140 entrées),
+  positionnée d'office sur celui de la machine. Un fuseau erroné décale l'horloge
+  d'une heure entière même après une synchronisation réussie.
+- **Machine du domaine détectée** : la hiérarchie de temps y est imposée par
+  l'annuaire, Ghisdiag ne réécrit pas la liste de pairs NTP et se contente de
+  demander un rafraîchissement.
+- Garde-fous : la date saisie est validée avant d'être appliquée (format, date
+  impossible, année hors 2000-2100) et confirmée en toutes lettres ; les
+  identifiants de fuseau et les noms de serveur sont vérifiés côté PowerShell.
+
+### ☕ Empêcher la mise en veille
+
+- Interrupteur dans le même sous-onglet, avec option « garder aussi l'écran
+  allumé ». Utile pendant une installation, une copie ou un test long.
+- **Le bench thermique l'active tout seul** le temps du test. Un bench dure
+  jusqu'à ~17 min sans la moindre interaction : une machine qui s'endormait en
+  pleine charge coupait la mesure et rendait la session inexploitable — rien
+  n'empêchait ce scénario jusqu'ici.
+- L'interrupteur et le bench portent des demandes distinctes : la fin du test ne
+  retire pas le blocage posé à la main par le technicien.
+- Windows n'accorde ce blocage que le temps de vie du programme qui le demande :
+  il s'arrête donc à la fermeture de Ghisdiag, et l'interface le dit. Si Windows
+  refuse la demande, l'interrupteur revient tout seul sur « inactif » plutôt que
+  d'afficher un blocage imaginaire.
 
 ### 📖 La notice est livrée avec l'application
 
