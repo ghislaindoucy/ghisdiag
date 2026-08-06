@@ -83,8 +83,8 @@ ce build.
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | *(à renseigner après le build)* |
-| **SHA-256** | *(à renseigner après le build)* |
+| **Taille** | `36 339 603` octets (34,7 Mo) |
+| **SHA-256** | `7DA2561B8AA8C91A3DA1B1FA0E29EEDE487040103DB07174177BD2AE7285DAE5` |
 
 > Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
 > tag `v2.1.0` — celle qui est jointe à cette release et qui porte l'attestation
