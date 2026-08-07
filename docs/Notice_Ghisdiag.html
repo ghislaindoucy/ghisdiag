@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Dossier portable</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.1.0 — Document généré le 5 août 2026</div>
+  <div class="version">Version 2.1.0 — Document généré le 7 août 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -451,6 +451,13 @@ footer.pagefoot{
 </ul>
 <p>La date saisie est vérifiée avant d'être appliquée (format, date impossible, année hors 2000-2100) puis <b>confirmée en toutes lettres</b> — une faute de frappe ne doit pas envoyer la machine à une date arbitraire.</p>
 
+<h4>Comptes — renommer un compte local</h4>
+<p>Le renommage change <b>deux choses à la fois</b> : le <i>nom de compte</i> (celui qu'utilise Windows en interne) et le <i>nom complet</i>, qui est celui que l'utilisateur voit réellement — <b>écran de connexion, menu Démarrer, Paramètres &gt; Comptes</b>. Changer le premier sans le second ne se voit nulle part : la machine continue d'afficher l'ancien nom, y compris après redémarrage.</p>
+<div class="callout">
+  <b>Le dossier de profil garde son ancien nom.</b> Après renommage, le profil reste <code>C:\Users\ancien-nom</code> : c'est voulu, Windows ne le renomme pas non plus. Le renommer à la main casse toutes les applications qui ont mémorisé un chemin absolu. Les données et le profil sont intégralement conservés.<br><br>
+  Si le compte est un <b>compte Microsoft</b>, le nom affiché vient du compte en ligne : il se change sur <code>account.microsoft.com</code>, aucune commande locale ne peut le faire.
+</div>
+
 <h4>Empêcher la mise en veille</h4>
 <p>Un interrupteur bloque la mise en veille pendant une intervention longue, avec une option pour garder aussi l'écran allumé. <b>Le bench thermique l'active automatiquement</b> le temps du test : un bench dure jusqu'à 17&nbsp;minutes sans la moindre interaction, et une machine qui s'endort en pleine charge rend la session inexploitable.</p>
 
@@ -566,6 +573,10 @@ footer.pagefoot{
 <div class="callout">
   <b>Stockage sécurisé.</b> La clé API est chiffrée (AES via Fernet) avant d'être enregistrée localement dans <code>%APPDATA%\Local\Ghisdiag\prefs.json</code>. La clé de chiffrement est dérivée du nom de la machine et de l'utilisateur : elle n'est donc lisible que sur ce poste, par ce compte Windows. Aucune clé n'est jamais transmise à un tiers autre que le fournisseur d'IA choisi, au moment de l'analyse.
 </div>
+
+<h3>Éjecter la clé (laisser Ghisdiag sur un poste tiers)</h3>
+<p>Le bouton <b>« Éjecter la clé »</b>, dans la fenêtre « Configurer l'IA… » à côté de « Tester la clé », <b>efface la clé du poste</b> : elle est retirée de <code>prefs.json</code> — pas remplacée par une valeur vide — et de la mémoire de l'application. C'est le geste à faire avant de rendre une machine sur laquelle Ghisdiag reste installé : l'application continue de fonctionner intégralement, seule l'analyse IA est désactivée jusqu'à la saisie d'une nouvelle clé.</p>
+<p>Si plusieurs fournisseurs ont une clé enregistrée, la confirmation propose d'<b>éjecter toutes les clés d'un coup</b> plutôt que la seule du fournisseur actif. Le bouton reste grisé tant qu'aucune clé n'est renseignée, et l'éjection est tracée dans le journal de l'application.</p>
 
 <div class="callout tip">
   <b>Quel fournisseur choisir ?</b> Les 5 utilisent le même prompt d'audit, donc une qualité d'analyse comparable. Le choix dépend surtout d'un compte déjà existant, du tarif, ou d'une préférence personnelle — aucun n'est requis pour faire fonctionner le reste de l'application.

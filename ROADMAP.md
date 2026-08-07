@@ -198,6 +198,22 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Notice PDF livrée dans l'archive**, à côté de `Ghisdiag.exe` (préparé en
   2.0.3, effectif à ce build).
 
+**🩹 Re-build du 07/08/2026** — même numéro de version, archive republiée
+(nouvelle empreinte SHA-256) :
+
+- **Éjection de la clé API** (`prefs.clear_api_keys`) : la clé est retirée de
+  `prefs.json`, pas remplacée par une chaîne vide chiffrée — `save_prefs`
+  n'écrit plus jamais une clé vide. Éjection groupée si plusieurs fournisseurs
+  sont renseignés. Nécessaire pour laisser Ghisdiag installé chez un client.
+- **Renommage de compte** (`collectors/user_manager.ps1`) : `Rename-LocalUser`
+  ne change que le nom SAM ; le nom **affiché** par Windows est `FullName`, qui
+  n'était jamais mis à jour — d'où un renommage invisible à l'écran de connexion
+  même après redémarrage. `Set-LocalUser -FullName` a été ajouté ; son échec
+  reste un succès assorti d'un avertissement, le compte étant bien renommé.
+- **`save_prefs` partiel** : le choix d'un dossier de sortie réécrivait le
+  fichier de préférences avec cette seule clé, effaçant fournisseur IA et clés
+  API. Toute écriture relit désormais `load_prefs()` d'abord.
+
 ### v2.0.3 — 🌡️ Le bench ne conclut plus sur un test incomplet ✅ *livré*
 
 Clôture du chantier « fiabilité du bench thermique » : les 10 défauts relevés en

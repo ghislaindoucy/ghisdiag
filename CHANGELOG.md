@@ -6,6 +6,50 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ## [2.1.0] — 2026-08-05
 
+> **🩹 Correctif (re-build du 07/08/2026).** Le numéro de version ne change pas :
+> l'archive publiée a été recompilée et remplacée. Si vous avez téléchargé la
+> v2.1.0 avant cette date, **re-téléchargez-la** — l'empreinte SHA-256 a changé.
+> Les trois points ci-dessous sont les seuls ajouts par rapport au premier build.
+
+### 🗑 Éjecter la clé API
+
+Ghisdiag peut rester installé sur le poste d'un client ; la clé API du technicien,
+non. Un bouton **« Éjecter la clé »** dans la fenêtre « Configurer l'IA… », à côté
+de « Tester la clé », efface la clé du fournisseur actif du disque et de la
+mémoire de l'application.
+
+- La clé est **retirée de `prefs.json`**, pas remplacée par une chaîne vide
+  chiffrée : le fichier ne garde aucune trace du fournisseur éjecté. Une clé vide
+  n'est d'ailleurs plus jamais écrite, quel que soit le chemin de sauvegarde.
+- Si **plusieurs fournisseurs** ont une clé enregistrée, la confirmation propose
+  de toutes les éjecter d'un coup — on quitte rarement un poste client en
+  n'oubliant qu'une seule clé.
+- Le bouton reste grisé tant qu'aucune clé n'est renseignée ; l'éjection est
+  tracée dans le journal et le panneau « Analyse IA » repasse aussitôt à
+  « clé non renseignée » (le champ question disparaît avec elle).
+
+### 🐛 Le renommage d'un compte restait invisible dans Windows
+
+Constaté en atelier : après un renommage, Ghisdiag affichait bien le nouveau nom,
+mais l'**écran de connexion et le menu Démarrer gardaient l'ancien**, même après
+redémarrage. `Rename-LocalUser` ne change que le nom de compte interne ; le nom
+que Windows *affiche* est un autre champ, le **nom complet**, qui n'était jamais
+mis à jour. Il est désormais aligné sur le nouveau nom.
+
+- Si le nom de compte est changé mais que le nom affiché ne suit pas, le
+  renommage reste un **succès assorti d'un avertissement** : le compte est bel et
+  bien renommé, le dire autrement serait faux.
+- L'interface précise maintenant que le dossier de profil `C:\Users\…` conserve,
+  lui, son ancien nom — c'est le comportement de Windows, pas un oubli, et le
+  renommer à la main casse les applications qui mémorisent des chemins absolus.
+
+### 🐛 Le choix du dossier de sortie effaçait les clés API
+
+Choisir un dossier de destination réécrivait le fichier de préférences avec cette
+seule valeur : le fournisseur IA et **toutes les clés API enregistrées étaient
+perdus au passage**. Les préférences existantes sont désormais relues avant
+écriture.
+
 ### ⚙️ « Setup / MAJ » devient le premier onglet
 
 C'est l'onglet du premier geste sur une machine fraîchement réinstallée. Il était

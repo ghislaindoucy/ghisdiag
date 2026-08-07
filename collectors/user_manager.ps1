@@ -101,7 +101,25 @@ switch ($Action) {
                 break
             }
             Rename-LocalUser -Name $Username -NewName $NewName -EA Stop
-            @{ success = $true; message = "Compte '$Username' renomme en '$NewName'." } | ConvertTo-Json
+
+            # Rename-LocalUser ne change QUE le nom de compte (SAM). Windows, lui,
+            # affiche le NOM COMPLET (FullName) partout ou l'utilisateur le voit :
+            # ecran de connexion, menu Demarrer, Parametres > Comptes. Sans cette
+            # etape, le renommage restait invisible pour l'utilisateur, qui gardait
+            # l'ancien nom sous les yeux meme apres redemarrage.
+            $warning = $null
+            try {
+                Set-LocalUser -Name $NewName -FullName $NewName -EA Stop
+            } catch {
+                $warning = "Le nom de compte est bien change, mais le nom affiche par Windows n'a pas pu etre mis a jour : $($_.Exception.Message)"
+            }
+
+            $out = @{
+                success = $true
+                message = "Compte '$Username' renomme en '$NewName' (nom affiche compris)."
+            }
+            if ($warning) { $out.warning = $warning }
+            $out | ConvertTo-Json
         } catch {
             @{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
         }

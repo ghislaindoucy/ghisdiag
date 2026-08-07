@@ -49,7 +49,7 @@ Après ton diagnostic, active l'analyse IA et choisis ton fournisseur — **Anth
 - ✅ **Optimisations** — gagner en vitesse et stabilité
 - ✅ **Priorités claires** — critique → grave → moyen → faible
 
-Clé API par fournisseur (chiffrée AES-128), bouton « Tester la clé », aucun SDK requis.
+Clé API par fournisseur (chiffrée AES-128), boutons « Tester la clé » et « Éjecter la clé », aucun SDK requis.
 
 ---
 
@@ -167,6 +167,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 - **Deux chemins pour la mise à l'heure** : synchronisation Internet (NTP) **ou** saisie manuelle. En atelier, la machine n'a souvent pas encore de réseau : la synchro n'est pas un passage obligé, et son échec renvoie explicitement vers la saisie manuelle. Choix du fuseau horaire dans la liste Windows complète.
 - **Blocage de la mise en veille**, avec option « garder l'écran allumé ». **Le bench thermique l'active tout seul** : un test dure jusqu'à ~17 min sans interaction, et une machine qui s'endormait en pleine charge ruinait la mesure.
 - 📖 La **notice PDF est maintenant livrée dans l'archive**, à côté de `Ghisdiag.exe`.
+- 🩹 **Re-build du 07/08** (même numéro de version, archive remplacée — re-télécharge si tu l'avais déjà) : bouton **« Éjecter la clé »** pour retirer sa clé API d'un poste qu'on laisse chez un client ; le **renommage de compte change enfin le nom affiché par Windows** (écran de connexion, menu Démarrer) et plus seulement le nom interne ; choisir un dossier de destination n'efface plus les clés API enregistrées.
 
 [📖 Notes complètes →](./RELEASE_NOTES_v2.1.0.md)
 
@@ -293,7 +294,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ### v1.6.0 (Juin 2026)
 🤖 **Analyse IA multi-fournisseurs**
 - 5 fournisseurs au choix via une fenêtre « Configurer l'IA » : Anthropic (Claude Opus 4.8), Mistral (Large), OpenAI (GPT-5.5), Grok (xAI, 4.3), Google (Gemini 2.5 Pro)
-- Clé API par fournisseur (chiffrée), bouton « Tester la clé », migration de l'ancienne clé Mistral
+- Clé API par fournisseur (chiffrée), boutons « Tester la clé » et « Éjecter la clé », migration de l'ancienne clé Mistral
 - Prompt d'audit expert mutualisé, moteur léger en `requests` (aucun SDK)
 
 🌡️ **Bench thermique**
@@ -378,6 +379,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 
 - ✅ **Admin requis** — pas d'accès aux données sensibles sans droits
 - ✅ **Clé API chiffrée** — jamais stockée en clair (AES-128 Fernet)
+- ✅ **Clé API éjectable** — bouton « Éjecter la clé » : effacement du disque et de la mémoire avant de laisser l'appli sur un poste tiers
 - ✅ **Pas de tracking** — tout reste local, aucun envoi de données
 - ✅ **Exe signable** — prêt pour signature de code (optionnel)
 

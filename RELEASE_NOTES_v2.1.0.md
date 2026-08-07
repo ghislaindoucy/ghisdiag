@@ -1,5 +1,12 @@
 # Ghisdiag v2.1.0 — l'onglet Setup en tête, l'heure et la veille sous la main
 
+> ## 🩹 Re-build du 07/08/2026
+>
+> **Le numéro de version ne change pas, mais l'archive a été remplacée.** Si vous
+> avez téléchargé la v2.1.0 avant cette date, **re-téléchargez-la** : l'empreinte
+> SHA-256 plus bas est celle du nouveau build. Trois ajouts, décrits à la fin de
+> ces notes — le reste de la version est inchangé.
+
 Cette version part de l'usage réel en atelier : on branche une machine
 fraîchement réinstallée, et les deux premières choses qui manquent sont
 l'**heure** et l'assurance que le PC ne va pas **s'endormir** au milieu de
@@ -78,13 +85,64 @@ ce build.
 
 ---
 
+# 🩹 Ce que le re-build du 07/08 ajoute
+
+## Éjecter la clé API
+
+Ghisdiag peut rester installé sur le poste d'un client ; la clé API du technicien,
+non. Un bouton **« Éjecter la clé »**, dans la fenêtre « Configurer l'IA… » à côté
+de « Tester la clé », efface la clé du poste.
+
+La clé est **retirée de `prefs.json`** — pas remplacée par une valeur vide
+chiffrée : le fichier ne garde aucune trace du fournisseur éjecté. Si plusieurs
+fournisseurs ont une clé enregistrée, la confirmation propose de **toutes les
+éjecter d'un coup**. L'application continue de fonctionner intégralement ; seule
+l'analyse IA est désactivée jusqu'à la saisie d'une nouvelle clé.
+
+## Le renommage d'un compte change enfin le nom que Windows affiche
+
+Constaté en atelier : après un renommage, Ghisdiag affichait le nouveau nom, mais
+l'**écran de connexion et le menu Démarrer gardaient l'ancien**, même après
+redémarrage.
+
+La cause n'était pas un cache. `Rename-LocalUser` ne change que le *nom de compte*
+interne ; le nom que Windows **affiche** est un autre champ, le *nom complet*, qui
+n'était jamais mis à jour. Les deux sont désormais alignés.
+
+Deux points que l'interface dit maintenant explicitement : le **dossier de profil**
+`C:\Users\ancien-nom` conserve son nom — c'est le comportement de Windows, et le
+renommer à la main casse les applications qui mémorisent des chemins absolus ; et
+si le compte est un **compte Microsoft**, le nom affiché vient du compte en ligne,
+qu'aucune commande locale ne peut modifier.
+
+## Choisir un dossier de destination n'efface plus les clés API
+
+Le choix d'un dossier de sortie réécrivait le fichier de préférences avec cette
+seule valeur : le fournisseur IA et **toutes les clés API enregistrées étaient
+perdus au passage**. Les préférences sont désormais relues avant d'être réécrites.
+
+---
+
 ## 📥 Téléchargement
 
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
+| **Taille** | `SIZE_PLACEHOLDER` |
+| **SHA-256** | `SHA_PLACEHOLDER` |
+
+<details>
+<summary>Empreinte du premier build de la v2.1.0 (avant le re-build du 07/08)</summary>
+
+Pour situer une archive déjà téléchargée. Cette version-là **n'est plus celle
+jointe à la release** :
+
+| | |
+|---|---|
 | **Taille** | `36 339 603` octets (34,7 Mo) |
 | **SHA-256** | `7DA2561B8AA8C91A3DA1B1FA0E29EEDE487040103DB07174177BD2AE7285DAE5` |
+
+</details>
 
 > Ces valeurs portent sur l'archive **compilée par GitHub Actions** à partir du
 > tag `v2.1.0` — celle qui est jointe à cette release et qui porte l'attestation

@@ -161,6 +161,11 @@ def save_prefs(prefs: dict):
         prefs_to_save = {}
         for key, val in prefs.items():
             if key in _ENCRYPTED_KEYS and isinstance(val, str):
+                # Clé vide (jamais saisie ou éjectée) : on n'écrit RIEN, pas même
+                # une chaîne vide chiffrée. Le fichier ne doit garder aucune trace
+                # d'un fournisseur dont la clé a été retirée.
+                if not val:
+                    continue
                 prefs_to_save[key] = _encrypt_string(val)
             else:
                 prefs_to_save[key] = val
@@ -170,3 +175,19 @@ def save_prefs(prefs: dict):
         tmp.replace(PREFS_FILE)
     except OSError as e:
         logger.warning("Impossible de sauvegarder prefs : %s", e)
+
+
+def clear_api_keys(key_prefs) -> int:
+    """Éjecte des clés API : les retire définitivement de prefs.json.
+
+    Sert quand on laisse Ghisdiag installé sur un poste tiers : la clé ne doit
+    plus être présente sur le disque, ni utilisable, une fois l'intervention
+    terminée. Retourne le nombre de clés réellement retirées.
+    """
+    prefs = load_prefs()
+    removed = 0
+    for name in key_prefs:
+        if name in _ENCRYPTED_KEYS and prefs.pop(name, ""):
+            removed += 1
+    save_prefs(prefs)
+    return removed
