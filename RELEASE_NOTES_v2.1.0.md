@@ -128,8 +128,8 @@ perdus au passage**. Les préférences sont désormais relues avant d'être ré�
 | | |
 |---|---|
 | **Fichier** | `Ghisdiag.zip` |
-| **Taille** | `SIZE_PLACEHOLDER` |
-| **SHA-256** | `SHA_PLACEHOLDER` |
+| **Taille** | `36 352 785` octets (34,7 Mo) |
+| **SHA-256** | `F292A9748986820C43C00F4517B03E3E1C05A76D7A245D99D35B02348807C523` |
 
 <details>
 <summary>Empreinte du premier build de la v2.1.0 (avant le re-build du 07/08)</summary>
