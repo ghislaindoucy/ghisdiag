@@ -6,7 +6,9 @@
 # AUCUN interpréteur Python. Le .bat de lancement ne sert donc qu'aux essais
 # sur un Windows normal ; en PE, seul cet exe fonctionne.
 #
-# Build :  pyinstaller --clean --noconfirm WinPEProbe.spec
+# Build :  py -m PyInstaller --clean --noconfirm WinPEProbe.spec
+#          (même invocation que build.bat — `pyinstaller` tout court n'est pas
+#           dans le PATH quand le paquet est installé sans ses scripts)
 # Puis copier tout dist\WinPEProbe\ à la racine de la clé USB bootable.
 #
 # console=True : on veut voir le déroulé et le verdict à l'écran en PE, où il

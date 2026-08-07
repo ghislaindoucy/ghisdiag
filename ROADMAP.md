@@ -437,8 +437,11 @@ lent = secteur en train de mourir), pour prouver que la mécanique de mesure tie
 **Procédure :**
 
 ```
-pyinstaller --clean --noconfirm WinPEProbe.spec
+py -m PyInstaller --clean --noconfirm WinPEProbe.spec
 ```
+
+(`py -m PyInstaller` et non `pyinstaller` : même invocation que `build.bat`, la seule
+qui marche quand le paquet est installé sans que ses scripts soient dans le `PATH`.)
 
 puis copier tout `dist\WinPEProbe\` à la racine de la clé USB bootable, booter la
 machine d'atelier dessus, lancer `WinPEProbe.exe`, et récupérer le JSON
@@ -451,10 +454,28 @@ aucun build ADK nécessaire) — si ça tourne là, l'outil est livrable.
 *Essai sur un Windows normal* : `test_winpe_probe_atelier.bat`, **en tant
 qu'administrateur** (sans élévation, l'énumération des disques remonte vide).
 
-**État au 07/08/2026** : sonde exécutée de bout en bout sur le poste de dev
-(Windows 11, non élevé). tkinter, smartctl et l'écriture du rapport sont validés ;
-les quatre chemins disque (énumération, lecture brute, NO_BUFFERING, n° de série)
-**restent à valider en élevé, puis en WinPE**.
+**État au 08/08/2026** — sonde exécutée de bout en bout sur le poste de dev
+(Windows 11, non élevé), **en sources et en exe compilé** :
+
+- ✅ tkinter, smartctl, écriture du rapport, résolution de `smartctl.exe` depuis le
+  bundle.
+- ✅ **smartctl répond sans élévation** : les deux disques du poste remontent modèle,
+  n° de série, heures de fonctionnement et usure NVMe. C'est une bonne nouvelle pour
+  l'identité des rapports — elle ne dépend pas de l'accès disque brut.
+- ⏳ Les quatre chemins disque bruts (énumération, lecture, `NO_BUFFERING`, série par
+  IOCTL) **restent à valider en élevé, puis en WinPE** : ils exigent l'élévation, et
+  l'UAC a été refusé au moment du test.
+
+Deux défauts trouvés et corrigés grâce à ce build, qui auraient tous deux coûté un
+aller-retour en atelier :
+
+- **Le rapport partait dans `_internal\`.** En onedir PyInstaller 6, tout le bundle
+  atterrit dans `_internal\` et `__file__` pointe dedans : le technicien aurait cherché
+  le JSON à côté de l'exe sans jamais le trouver. Le dossier d'écriture se déduit
+  désormais de `sys.executable`, et reste distinct du dossier de lecture des ressources.
+- **Le verdict déclarait le n° de série illisible** alors que smartctl le remontait :
+  il ne comptait que la source IOCTL, la seule des deux qui exige l'élévation. Les deux
+  sources sont maintenant prises en compte, et le rapport dit laquelle a répondu.
 
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 

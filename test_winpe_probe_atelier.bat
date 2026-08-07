@@ -5,7 +5,7 @@ rem Ghisdiag - Lanceur de la sonde WinPE (chantier GhisdiagDisk, phase 0).
 rem
 rem ATTENTION : ce .bat ne sert QU'AUX ESSAIS SUR UN WINDOWS NORMAL. WinPE
 rem n'embarque aucun Python : sur la cle bootable, c'est WinPEProbe.exe qu'on
-rem lance (build : pyinstaller --clean --noconfirm WinPEProbe.spec).
+rem lance (build : py -m PyInstaller --clean --noconfirm WinPEProbe.spec).
 rem
 rem L'acces disque brut exige l'elevation : lancer en tant qu'administrateur,
 rem sinon l'enumeration des disques remontera vide.

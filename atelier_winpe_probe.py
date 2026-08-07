@@ -42,8 +42,34 @@ from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
-_ROOT = Path(__file__).parent.resolve()
-sys.path.insert(0, str(_ROOT))
+def _dossier_rapport() -> Path:
+    r"""Dossier OU ECRIRE le rapport : a cote de l'exe, jamais dans le bundle.
+
+    Compile en onedir avec PyInstaller 6, tout le bundle atterrit dans
+    `_internal\` et `__file__` pointe DEDANS. Un rapport ecrit la serait
+    invisible pour le technicien, qui regarde a cote de WinPEProbe.exe.
+    `sys.executable` est le seul repere fiable une fois gele.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent.resolve()
+    return Path(__file__).parent.resolve()
+
+
+def _dossier_bundle() -> Path:
+    r"""Dossier OU LIRE les ressources embarquees (tools\smartctl.exe).
+
+    Gele : `_internal\` (= sys._MEIPASS). En sources : le dossier du script.
+    C'est l'inverse de _dossier_rapport(), et les confondre est precisement
+    l'erreur qui rend la sonde muette en atelier.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS).resolve()
+    return Path(__file__).parent.resolve()
+
+
+_ROOT   = _dossier_rapport()
+_BUNDLE = _dossier_bundle()
+sys.path.insert(0, str(_BUNDLE))
 
 # Volume lu pour la mesure de debit. Assez pour degager une tendance, assez court
 # pour ne pas fatiguer un disque deja malade (cf. l'avertissement metier du
@@ -403,9 +429,9 @@ def check_smartctl() -> dict:
     On cherche le binaire a cote de la sonde (tools\\ ou dossier courant) : en
     WinPE il n'y a evidemment aucune installation systeme.
     """
-    candidats = [_ROOT / "tools" / "smartctl.exe", _ROOT / "smartctl.exe"]
-    if getattr(sys, "frozen", False):
-        candidats.insert(0, Path(sys._MEIPASS) / "tools" / "smartctl.exe")
+    candidats = [_BUNDLE / "tools" / "smartctl.exe",   # gele : _internal\tools
+                 _ROOT / "tools" / "smartctl.exe",     # a cote de l'exe / du script
+                 _ROOT / "smartctl.exe"]
     exe = next((str(p) for p in candidats if p.is_file()), None)
     if not exe:
         return {"trouve": False,
@@ -558,6 +584,17 @@ def main() -> int:
         bloc = v.get(nom) or {}
         return (bloc.get("data") or {}).get(cle, defaut) if bloc.get("ok") else defaut
 
+    # Le n0 de serie a DEUX sources et il suffit qu'une reponde : l'IOCTL exige
+    # l'elevation, smartctl non (verifie le 08/08 : series remontees sans admin).
+    # Ne compter que l'IOCTL afficherait "serie illisible" alors que la cle
+    # d'identite des rapports est parfaitement disponible.
+    serie_ioctl = bool(_data("identite_disques", "tous_identifiables", False))
+    serie_smart = any((d or {}).get("numero_serie")
+                      for d in (_data("smartctl", "details") or []))
+    source_serie = ("les deux" if serie_ioctl and serie_smart else
+                    "IOCTL" if serie_ioctl else
+                    "smartctl" if serie_smart else None)
+
     rapport["verdict_phase_0"] = {
         "winpe_confirme":        _data("contexte", "winpe_detecte", False),
         "tkinter_utilisable":    bool((v.get("tkinter") or {}).get("ok")
@@ -565,16 +602,19 @@ def main() -> int:
         "acces_disque_brut":     "OK" in str(_data("lecture_brute", "verdict", "")),
         "no_buffering":          "OK" in str(_data("lecture_non_bufferisee", "verdict", "")),
         "smartctl_operationnel": "operationnel" in str(_data("smartctl", "verdict", "")),
-        "serie_disque_lisible":  _data("identite_disques", "tous_identifiables", False),
+        "serie_disque_lisible":  serie_ioctl or serie_smart,
         "rapport_persistant":    _data("ecriture_rapport", "inscriptible", False)
                                  and not _data("ecriture_rapport",
                                                "probablement_ramdisk_winpe", False),
     }
+    rapport["source_numero_serie"] = source_serie
     _flush()
 
     print("\nVerdict phase 0 :")
     for cle, val in rapport["verdict_phase_0"].items():
         print(f"  {'OUI' if val else 'NON':>3}  {cle}")
+    if source_serie:
+        print(f"       (n0 de serie lu via : {source_serie})")
     print(f"\nRapport ecrit : {sortie}")
     return 0
 
