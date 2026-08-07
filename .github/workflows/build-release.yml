@@ -32,16 +32,22 @@ permissions:
   id-token: write        # requis pour signer l'attestation
   attestations: write    # requis pour la publier
 
+# Versions d'actions : toutes sur le runtime Node 24. Les majeures précédentes
+# (checkout@v4, setup-python@v5, upload-artifact@v4, attest-build-provenance@v2)
+# ciblaient Node 20, déprécié : le runner les forçait déjà sur Node 24 en
+# affichant un avertissement à chaque exécution, et finira par les refuser.
+# Ces majeures exigent un runner >= 2.327.1 ; les runners GitHub sont bien au-delà.
+
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
       - name: Récupérer le code source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Installer Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -96,14 +102,14 @@ jobs:
       # registre de provenance du dépôt.
       - name: Générer l'attestation de provenance
         if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/Ghisdiag.zip
             dist/Ghisdiag/Ghisdiag.exe
 
       - name: Publier l'archive comme artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Ghisdiag-onedir
           path: dist/Ghisdiag.zip
