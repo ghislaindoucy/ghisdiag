@@ -620,8 +620,23 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _code = 1
     try:
-        sys.exit(main())
+        _code = main()
     except KeyboardInterrupt:
         print("\nInterrompu.")
-        sys.exit(130)
+        _code = 130
+    except Exception:
+        traceback.print_exc()
+        _code = 1
+    finally:
+        # Gele = lance par double-clic, en atelier comme en WinPE. Sans cette
+        # pause la console se referme des la fin : on ne lit ni le verdict, ni
+        # la trace si ca casse. En sources (lance depuis un terminal ou le .bat,
+        # qui fait deja `pause`), on ne bloque pas.
+        if getattr(sys, "frozen", False):
+            try:
+                input("\nAppuyer sur Entree pour fermer cette fenetre...")
+            except (EOFError, KeyboardInterrupt):
+                pass
+    sys.exit(_code)
