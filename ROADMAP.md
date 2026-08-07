@@ -367,9 +367,17 @@ module disque ; le bench thermique en est le premier client.
 - **Comparaison avant/après** : si `thermal_compare` a produit un avant/après, c'est le
   **delta** qu'on joint, pas les deux sessions — l'information est là.
 
-**À trancher** : fenêtre de fraîcheur de la session jointe (session du jour ? 24 h ?
-7 jours ? choix explicite du technicien ?), et si l'on joint une session par cible
-(CPU **et** GPU) ou seulement la plus récente.
+**Tranché (07/08/2026)** :
+
+- **Fenêtre de fraîcheur : la session du jour, et rien d'autre.** C'est la réalité
+  atelier — on benche et on diagnostique dans la même passe. Une fenêtre plus large
+  ferait tôt ou tard joindre un bench d'avant intervention et conclure l'IA sur un état
+  périmé. Aucun bench du jour → aucune pièce jointe, et le prompt reste strictement
+  celui d'aujourd'hui (zéro régression).
+- **Une session par cible : le bench CPU **et** le bench GPU sont joints** quand les
+  deux existent. Ce sont deux mesures indépendantes, et l'écart entre les deux est
+  lui-même un signal de diagnostic. Le coût en prompt est négligeable une fois le
+  digest réduit.
 
 ---
 
