@@ -93,7 +93,7 @@ except Exception as _exc:
     _HAS_KEEPALIVE = False
     _IMPORT_ERRORS["power_keepalive"] = f"{type(_exc).__name__}: {_exc}"
 
-from prefs    import LOG_DIR, load_prefs, save_prefs
+from prefs    import LOG_DIR, load_prefs, save_prefs, clear_api_keys
 from security import is_admin, request_elevation, is_safe_output_dir
 
 # ── Logging (avec rotation pour éviter la croissance illimitée) ──────────────
@@ -2730,7 +2730,11 @@ class GhisdiagApp(tk.Tk):
         )
         if chosen:
             self.out_dir_var.set(chosen)
-            save_prefs({"output_dir": chosen})
+            # Relire d'abord : un save_prefs({"output_dir": …}) seul écrasait tout
+            # le fichier et effaçait au passage le fournisseur IA et les clés API.
+            prefs = load_prefs()
+            prefs["output_dir"] = chosen
+            save_prefs(prefs)
             self._log(f"Dossier : {chosen}", "info")
 
     def _start(self):
@@ -2967,6 +2971,7 @@ class GhisdiagApp(tk.Tk):
     def _on_ai_key_changed(self, *_):
         self._save_ai_prefs()
         self._refresh_ai_status()
+        self._ai_cfg_refresh_eject_btn()
 
     def _open_ai_config(self):
         """Ouvre la fenêtre de configuration de l'analyse IA (fournisseur + clé + test)."""
@@ -3056,6 +3061,18 @@ class GhisdiagApp(tk.Tk):
             padx=14, pady=5, command=self._ai_cfg_test_key,
         )
         self._ai_cfg_test_btn.pack(side="left")
+
+        # Éjection : retire la clé du disque. Indispensable quand on laisse
+        # Ghisdiag installé sur un poste tiers après l'intervention.
+        self._ai_cfg_eject_btn = tk.Button(
+            btns, text="🗑  Éjecter la clé",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            disabledforeground=FG_MUTED,
+            padx=14, pady=5, command=self._ai_cfg_eject_key,
+        )
+        self._ai_cfg_eject_btn.pack(side="left", padx=(8, 0))
+
         tk.Button(
             btns, text="Fermer",
             font=("Segoe UI", 9), bg=SURFACE, fg=FG,
@@ -3095,6 +3112,75 @@ class GhisdiagApp(tk.Tk):
         if var is not None:
             self._ai_cfg_key_entry.configure(textvariable=var)
         self._ai_cfg_result_lbl.configure(text="", fg=FG_MUTED)
+        self._ai_cfg_refresh_eject_btn()
+
+    def _ai_providers_with_key(self) -> list[str]:
+        """Fournisseurs dont une clé API est actuellement renseignée."""
+        return [pid for pid, var in self.ai_key_vars.items() if var.get().strip()]
+
+    def _ai_cfg_refresh_eject_btn(self):
+        """Le bouton d'éjection n'a de sens que si une clé est présente."""
+        btn = getattr(self, "_ai_cfg_eject_btn", None)
+        if btn is None or not btn.winfo_exists():
+            return
+        has_key = bool(self._active_ai_key().strip())
+        btn.configure(state="normal" if has_key else "disabled")
+
+    def _ai_cfg_eject_key(self):
+        """Efface la clé du fournisseur actif (disque + mémoire), sur confirmation.
+
+        Si d'autres fournisseurs ont une clé enregistrée, propose de tout éjecter
+        d'un coup : on quitte rarement un poste client en n'oubliant qu'une clé.
+        """
+        pid = self.ai_provider_var.get()
+        name = ai_analyzer.provider_label(pid)
+        if not self._active_ai_key().strip():
+            self._ai_cfg_result_lbl.configure(
+                text="Aucune clé à éjecter pour ce fournisseur.", fg=FG_MUTED)
+            return
+
+        others = [p for p in self._ai_providers_with_key() if p != pid]
+        if others:
+            other_names = ", ".join(ai_analyzer.provider_label(p) for p in others)
+            answer = messagebox.askyesnocancel(
+                "Éjecter la clé API",
+                f"Effacer la clé {name} de cette machine ?\n\n"
+                f"D'autres fournisseurs ont aussi une clé enregistrée :\n"
+                f"{other_names}\n\n"
+                f"Oui  = éjecter TOUTES les clés ({len(others) + 1})\n"
+                f"Non  = éjecter seulement {name}\n"
+                f"Annuler = ne rien faire",
+                parent=self._ai_cfg_win,
+            )
+            if answer is None:
+                return
+            targets = [pid] + others if answer else [pid]
+        else:
+            if not messagebox.askyesno(
+                "Éjecter la clé API",
+                f"Effacer la clé {name} de cette machine ?\n\n"
+                "Elle sera retirée du fichier de préférences ; l'analyse IA sera\n"
+                "désactivée jusqu'à la saisie d'une nouvelle clé.",
+                parent=self._ai_cfg_win,
+            ):
+                return
+            targets = [pid]
+
+        # Mémoire d'abord (chaque set déclenche la sauvegarde, qui n'écrit plus
+        # les clés vides), puis suppression explicite dans le fichier.
+        for p in targets:
+            var = self.ai_key_vars.get(p)
+            if var is not None:
+                var.set("")
+        clear_api_keys([ai_analyzer.PROVIDERS[p]["key_pref"] for p in targets])
+
+        labels = ", ".join(ai_analyzer.provider_label(p) for p in targets)
+        self._ai_cfg_result_lbl.configure(
+            text=f"Clé éjectée : {labels}. Plus aucune trace sur cette machine.",
+            fg=GREEN)
+        self._log(f"🗑  Clé API éjectée : {labels}", "info")
+        self._refresh_ai_status()
+        self._ai_cfg_refresh_eject_btn()
 
     def _ai_cfg_test_key(self):
         """Teste la clé du fournisseur actif (appel réseau déporté hors du thread UI)."""
@@ -5346,8 +5432,11 @@ class GhisdiagApp(tk.Tk):
         sec_rn.pack(fill="x", padx=28)
         tk.Label(sec_rn, text="✏️  Renommer un compte",
                  font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
-        tk.Label(sec_rn, text="Change le nom d'un compte local existant (le profil et les données sont conservés).",
-                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED).pack(anchor="w", pady=(2, 12))
+        tk.Label(sec_rn,
+                 text="Change le nom du compte ET le nom affiché par Windows (écran de connexion, menu Démarrer).\n"
+                      "Le profil et les données sont conservés ; le dossier C:\\Users\\… garde son ancien nom, c'est normal.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+                 justify="left").pack(anchor="w", pady=(2, 12))
 
         form_rn = tk.Frame(sec_rn, bg=SURFACE, padx=16, pady=14)
         form_rn.pack(fill="x")
@@ -5494,6 +5583,20 @@ class GhisdiagApp(tk.Tk):
                 self.after(0, _err)
         threading.Thread(target=_worker, daemon=True).start()
 
+    @staticmethod
+    def _rename_feedback(data: dict) -> str:
+        """Message affiché après un renommage réussi.
+
+        Le nom de compte peut être changé alors que le nom AFFICHÉ par Windows
+        n'a pas pu suivre : c'est un demi-succès, pas une erreur. On confirme le
+        renommage et on montre l'avertissement, sinon le technicien repart en
+        croyant que tout est aligné alors que l'écran de connexion, lui, garde
+        l'ancien nom.
+        """
+        msg = data.get("message") or "Compte renommé."
+        warning = data.get("warning")
+        return f"✓ {msg}" + (f"\n⚠  {warning}" if warning else "")
+
     def _comptes_rename(self):
         if self._setup_busy:
             return
@@ -5519,7 +5622,7 @@ class GhisdiagApp(tk.Tk):
                 def _update():
                     self._setup_busy = False
                     if data.get("success"):
-                        self._comptes_log_var.set(f"✓ {data.get('message', 'Compte renommé.')}")
+                        self._comptes_log_var.set(self._rename_feedback(data))
                         self._rename_new_var.set("")
                         self._comptes_load_users()
                     else:
