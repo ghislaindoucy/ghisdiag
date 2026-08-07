@@ -403,11 +403,50 @@ lecture disque brute — précisément ce que les heuristiques antivirus signale
 deux contraintes convergent. `collectors/disk_temp.py` est déjà sur smartctl (pas LHM)
 et reste réutilisable tel quel.
 
-**À valider par un test réel, avant tout développement** : tkinter tourne-t-il en
-WinPE (sinon prévoir un mode console), et smartctl passe-t-il sur les contrôleurs en
-PE. Cible de validation proposée : **Hiren's BootCD PE** (Win10 PE déjà garni,
-répandu en atelier, aucun build ADK nécessaire) — si ça tourne là, l'outil est
-livrable.
+#### Phase 0 — la sonde de validation est prête ✅
+
+Rien ne doit être développé avant d'avoir mesuré ces réponses sur une vraie machine
+bootée. La sonde `atelier_winpe_probe.py` (+ `WinPEProbe.spec`) existe et répond aux
+**six questions bloquantes** :
+
+1. **tkinter s'affiche-t-il en WinPE ?** — si non, le module se fera en mode console.
+   Ce n'est pas rédhibitoire, mais ça change toute l'UI.
+2. **smartctl répond-il en PE**, et sur quels contrôleurs ?
+3. **L'accès `\\.\PhysicalDriveN` fonctionne-t-il ?**
+4. **La lecture non bufferisée alignée secteur passe-t-elle ?** — le module en dépend :
+   sans elle on mesure le cache Windows, pas le disque.
+5. **Le n° de série du disque est-il lisible ?** — seule clé d'identité valable, le
+   hostname vaut `MINWINPC` en PE. Deux sources croisées : IOCTL et smartctl.
+6. **Le rapport peut-il être écrit à côté de l'exe ?** — en PE, `X:` est un disque RAM,
+   ce qui y est écrit disparaît à l'extinction.
+
+La sonde est **strictement en lecture seule** sur les disques et écrit son rapport
+**au fil de l'eau** : si tkinter fait tomber le process — le risque même qu'on mesure —
+tout ce qui précède reste sur la clé. Elle mesure aussi 64 Mio séquentiels avec le
+**temps maximum par bloc**, qui est l'indicateur clé du futur balayage (un bloc très
+lent = secteur en train de mourir), pour prouver que la mécanique de mesure tient en PE.
+
+**Procédure :**
+
+```
+pyinstaller --clean --noconfirm WinPEProbe.spec
+```
+
+puis copier tout `dist\WinPEProbe\` à la racine de la clé USB bootable, booter la
+machine d'atelier dessus, lancer `WinPEProbe.exe`, et récupérer le JSON
+`winpe_probe_<machine>_<horodatage>.json` écrit à côté. Le verdict des six points
+s'affiche aussi à l'écran, sans avoir à ouvrir le JSON.
+
+Cible de validation : **Hiren's BootCD PE** (Win10 PE déjà garni, répandu en atelier,
+aucun build ADK nécessaire) — si ça tourne là, l'outil est livrable.
+
+*Essai sur un Windows normal* : `test_winpe_probe_atelier.bat`, **en tant
+qu'administrateur** (sans élévation, l'énumération des disques remonte vide).
+
+**État au 07/08/2026** : sonde exécutée de bout en bout sur le poste de dev
+(Windows 11, non élevé). tkinter, smartctl et l'écriture du rapport sont validés ;
+les quatre chemins disque (énumération, lecture brute, NO_BUFFERING, n° de série)
+**restent à valider en élevé, puis en WinPE**.
 
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
@@ -531,7 +570,7 @@ principal.
 
 | Phase | Contenu | Poids |
 |---|---|---|
-| 0 | Spike WinPE : tkinter + smartctl sur Hiren's BootCD PE | petit, **bloquant** |
+| 0 | Spike WinPE (`atelier_winpe_probe.py`) — sonde écrite, reste à jouer en PE | petit, **bloquant** |
 | 1 | Moteur T1 (balayage lecture + débit + latence), modes express/standard, session checkpointée | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |

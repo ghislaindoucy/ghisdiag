@@ -30,6 +30,12 @@ wheels/
 # docs/antivirus-guide.md).
 !Ghisdiag.manifest
 !Ghisdiag.spec
+# Meme raison pour la sonde WinPE : WinPE n'a pas de Python, la sonde ne peut
+# etre emportee en atelier que compilee — ce .spec est donc la recette officielle.
+!WinPEProbe.spec
+
+# Rapports produits par les sondes d'atelier (ecrits a cote du script/exe).
+winpe_probe_*.json
 
 # Virtual environments
 venv/
