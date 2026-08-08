@@ -454,28 +454,58 @@ aucun build ADK nécessaire) — si ça tourne là, l'outil est livrable.
 *Essai sur un Windows normal* : `test_winpe_probe_atelier.bat`, **en tant
 qu'administrateur** (sans élévation, l'énumération des disques remonte vide).
 
-**État au 08/08/2026** — sonde exécutée de bout en bout sur le poste de dev
-(Windows 11, non élevé), **en sources et en exe compilé** :
+**État au 08/08/2026** — sonde jouée sur **trois exécutions élevées**, deux machines
+(Windows 11 24H2 et Windows 10 22H2), en sources et en exe compilé.
 
-- ✅ tkinter, smartctl, écriture du rapport, résolution de `smartctl.exe` depuis le
-  bundle.
-- ✅ **smartctl répond sans élévation** : les deux disques du poste remontent modèle,
-  n° de série, heures de fonctionnement et usure NVMe. C'est une bonne nouvelle pour
-  l'identité des rapports — elle ne dépend pas de l'accès disque brut.
-- ⏳ Les quatre chemins disque bruts (énumération, lecture, `NO_BUFFERING`, série par
-  IOCTL) **restent à valider en élevé, puis en WinPE** : ils exigent l'élévation, et
-  l'UAC a été refusé au moment du test.
+**Tout le socle technique est validé hors WinPE :**
 
-Deux défauts trouvés et corrigés grâce à ce build, qui auraient tous deux coûté un
-aller-retour en atelier :
+| Point | Résultat |
+|---|---|
+| tkinter | ✅ fenêtre + `mainloop`, Tcl 8.6.15, sur les deux machines |
+| smartctl | ✅ opérationnel, et **sans élévation** |
+| Énumération `\\.\PhysicalDriveN` | ✅ 3 disques par machine, taille et secteur lus |
+| Lecture brute alignée | ✅ signature MBR/GPT vue |
+| `NO_BUFFERING` + tampon aligné | ✅ |
+| Débit / latence par bloc | ✅ 1052 et 2778 Mo/s, `bloc_max` 3,79 et 0,62 ms |
+| Rapport persistant à côté de l'exe | ✅ |
 
-- **Le rapport partait dans `_internal\`.** En onedir PyInstaller 6, tout le bundle
-  atterrit dans `_internal\` et `__file__` pointe dedans : le technicien aurait cherché
-  le JSON à côté de l'exe sans jamais le trouver. Le dossier d'écriture se déduit
-  désormais de `sys.executable`, et reste distinct du dossier de lecture des ressources.
-- **Le verdict déclarait le n° de série illisible** alors que smartctl le remontait :
-  il ne comptait que la source IOCTL, la seule des deux qui exige l'élévation. Les deux
-  sources sont maintenant prises en compte, et le rapport dit laquelle a répondu.
+⏳ **Reste uniquement la validation en WinPE**, qui ne demande qu'une clé bootable et
+un PC — pas un atelier.
+
+**Quatre défauts trouvés par ces exécutions, tous corrigés.** C'est le rendement de la
+phase 0 : chacun aurait coûté un aller-retour en atelier.
+
+1. **Le rapport partait dans `_internal\`.** En onedir PyInstaller 6 tout le bundle
+   atterrit là et `__file__` pointe dedans : le technicien aurait cherché le JSON à côté
+   de l'exe sans jamais le trouver. Le dossier d'écriture vient désormais de
+   `sys.executable`, distinct du dossier de lecture des ressources.
+2. **La console se refermait avant le verdict** en double-clic — le geste normal en
+   WinPE. Pause finale ajoutée, et les exceptions s'affichent avant elle.
+3. **La révision de firmware était rendue comme n° de série.** Offsets du
+   `STORAGE_DEVICE_DESCRIPTOR` décalés de 4 octets (8/12/16/20 au lieu de 12/16/20/24).
+   Défaut **invisible** : le champ était rempli, le verdict annonçait
+   `serie_disque_lisible: true`. Deux disques de même modèle et même firmware auraient
+   partagé la même « clé d'identité » et leurs rapports se seraient écrasés.
+4. **Le croisement des sources manquait.** C'est lui qui aurait attrapé le point 3 tout
+   seul : deux sources indépendantes qui ne partagent aucun n° de série alors qu'elles
+   répondent toutes les deux, c'est qu'une des deux décode mal. Ajouté, et **par
+   disque** — une intersection non vide suffisait à masquer le cas réel.
+
+**Trois décisions d'architecture que ces mesures imposent :**
+
+- **smartctl est la source de référence du n° de série ; l'IOCTL est un repli.** Sur
+  NVMe les deux divergent : l'IOCTL rend l'EUI-64 de l'espace de noms
+  (`0000_0000_..._4743_F72B`) là où smartctl rend le vrai série (`24084743F72B`). Le
+  croisement affiche honnêtement « concordance PARTIELLE (1/2) ».
+- **Le n° de série doit être assaini avant de servir de nom de fichier.** L'IOCTL rend
+  pour une clé USB Kingston un série contenant des octets de contrôle non imprimables.
+  Utilisé tel quel dans le nom du rapport, il produit un fichier illisible ou un échec
+  d'écriture.
+- **Les règles d'exclusion sont gratuites** : le `BusType` et le drapeau `RemovableMedia`
+  du même IOCTL donnent directement `USB` / `SATA` / `NVMe` / `RAID` et l'amovibilité.
+  À noter aussi : sur la machine Windows 11, smartctl voit **deux fois le même disque**
+  (`/dev/sdb` et `/dev/csmi1,0`, contrôleur Intel RST) — le dédoublonnage par n° de
+  série sera nécessaire.
 
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 

@@ -269,12 +269,56 @@ def check_disques_enumeration() -> dict:
     return {"nb_disques": len(trouves), "disques": trouves}
 
 
+# STORAGE_BUS_TYPE — sert directement aux regles d'exclusion du futur module
+# (USB ecarte, RAID a dedupliquer).
+_BUS_TYPES = {
+    0: "inconnu", 1: "SCSI", 2: "ATAPI", 3: "ATA", 4: "IEEE1394", 5: "SSA",
+    6: "FibreChannel", 7: "USB", 8: "RAID", 9: "iSCSI", 10: "SAS", 11: "SATA",
+    12: "SD", 13: "MMC", 14: "virtuel", 15: "virtuel-fichier", 16: "StorageSpaces",
+    17: "NVMe", 18: "SCM", 19: "UFS",
+}
+
+
+def _nettoyer_serie(brut) -> tuple:
+    """Rend un n0 de serie utilisable comme NOM DE FICHIER, + un drapeau.
+
+    Constat du 08/08 : l'IOCTL rend pour une cle USB Kingston un serie contenant
+    des octets de controle non imprimables. Utilise tel quel dans le nom du
+    rapport, ca produit un fichier illisible ou un echec d'ecriture. Le module
+    devra assainir avant d'indexer quoi que ce soit.
+    """
+    if not brut:
+        return None, False
+    propre = "".join(c if (c.isalnum() or c in "-_") else "_"
+                     for c in str(brut)).strip("_")
+    return (propre or None), (propre != str(brut))
+
+
 def _serie_via_ioctl(index: int) -> dict:
-    """N0 de serie via IOCTL_STORAGE_QUERY_PROPERTY (StorageDeviceProperty).
+    """Identite du disque via IOCTL_STORAGE_QUERY_PROPERTY (StorageDeviceProperty).
 
     STORAGE_PROPERTY_QUERY : PropertyId=0, QueryType=0, AdditionalParameters[1].
-    STORAGE_DEVICE_DESCRIPTOR : les champs texte sont des OFFSETS depuis le debut
-    du descripteur, vers des chaines ANSI terminees par 0.
+
+    ATTENTION AUX OFFSETS — c'est le piege de cette structure, et la sonde s'y
+    est fait prendre le 08/08 : les champs texte etaient decales de 4 octets, si
+    bien que la REVISION DE FIRMWARE etait rendue comme numero de serie. Le
+    defaut etait invisible (le champ etait rempli, juste faux) et aurait fait
+    collisionner les rapports de deux disques de meme modele et meme firmware.
+
+    STORAGE_DEVICE_DESCRIPTOR :
+        0  DWORD  Version
+        4  DWORD  Size
+        8  BYTE   DeviceType
+        9  BYTE   DeviceTypeModifier
+        10 BYTE   RemovableMedia
+        11 BYTE   CommandQueueing
+        12 DWORD  VendorIdOffset
+        16 DWORD  ProductIdOffset
+        20 DWORD  ProductRevisionOffset
+        24 DWORD  SerialNumberOffset
+        28 DWORD  BusType
+    Les quatre offsets pointent vers des chaines ANSI terminees par 0, comptees
+    depuis le DEBUT du descripteur.
     """
     query = (0).to_bytes(4, "little") + (0).to_bytes(4, "little") + b"\x00" * 4
     with _Drive(index) as d:
@@ -289,13 +333,18 @@ def _serie_via_ioctl(index: int) -> dict:
         fin = raw.find(b"\x00", off)
         return raw[off:fin if fin != -1 else len(raw)].decode("latin-1").strip() or None
 
+    def _dword(pos: int):
+        return (int.from_bytes(raw[pos:pos + 4], "little")
+                if len(raw) >= pos + 4 else None)
+
+    bus = _dword(28)
     return {
-        # Offsets du STORAGE_DEVICE_DESCRIPTOR : Vendor=8, Product=12,
-        # ProductRevision=16, SerialNumber=20.
-        "fabricant":   _chaine(8),
-        "modele":      _chaine(12),
-        "revision":    _chaine(16),
-        "numero_serie": _chaine(20),
+        "fabricant":    _chaine(12),
+        "modele":       _chaine(16),
+        "revision":     _chaine(20),
+        "numero_serie": _chaine(24),
+        "amovible":     bool(raw[10]) if len(raw) > 10 else None,
+        "bus":          _BUS_TYPES.get(bus, f"code {bus}") if bus is not None else None,
     }
 
 
@@ -315,7 +364,10 @@ def check_identite_disques() -> dict:
             out.append({"index": i, "erreur": f"{type(exc).__name__}: {exc}"})
             continue
         info["index"] = i
-        info["serie_utilisable_comme_cle"] = bool(info.get("numero_serie"))
+        propre, assaini = _nettoyer_serie(info.get("numero_serie"))
+        info["serie_nettoyee"] = propre
+        info["serie_avait_caracteres_invalides"] = assaini
+        info["serie_utilisable_comme_cle"] = bool(propre)
         out.append(info)
     return {"disques": out,
             "tous_identifiables": bool(out) and all(
@@ -595,6 +647,47 @@ def main() -> int:
                     "IOCTL" if serie_ioctl else
                     "smartctl" if serie_smart else None)
 
+    # CROISEMENT DES DEUX SOURCES — le garde-fou qui manquait le 08/08.
+    # Deux sources independantes qui ne partagent AUCUN numero de serie alors
+    # qu'elles repondent toutes les deux, c'est qu'une des deux decode mal. Un
+    # champ rempli n'est pas un champ juste : c'est exactement comme ca que la
+    # revision de firmware est passee pour un numero de serie sans alerter.
+    def _norm(s):
+        return "".join(str(s).split()).upper() if s else None
+
+    ser_i = {_norm(d.get("numero_serie"))
+             for d in (_data("identite_disques", "disques") or [])
+             if d.get("numero_serie")}
+    ser_s = {_norm(d.get("numero_serie"))
+             for d in (_data("smartctl", "details") or [])
+             if d.get("numero_serie")}
+    communes = ser_i & ser_s
+
+    # Concordance PAR DISQUE, pas globale : se contenter d'une intersection non
+    # vide masquerait le cas reel observe le 08/08 — le SATA concorde, le NVMe
+    # non (l'IOCTL rend l'EUI-64 de l'espace de noms, smartctl le vrai serie).
+    if ser_i and ser_s:
+        if communes == ser_s:
+            verdict_conc = "toutes concordantes"
+        elif communes:
+            verdict_conc = (f"concordance PARTIELLE ({len(communes)}/{len(ser_s)}) — "
+                            "les deux sources ne nomment pas le meme disque de la "
+                            "meme facon, choisir une source de reference")
+        else:
+            verdict_conc = ("DIVERGENTES - une des deux sources decode mal, "
+                            "ne pas se fier a la cle d'identite")
+    elif ser_i or ser_s:
+        verdict_conc = "une seule source a repondu, croisement impossible"
+    else:
+        verdict_conc = "aucune source n'a repondu"
+
+    rapport["concordance_series"] = {
+        "ioctl":    sorted(x for x in ser_i if x),
+        "smartctl": sorted(x for x in ser_s if x),
+        "communes": sorted(x for x in communes if x),
+        "verdict":  verdict_conc,
+    }
+
     rapport["verdict_phase_0"] = {
         "winpe_confirme":        _data("contexte", "winpe_detecte", False),
         "tkinter_utilisable":    bool((v.get("tkinter") or {}).get("ok")
@@ -615,6 +708,7 @@ def main() -> int:
         print(f"  {'OUI' if val else 'NON':>3}  {cle}")
     if source_serie:
         print(f"       (n0 de serie lu via : {source_serie})")
+    print(f"  Croisement des deux sources : {verdict_conc}")
     print(f"\nRapport ecrit : {sortie}")
     return 0
 
