@@ -36,6 +36,9 @@ wheels/
 
 # Rapports produits par les sondes d'atelier (ecrits a cote du script/exe).
 winpe_probe_*.json
+ghisdiag_charge_gpu_*.txt
+ghisdiag_gpu_test_*.txt
+atelier_probe_*.json
 
 # Virtual environments
 venv/
