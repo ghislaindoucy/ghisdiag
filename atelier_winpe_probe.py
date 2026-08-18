@@ -98,6 +98,7 @@ PAGE_READWRITE     = 0x04
 IOCTL_DISK_GET_LENGTH_INFO   = 0x0007405C
 IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x00070000
 IOCTL_STORAGE_QUERY_PROPERTY  = 0x002D1400
+IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
 
 # Sans argtypes explicites, ctypes tronque les HANDLE 64 bits en int 32 bits.
 _k32.CreateFileW.restype  = wintypes.HANDLE
@@ -122,14 +123,15 @@ _k32.VirtualFree.argtypes  = [ctypes.c_void_p, ctypes.c_size_t, wintypes.DWORD]
 class _Drive:
     r"""Ouvre \\.\PhysicalDriveN en LECTURE SEULE. Referme toujours."""
 
-    def __init__(self, index: int, no_buffering: bool = False):
+    def __init__(self, index: int = None, no_buffering: bool = False,
+                 chemin: str = None):
         flags = FILE_FLAG_NO_BUFFERING if no_buffering else 0
+        cible = chemin or f"\\\\.\\PhysicalDrive{index}"
         self.handle = _k32.CreateFileW(
-            f"\\\\.\\PhysicalDrive{index}", GENERIC_READ,
+            cible, GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, flags, None)
         if self.handle == INVALID_HANDLE_VALUE or not self.handle:
-            raise OSError(ctypes.get_last_error(),
-                          f"CreateFileW PhysicalDrive{index}")
+            raise OSError(ctypes.get_last_error(), f"CreateFileW {cible}")
 
     def __enter__(self):
         return self
@@ -512,7 +514,7 @@ def check_smartctl() -> dict:
         devices = []
 
     details = []
-    for dev in devices[:4]:
+    for dev in devices[:8]:
         nom = dev.get("name")
         try:
             _, txt = _run(["-a", "--json", nom], timeout=60)
@@ -524,6 +526,12 @@ def check_smartctl() -> dict:
                 "smart_actif":  (d.get("smart_status") or {}).get("passed"),
                 "temperature":  (d.get("temperature") or {}).get("current"),
                 "heures":       (d.get("power_on_time") or {}).get("hours"),
+                # LE discriminant mecanique/SSD : 0 = SSD, sinon tours/minute.
+                # Bien plus fiable qu'un ecart de debit entre zones (cf.
+                # note_ecart dans disques_detail).
+                "rotation_rate": d.get("rotation_rate"),
+                "format":        (d.get("form_factor") or {}).get("name"),
+                "cycles_demarrage": (d.get("power_cycle_count")),
                 "usure_nvme_pct": (d.get("nvme_smart_health_information_log") or {})
                                   .get("percentage_used"),
             })
@@ -573,16 +581,267 @@ def check_tkinter() -> dict:
     return res
 
 
+def check_disque_de_la_sonde() -> dict:
+    r"""Sur QUEL PhysicalDriveN tourne la sonde elle-meme ?
+
+    Garde-fou n0 3 du ROADMAP, et il n'avait jamais ete prototype. En WinPE on
+    a boote sur la cle du technicien : elle apparait dans la liste des disques
+    et ne doit JAMAIS etre selectionnable. Sans cette reponse, la regle
+    d'exclusion n'est qu'une intention.
+
+    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS sur \\.\X: rend le ou les disques
+    physiques qui portent le volume (plusieurs si espaces de stockage / RAID).
+    """
+    lettre = str(_ROOT)[:2]
+    if len(lettre) != 2 or lettre[1] != ":":
+        return {"verdict": "dossier de la sonde sans lettre de lecteur (UNC ?)",
+                "dossier": str(_ROOT)}
+    with _Drive(chemin=f"\\\\.\\{lettre}") as v:
+        raw = v.ioctl(IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, 1024)
+    nb = int.from_bytes(raw[0:4], "little")
+    disques = []
+    for i in range(nb):
+        # VOLUME_DISK_EXTENTS : NumberOfDiskExtents(4) + bourrage(4), puis les
+        # DISK_EXTENT de 24 octets { DiskNumber(4), bourrage(4), Debut(8), Long(8) }.
+        base = 8 + i * 24
+        if len(raw) >= base + 4:
+            disques.append(int.from_bytes(raw[base:base + 4], "little"))
+    return {"lettre": lettre, "dossier": str(_ROOT),
+            "disques_physiques": disques,
+            "a_exclure_des_tests": disques,
+            "verdict": (f"la sonde tourne depuis PhysicalDrive{disques}"
+                        if disques else "disque porteur non identifie")}
+
+
+def _secteurs_logique_physique(index: int) -> dict:
+    """Secteur LOGIQUE et PHYSIQUE (StorageAccessAlignmentProperty).
+
+    Un disque 512e (512 logique / 4096 physique) se lit par 512 mais travaille
+    par 4096 : aligner le balayage sur le secteur physique evite de payer un
+    cycle lecture-modification-ecriture invisible. Le module en aura besoin.
+    """
+    query = (6).to_bytes(4, "little") + (0).to_bytes(4, "little") + b"\x00" * 4
+    with _Drive(index) as d:
+        raw = d.ioctl_in(IOCTL_STORAGE_QUERY_PROPERTY, query, 64)
+
+    def _dw(pos):
+        return (int.from_bytes(raw[pos:pos + 4], "little")
+                if len(raw) >= pos + 4 else None)
+
+    return {"octets_par_secteur_logique":  _dw(16),
+            "octets_par_secteur_physique": _dw(20),
+            "decalage_alignement":         _dw(24)}
+
+
+_GPT_TYPES = {
+    "C12A7328-F81F-11D2-BA4B-00A0C93EC93B": "EFI System",
+    "E3C9E316-0B5C-4DB8-817D-F92DF00215AE": "Microsoft reserve",
+    "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7": "Donnees de base",
+    "DE94BBA4-06D1-4D40-A16A-BFD50179D6AC": "Windows RE",
+    "0FC63DAF-8483-4772-8E79-3D69D8477DE4": "Linux",
+    "21686148-6449-6E6F-744E-656564454649": "BIOS boot",
+    "E6D6D379-F507-44C2-A23C-238F2A3DF928": "LDM donnees",
+}
+
+_MBR_TYPES = {
+    0x07: "NTFS/exFAT", 0x0B: "FAT32", 0x0C: "FAT32 LBA", 0x0E: "FAT16 LBA",
+    0x27: "Recuperation", 0x83: "Linux", 0x82: "Linux swap",
+    0xEE: "GPT protectrice", 0xEF: "EFI",
+}
+
+
+def _guid(b: bytes) -> str:
+    """GUID Windows : les trois premiers champs sont en petit-boutien."""
+    return (f"{int.from_bytes(b[0:4],'little'):08X}-"
+            f"{int.from_bytes(b[4:6],'little'):04X}-"
+            f"{int.from_bytes(b[6:8],'little'):04X}-"
+            f"{b[8:10].hex().upper()}-{b[10:16].hex().upper()}")
+
+
+def _partitions(index: int, secteur: int) -> dict:
+    """Inventaire des partitions lu DIRECTEMENT sur le disque (GPT puis MBR).
+
+    On parse le disque plutot que d'interroger Windows : c'est la seule methode
+    qui donnera le meme resultat en WinPE, ou les volumes ne sont pas montes et
+    n'ont pas de lettre. C'est aussi la brique de l'inventaire affiche avant un
+    test destructif (garde-fou n0 4) : montrer ce qu'on va detruire.
+    """
+    taille_lue = max(512, secteur)
+    with _Drive(index) as d:
+        d.seek(0)
+        buf = ctypes.create_string_buffer(taille_lue)
+        d.read_into(buf, taille_lue)
+        mbr = buf.raw
+
+        entrees = []
+        for i in range(4):
+            e = mbr[446 + i * 16: 446 + (i + 1) * 16]
+            t = e[4]
+            if t:
+                entrees.append({
+                    "type_mbr":  f"0x{t:02X}",
+                    "libelle":   _MBR_TYPES.get(t, "inconnu"),
+                    "debut_lba": int.from_bytes(e[8:12], "little"),
+                    "taille_go": round(int.from_bytes(e[12:16], "little")
+                                       * secteur / 1e9, 2),
+                })
+        protectrice = any(x["type_mbr"] == "0xEE" for x in entrees)
+
+        if not protectrice:
+            return {"schema": "MBR" if entrees else "aucun",
+                    "partitions": entrees}
+
+        # GPT : en-tete en LBA1, table a l'adresse qu'elle indique.
+        d.seek(secteur)
+        buf = ctypes.create_string_buffer(taille_lue)
+        d.read_into(buf, taille_lue)
+        hdr = buf.raw
+        if hdr[0:8] != b"EFI PART":
+            return {"schema": "GPT annoncee mais en-tete absente",
+                    "partitions": entrees}
+
+        table_lba = int.from_bytes(hdr[72:80], "little")
+        nb        = min(int.from_bytes(hdr[80:84], "little"), 128)
+        taille_e  = int.from_bytes(hdr[84:88], "little")
+        if not taille_e or not nb:
+            return {"schema": "GPT", "partitions": [],
+                    "note": "table de partitions vide ou illisible"}
+        octets  = nb * taille_e
+        octets += (-octets) % secteur          # arrondi au secteur superieur
+
+        d.seek(table_lba * secteur)
+        buf = ctypes.create_string_buffer(octets)
+        d.read_into(buf, octets)
+        tbl = buf.raw
+
+        parts = []
+        for i in range(nb):
+            e = tbl[i * taille_e:(i + 1) * taille_e]
+            if len(e) < 128 or e[0:16] == b"\x00" * 16:
+                continue
+            type_guid = _guid(e[0:16])
+            debut = int.from_bytes(e[32:40], "little")
+            fin   = int.from_bytes(e[40:48], "little")
+            nom   = e[56:128].decode("utf-16-le", "replace").rstrip("\x00").strip()
+            parts.append({
+                "numero":    i + 1,
+                "type_guid": type_guid,
+                "libelle":   _GPT_TYPES.get(type_guid, "inconnu"),
+                "nom":       nom or None,
+                "debut_lba": debut,
+                "taille_go": round((fin - debut + 1) * secteur / 1e9, 2),
+            })
+        return {"schema": "GPT", "partitions": parts}
+
+
+def _latence_zone(index: int, offset: int, secteur: int, blocs: int = 16) -> dict:
+    """Lit `blocs` x 1 Mio depuis un offset, et rend le profil de temps.
+
+    Trois zones valent mieux qu'une seule au debut : sur un disque mecanique le
+    debit chute fortement des pistes exterieures vers les interieures, et c'est
+    exactement ce que le mode << express >> devra echantillonner plutot que de
+    balayer 4 To.
+    """
+    offset -= offset % secteur                    # alignement obligatoire
+    ptr = None
+    try:
+        with _Drive(index, no_buffering=True) as d:
+            ptr = _aligned_buffer(_BLOCK_BYTES)
+            d.seek(offset)
+            temps, total = [], 0
+            for _ in range(blocs):
+                t0 = time.perf_counter()
+                lus = d.read_into(ptr, _BLOCK_BYTES)
+                temps.append((time.perf_counter() - t0) * 1000.0)
+                total += lus
+                if lus < _BLOCK_BYTES:
+                    break
+            temps.sort()
+            duree = sum(temps) / 1000.0
+            return {"offset_go":      round(offset / 1e9, 1),
+                    "octets_lus":     total,
+                    "debit_mo_s":     round(total / 1e6 / duree, 1) if duree else None,
+                    "bloc_median_ms": round(temps[len(temps) // 2], 2) if temps else None,
+                    "bloc_max_ms":    round(temps[-1], 2) if temps else None}
+    except OSError as exc:
+        return {"offset_go": round(offset / 1e9, 1), "erreur": str(exc)}
+    finally:
+        if ptr:
+            _k32.VirtualFree(ptr, 0, MEM_RELEASE)
+
+
+def check_disques_detail() -> dict:
+    """Fiche complete PAR DISQUE - le coeur de la collecte.
+
+    Les verifications precedentes ne regardent QUE le premier disque ouvrable :
+    suffisant pour un feu vert de phase 0, insuffisant pour concevoir le module.
+    Ici chaque disque est decrit et mesure sur trois zones (debut / milieu /
+    fin), ce qui reste court (48 Mio par disque) et sans risque.
+    """
+    exclus = []
+    try:
+        exclus = check_disque_de_la_sonde().get("a_exclure_des_tests") or []
+    except Exception:
+        pass
+
+    fiches = []
+    for i in range(16):
+        try:
+            with _Drive(i) as d:
+                taille = int.from_bytes(d.ioctl(IOCTL_DISK_GET_LENGTH_INFO, 8), "little")
+                geo = d.ioctl(IOCTL_DISK_GET_DRIVE_GEOMETRY, 24)
+                secteur = int.from_bytes(geo[20:24], "little") or 512
+        except OSError:
+            continue
+
+        fiche = {"index": i, "taille_go": round(taille / 1e9, 1),
+                 "porte_la_sonde": i in exclus}
+
+        for nom, fn in (("identite",   lambda i=i: _serie_via_ioctl(i)),
+                        ("secteurs",   lambda i=i: _secteurs_logique_physique(i)),
+                        ("partitions", lambda i=i, s=secteur: _partitions(i, s))):
+            try:
+                fiche[nom] = fn()
+            except Exception as exc:
+                fiche[nom] = {"erreur": f"{type(exc).__name__}: {exc}"}
+
+        # Trois zones : debut, milieu, et fin moins la fenetre de lecture.
+        fenetre = _BLOCK_BYTES * 16
+        fiche["zones"] = [
+            _latence_zone(i, 0, secteur),
+            _latence_zone(i, taille // 2, secteur),
+            _latence_zone(i, max(0, taille - fenetre * 2), secteur),
+        ]
+        debits = [z.get("debit_mo_s") for z in fiche["zones"] if z.get("debit_mo_s")]
+        if len(debits) >= 2:
+            fiche["ecart_debit_pct"] = round(
+                (max(debits) - min(debits)) / max(debits) * 100, 1)
+            # NE PAS conclure mecanique/SSD sur cet ecart. Mesure du 08/08 : un
+            # NVMe sain affiche 30,7 % d'ecart entre zones sur 16 Mio (2800 /
+            # 1942 / 2406 Mo/s) alors qu'un SATA du meme poste reste a 3 %.
+            # L'echantillon est trop court, et un SSD varie avec son cache SLC
+            # et sa temperature. Le discriminant fiable est rotation_rate rendu
+            # par smartctl (0 = SSD, sinon les tours/minute), pas un debit.
+            fiche["note_ecart"] = (
+                "Ecart indicatif seulement : trop court pour conclure. Pour "
+                "distinguer mecanique et SSD, se fier a smartctl.rotation_rate.")
+        fiches.append(fiche)
+
+    return {"nb_disques": len(fiches), "disques": fiches}
+
+
 # --- Rapport -----------------------------------------------------------------
 
 VERIFICATIONS = [
     ("contexte",              check_contexte),
     ("ecriture_rapport",      check_ecriture_rapport),
+    ("disque_de_la_sonde",    check_disque_de_la_sonde),
     ("disques_enumeration",   check_disques_enumeration),
     ("identite_disques",      check_identite_disques),
     ("lecture_brute",         check_lecture_brute),
     ("lecture_non_bufferisee", check_lecture_non_bufferisee),
     ("debit_et_latence",      check_debit_et_latence),
+    ("disques_detail",        check_disques_detail),
     ("smartctl",              check_smartctl),
     # tkinter en dernier : c'est le seul qui peut faire tomber le process.
     ("tkinter",               check_tkinter),
