@@ -508,7 +508,12 @@ def check_smartctl() -> dict:
     try:
         _, scan = _run(["--scan-open", "--json"], timeout=60)
         devices = json.loads(scan).get("devices", []) if scan.strip() else []
-        out["peripheriques_vus"] = [d.get("name") for d in devices]
+        # On garde le TYPE, pas seulement le nom. Campagne du 01/09 : sur 2 des
+        # 4 machines, `smartctl -a <dev>` sans -d rendait un JSON vide pour le
+        # disque systeme NVMe alors que --scan-open l'avait bien identifie. Le
+        # type est la moitie de la reponse, et on le jetait.
+        out["peripheriques_vus"] = [{"nom": d.get("name"), "type": d.get("type")}
+                                    for d in devices]
     except Exception as exc:
         out["scan_erreur"] = f"{type(exc).__name__}: {exc}"
         devices = []
@@ -516,31 +521,63 @@ def check_smartctl() -> dict:
     details = []
     for dev in devices[:8]:
         nom = dev.get("name")
+        typ = dev.get("type")
         try:
-            _, txt = _run(["-a", "--json", nom], timeout=60)
-            d = json.loads(txt)
-            details.append({
+            args = ["-a", "--json"]
+            if typ:
+                args += ["-d", typ]
+            code, txt = _run(args + [nom], timeout=60)
+            d = json.loads(txt) if txt.strip() else {}
+            # Les messages de smartctl expliquent POURQUOI un disque reste
+            # muet. Sans eux, un JSON tout en null est indistinguable d'un
+            # disque sans SMART.
+            msgs = [m.get("string") for m
+                    in ((d.get("smartctl") or {}).get("messages") or [])]
+            entree = {
                 "peripherique": nom,
+                "type_smartctl": typ,
                 "modele":       (d.get("model_name") or d.get("model_family")),
                 "numero_serie": d.get("serial_number"),
                 "smart_actif":  (d.get("smart_status") or {}).get("passed"),
                 "temperature":  (d.get("temperature") or {}).get("current"),
                 "heures":       (d.get("power_on_time") or {}).get("hours"),
-                # LE discriminant mecanique/SSD : 0 = SSD, sinon tours/minute.
-                # Bien plus fiable qu'un ecart de debit entre zones (cf.
-                # note_ecart dans disques_detail).
+                # Discriminant mecanique/SSD : 0 = SSD, sinon tours/minute.
+                # ATTENTION : champ ATA, donc TOUJOURS absent en NVMe (verifie
+                # sur 4 NVMe le 01/09). Voir _type_support() pour la regle
+                # complete, qui traite le NVMe a part.
                 "rotation_rate": d.get("rotation_rate"),
                 "format":        (d.get("form_factor") or {}).get("name"),
                 "cycles_demarrage": (d.get("power_cycle_count")),
                 "usure_nvme_pct": (d.get("nvme_smart_health_information_log") or {})
                                   .get("percentage_used"),
-            })
+                "code_sortie":  code,
+            }
+            if msgs:
+                entree["messages_smartctl"] = msgs
+            entree["exploitable"] = bool(entree["modele"] or entree["numero_serie"])
+            details.append(entree)
         except Exception as exc:
-            details.append({"peripherique": nom,
+            details.append({"peripherique": nom, "type_smartctl": typ,
+                            "exploitable": False,
                             "erreur": f"{type(exc).__name__}: {exc}"})
+
     out["details"] = details
-    out["verdict"] = ("smartctl operationnel" if details
-                      else "smartctl present mais aucun disque interroge")
+    utiles = [x for x in details if x.get("exploitable")]
+    out["nb_exploitables"] = len(utiles)
+    out["nb_muets"] = len(details) - len(utiles)
+    # Un `details` non vide ne prouve RIEN : le 01/09, deux machines rendaient
+    # des entrees entierement nulles et le verdict annoncait quand meme
+    # << operationnel >>. On compte les disques reellement exploitables.
+    if not details:
+        out["verdict"] = "smartctl present mais aucun disque interroge"
+    elif not utiles:
+        out["verdict"] = ("smartctl repond mais AUCUN disque exploitable - "
+                          "pas de SMART sur cette machine")
+    elif out["nb_muets"]:
+        out["verdict"] = (f"smartctl operationnel sur {len(utiles)} disque(s), "
+                          f"muet sur {out['nb_muets']}")
+    else:
+        out["verdict"] = "smartctl operationnel"
     return out
 
 
@@ -722,7 +759,12 @@ def _partitions(index: int, secteur: int) -> dict:
             type_guid = _guid(e[0:16])
             debut = int.from_bytes(e[32:40], "little")
             fin   = int.from_bytes(e[40:48], "little")
-            nom   = e[56:128].decode("utf-16-le", "replace").rstrip("\x00").strip()
+            # Couper au PREMIER NUL, pas rogner la fin : plusieurs firmwares ne
+            # remettent pas a zero le reste du champ, si bien qu'un rstrip
+            # laissait la suite du tampon collee au nom. Vu le 01/09 :
+            # << Basic data partition\x00<octets aleatoires> >>. Un nom de
+            # partition en mojibake dans un rapport client serait indefendable.
+            nom   = e[56:128].decode("utf-16-le", "replace").split("\x00")[0].strip()
             parts.append({
                 "numero":    i + 1,
                 "type_guid": type_guid,
@@ -830,6 +872,131 @@ def check_disques_detail() -> dict:
     return {"nb_disques": len(fiches), "disques": fiches}
 
 
+def _serie_solide(serie) -> tuple:
+    """Un serie assaini n'est pas pour autant un IDENTIFIANT.
+
+    Campagne du 01/09, deux contre-exemples qui auraient corrompu l'archive :
+      - la cle USB Kingston/Generic rend \\x031, assaini en << 1 >>. N'importe
+        quel autre peripherique peut produire << 1 >>.
+      - les NVMe rendent par IOCTL leur EUI-64, souvent presque tout en zeros
+        (0000_0000_0000_0000_0C82_D500_0000_0371), et certains fabricants
+        partagent le meme prefixe sur toute une gamme.
+    Un champ rempli n'est pas un champ discriminant. On qualifie, on ne suppose pas.
+    """
+    if not serie:
+        return False, "absent"
+    s = str(serie).strip("_. ")
+    nu = s.replace("_", "").replace("-", "")
+    if len(nu) < 6:
+        return False, "trop court pour discriminer"
+    if len(set(nu)) <= 1:
+        return False, "un seul caractere repete"
+    if len(nu.strip("0")) < 4:
+        return False, "essentiellement des zeros"
+    return True, "ok"
+
+
+def _type_support(idt: dict, smart: dict) -> str:
+    """Mecanique ou electronique ? Regle complete, apres deux corrections.
+
+    rotation_rate reste le discriminant quand il est la, mais c'est un champ
+    ATA : il est TOUJOURS absent en NVMe (verifie sur 4 NVMe le 01/09). Et
+    l'ecart de debit entre zones ne conclut rien du tout (un NVMe sain monte a
+    65,9 % d'ecart). D'ou cette regle en cascade.
+    """
+    smart = smart or {}
+    bus = (idt or {}).get("bus")
+    if bus == "NVMe" or smart.get("usure_nvme_pct") is not None:
+        return "SSD NVMe"
+    rr = smart.get("rotation_rate")
+    if rr == 0:
+        return "SSD"
+    if isinstance(rr, int) and rr > 0:
+        return f"Disque mecanique ({rr} tr/min)"
+    if bus == "USB":
+        return "USB - support indetermine"
+    return "indetermine"
+
+
+def _apparier_smart(idt: dict, smarts: list) -> dict:
+    """Rapproche un PhysicalDriveN d'une entree smartctl.
+
+    Par numero de serie d'abord, par modele ensuite. Les deux sources ne
+    numerotent pas les disques pareil (smartctl voit aussi les lecteurs
+    optiques et duplique derriere un controleur RST), un appariement positionnel
+    serait faux.
+    """
+    def _n(x):
+        return "".join(str(x).split()).upper().strip("_. ") if x else None
+
+    serie = _n((idt or {}).get("numero_serie"))
+    modele = _n((idt or {}).get("modele"))
+    for s in smarts:
+        if serie and _n(s.get("numero_serie")) == serie:
+            return s
+    for s in smarts:
+        if modele and _n(s.get("modele")) == modele:
+            return s
+    return {}
+
+
+def _synthese_disques(detail: dict, smart: dict) -> dict:
+    """Fiche consolidee par disque - le prototype de l'inventaire du module.
+
+    C'est ici qu'on tranche la clé d'identite en croisant les deux sources, et
+    qu'on dit HONNETEMENT quand aucune des deux ne fournit d'identifiant sur
+    lequel indexer un rapport.
+    """
+    fiches = (detail or {}).get("disques") or []
+    smarts = [x for x in ((smart or {}).get("details") or []) if x.get("exploitable")]
+
+    out, faibles = [], 0
+    for f in fiches:
+        idt = f.get("identite") or {}
+        s   = _apparier_smart(idt, smarts)
+
+        ser_smart = s.get("numero_serie")
+        ser_ioctl = (_nettoyer_serie(idt.get("numero_serie")) or (None, None))[0]
+        ok_smart, _   = _serie_solide(ser_smart)
+        ok_ioctl, why = _serie_solide(ser_ioctl)
+
+        if ok_smart:
+            cle, source, conf = ser_smart, "smartctl", "forte"
+        elif ok_ioctl:
+            cle, source, conf = ser_ioctl, "IOCTL", "moyenne"
+        else:
+            # Repli explicite et non ambigu plutot qu'un identifiant douteux.
+            cle = f"{idt.get('modele') or 'DISQUE'}-{f.get('taille_go')}Go-SANS-SERIE"
+            cle = (_nettoyer_serie(cle) or (cle, None))[0]
+            source, conf = "repli modele+taille", "faible"
+            faibles += 1
+
+        out.append({
+            "index":          f.get("index"),
+            "modele":         idt.get("modele") or s.get("modele"),
+            "taille_go":      f.get("taille_go"),
+            "bus":            idt.get("bus"),
+            "type_support":   _type_support(idt, s),
+            "porte_la_sonde": f.get("porte_la_sonde"),
+            "cle_identite":   cle,
+            "source_cle":     source,
+            "confiance_cle":  conf,
+            "raison_rejet_ioctl": None if ok_ioctl else why,
+            "serie_smartctl": ser_smart,
+            "serie_ioctl":    ser_ioctl,
+            "smart_disponible": bool(s),
+            "heures":         s.get("heures"),
+            "usure_nvme_pct": s.get("usure_nvme_pct"),
+            "temperature":    s.get("temperature"),
+        })
+
+    return {"disques": out,
+            "nb_cles_faibles": faibles,
+            "verdict": ("toutes les cles d'identite sont exploitables" if not faibles
+                        else f"{faibles} disque(s) sans identifiant fiable - "
+                             "indexation des rapports a securiser")}
+
+
 # --- Rapport -----------------------------------------------------------------
 
 VERIFICATIONS = [
@@ -895,6 +1062,11 @@ def main() -> int:
         bloc = v.get(nom) or {}
         return (bloc.get("data") or {}).get(cle, defaut) if bloc.get("ok") else defaut
 
+    def _bloc(nom):
+        """Le bloc `data` entier d'une verification reussie, sinon {}."""
+        b = v.get(nom) or {}
+        return (b.get("data") or {}) if b.get("ok") else {}
+
     # Le n0 de serie a DEUX sources et il suffit qu'une reponde : l'IOCTL exige
     # l'elevation, smartctl non (verifie le 08/08 : series remontees sans admin).
     # Ne compter que l'IOCTL afficherait "serie illisible" alors que la cle
@@ -922,29 +1094,42 @@ def main() -> int:
              if d.get("numero_serie")}
     communes = ser_i & ser_s
 
-    # Concordance PAR DISQUE, pas globale : se contenter d'une intersection non
-    # vide masquerait le cas reel observe le 08/08 — le SATA concorde, le NVMe
-    # non (l'IOCTL rend l'EUI-64 de l'espace de noms, smartctl le vrai serie).
-    if ser_i and ser_s:
-        if communes == ser_s:
-            verdict_conc = "toutes concordantes"
-        elif communes:
-            verdict_conc = (f"concordance PARTIELLE ({len(communes)}/{len(ser_s)}) — "
-                            "les deux sources ne nomment pas le meme disque de la "
-                            "meme facon, choisir une source de reference")
-        else:
-            verdict_conc = ("DIVERGENTES - une des deux sources decode mal, "
-                            "ne pas se fier a la cle d'identite")
-    elif ser_i or ser_s:
-        verdict_conc = "une seule source a repondu, croisement impossible"
+    # Synthese par disque : appariement des deux sources, type de support et
+    # cle d'identite retenue. C'est le prototype de l'inventaire du module.
+    synth = _synthese_disques(_bloc("disques_detail"), _bloc("smartctl"))
+    rapport["synthese_disques"] = synth
+
+    # CROISEMENT PAR DISQUE APPARIE, et non par intersection d'ensembles.
+    # Le 01/09, la comparaison globale a criè << DIVERGENTES - une des deux
+    # sources decode mal >> sur une machine ou les deux sources etaient JUSTES :
+    # l'IOCTL voyait le NVMe, smartctl seulement le lecteur DVD. Deux sources
+    # qui decrivent des peripheriques differents ne divergent pas, elles ne se
+    # recouvrent pas. Confondre les deux, c'est fabriquer une fausse alerte.
+    apparies = [d for d in synth["disques"]
+                if d.get("serie_smartctl") and d.get("serie_ioctl")]
+    def _n2(x):
+        return "".join(str(x).split()).upper().strip("_. ") if x else None
+    accord = [d for d in apparies
+              if _n2(d["serie_smartctl"]) == _n2(d["serie_ioctl"])]
+
+    if not apparies:
+        verdict_conc = ("aucun disque n'a repondu aux DEUX sources - "
+                        "croisement impossible, ce n'est pas une divergence")
+    elif len(accord) == len(apparies):
+        verdict_conc = f"concordantes sur les {len(apparies)} disque(s) apparie(s)"
     else:
-        verdict_conc = "aucune source n'a repondu"
+        verdict_conc = (f"ecart de FORMAT sur {len(apparies) - len(accord)} disque(s) : "
+                        "typiquement un NVMe, dont l'IOCTL rend l'EUI-64 et non le "
+                        "serie. Ce n'est pas un bug de decodage, mais deux "
+                        "identifiants differents pour le meme disque")
 
     rapport["concordance_series"] = {
-        "ioctl":    sorted(x for x in ser_i if x),
-        "smartctl": sorted(x for x in ser_s if x),
-        "communes": sorted(x for x in communes if x),
-        "verdict":  verdict_conc,
+        "ioctl":            sorted(x for x in ser_i if x),
+        "smartctl":         sorted(x for x in ser_s if x),
+        "communes":         sorted(x for x in communes if x),
+        "disques_apparies": len(apparies),
+        "disques_en_accord": len(accord),
+        "verdict":          verdict_conc,
     }
 
     rapport["verdict_phase_0"] = {
@@ -968,6 +1153,15 @@ def main() -> int:
     if source_serie:
         print(f"       (n0 de serie lu via : {source_serie})")
     print(f"  Croisement des deux sources : {verdict_conc}")
+
+    print("\nDisques :")
+    for d in synth["disques"]:
+        marque = " [PORTE LA SONDE]" if d.get("porte_la_sonde") else ""
+        print(f"  #{d['index']} {str(d['taille_go']):>7} Go  {str(d['bus']):>5}  "
+              f"{d['type_support']:<24} {d.get('modele') or '?'}{marque}")
+        print(f"      cle={d['cle_identite']}  (source {d['source_cle']}, "
+              f"confiance {d['confiance_cle']})")
+    print(f"  -> {synth['verdict']}")
     print(f"\nRapport ecrit : {sortie}")
     return 0
 

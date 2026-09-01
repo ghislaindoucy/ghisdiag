@@ -491,21 +491,69 @@ phase 0 : chacun aurait coûté un aller-retour en atelier.
    répondent toutes les deux, c'est qu'une des deux décode mal. Ajouté, et **par
    disque** — une intersection non vide suffisait à masquer le cas réel.
 
-**Trois décisions d'architecture que ces mesures imposent :**
+**Décisions d'architecture que ces mesures imposent :**
 
-- **smartctl est la source de référence du n° de série ; l'IOCTL est un repli.** Sur
-  NVMe les deux divergent : l'IOCTL rend l'EUI-64 de l'espace de noms
-  (`0000_0000_..._4743_F72B`) là où smartctl rend le vrai série (`24084743F72B`). Le
-  croisement affiche honnêtement « concordance PARTIELLE (1/2) ».
 - **Le n° de série doit être assaini avant de servir de nom de fichier.** L'IOCTL rend
-  pour une clé USB Kingston un série contenant des octets de contrôle non imprimables.
-  Utilisé tel quel dans le nom du rapport, il produit un fichier illisible ou un échec
+  pour une clé USB un série contenant des octets de contrôle non imprimables. Utilisé
+  tel quel dans le nom du rapport, il produit un fichier illisible ou un échec
   d'écriture.
 - **Les règles d'exclusion sont gratuites** : le `BusType` et le drapeau `RemovableMedia`
   du même IOCTL donnent directement `USB` / `SATA` / `NVMe` / `RAID` et l'amovibilité.
-  À noter aussi : sur la machine Windows 11, smartctl voit **deux fois le même disque**
-  (`/dev/sdb` et `/dev/csmi1,0`, contrôleur Intel RST) — le dédoublonnage par n° de
-  série sera nécessaire.
+  Le dédoublonnage par n° de série sera nécessaire : derrière un contrôleur Intel RST,
+  smartctl voit **deux fois le même disque** (`/dev/sdb` et `/dev/csmi1,0`).
+
+---
+
+### 📊 Campagne de collecte (08/08 → 01/09/2026) — 6 machines
+
+Sonde jouée sur 6 postes (Win11 24H2 et Win10 22H2) : **8 disques internes, dont
+5 NVMe et 3 SSD SATA**. Elle a invalidé deux décisions prises trop vite et révélé un
+angle mort.
+
+**1. ⚠️ Décision RÉVISÉE — smartctl ne peut pas être « la source de référence ».**
+Sur **2 machines sur 4**, smartctl restait entièrement muet sur le disque système NVMe
+(tous les champs nuls) alors qu'il répondait sur le lecteur DVD de la même machine. Une
+source absente une fois sur deux n'est pas une référence.
+
+*Cause identifiée* : `--scan-open` rendait bien le **type** du périphérique (`nvme`,
+`ata`, `scsi`) et la sonde **le jetait**, interrogeant ensuite sans `-d <type>`. Corrigé.
+À revalider à la prochaine campagne — et si le silence persiste, il faudra un lecteur
+SMART NVMe natif (`IOCTL_STORAGE_QUERY_PROPERTY` /
+`StorageDeviceProtocolSpecificProperty`), sans quoi le module n'aurait aucune donnée
+SMART sur les machines concernées.
+
+**2. La clé d'identité ne peut venir d'une seule source — et un champ rempli n'est pas
+un identifiant.** Deux contre-exemples relevés :
+
+- la clé USB rend `\x031`, assaini en **« 1 »** ;
+- les NVMe rendent par IOCTL leur EUI-64, souvent presque tout en zéros
+  (`0000_0000_0000_0000_0C82_D500_0000_0371`), et certains fabricants partagent le même
+  préfixe sur toute une gamme.
+
+Indexer l'archive là-dessus ferait collisionner des rapports de machines différentes.
+**Décision** : clé composite avec **niveau de confiance** (forte = smartctl, moyenne =
+IOCTL, faible = repli explicite `MODELE-TAILLE-SANS-SERIE`), et un série n'est retenu que
+s'il est *discriminant* — au moins 6 caractères, pas un caractère répété, pas
+essentiellement des zéros. Prototypé dans la sonde (`synthese_disques`).
+
+**3. `rotation_rate` est TOUJOURS absent en NVMe** (champ ATA) — vérifié sur 5 NVMe. Le
+discriminant mécanique/SSD devient une règle en cascade : bus NVMe ou log NVMe présent
+→ SSD ; sinon `rotation_rate` 0 → SSD, > 0 → mécanique ; sinon indéterminé.
+
+**4. L'écart de débit entre zones ne conclut rien** — jusqu'à **65,9 %** sur un NVMe
+parfaitement sain, contre 3 % sur un SATA du même poste. Et la **zone de début est
+systématiquement la plus lente** sur NVMe : mesurer uniquement au début donnerait une
+image fausse du disque. Le mode express devra échantillonner plusieurs zones **et**
+annoncer la dispersion, jamais conclure dessus.
+
+**5. Exclusion du disque porteur : validée 6/6.** La sonde se reconnaît sur le
+périphérique depuis lequel elle tourne, y compris lancée depuis la clé USB. Le garde-fou
+n° 3 n'est plus une intention.
+
+**6. 🕳️ L'angle mort : pas un seul disque mécanique dans l'échantillon.** Or c'est la
+population que le module vise en priorité — celle qui a des secteurs mourants. Tout le
+profil de latence attendu (temps par bloc, écart entre pistes extérieures et intérieures)
+reste **non observé**. À couvrir avant d'écrire le moteur de balayage.
 
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
