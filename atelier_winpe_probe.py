@@ -681,9 +681,10 @@ _GPT_TYPES = {
 }
 
 _MBR_TYPES = {
-    0x07: "NTFS/exFAT", 0x0B: "FAT32", 0x0C: "FAT32 LBA", 0x0E: "FAT16 LBA",
-    0x27: "Recuperation", 0x83: "Linux", 0x82: "Linux swap",
-    0xEE: "GPT protectrice", 0xEF: "EFI",
+    0x05: "Etendue CHS", 0x07: "NTFS/exFAT", 0x0B: "FAT32", 0x0C: "FAT32 LBA",
+    0x0E: "FAT16 LBA", 0x0F: "Etendue LBA", 0x27: "Recuperation",
+    0x82: "Linux swap", 0x83: "Linux", 0xA5: "BSD", 0xEE: "GPT protectrice",
+    0xEF: "EFI",
 }
 
 
@@ -789,6 +790,18 @@ def _latence_zone(index: int, offset: int, secteur: int, blocs: int = 16) -> dic
     try:
         with _Drive(index, no_buffering=True) as d:
             ptr = _aligned_buffer(_BLOCK_BYTES)
+            # ECHAUFFEMENT NON MESURE. Sur un disque mecanique au repos, le
+            # premier bloc porte le demarrage des plateaux et le premier
+            # positionnement des tetes. Mesure du 02/09 : 313 ms sur le premier
+            # bloc d'un WD10SPZX en veille - strictement indistinguable d'un
+            # secteur mourant si on la compte. Le futur balayage devra faire de
+            # meme, sinon il annoncera un defaut sur chaque disque endormi.
+            d.seek(offset)
+            try:
+                d.read_into(ptr, _BLOCK_BYTES)
+            except OSError:
+                pass
+
             d.seek(offset)
             temps, total = [], 0
             for _ in range(blocs):
@@ -858,15 +871,15 @@ def check_disques_detail() -> dict:
         if len(debits) >= 2:
             fiche["ecart_debit_pct"] = round(
                 (max(debits) - min(debits)) / max(debits) * 100, 1)
-            # NE PAS conclure mecanique/SSD sur cet ecart. Mesure du 08/08 : un
-            # NVMe sain affiche 30,7 % d'ecart entre zones sur 16 Mio (2800 /
-            # 1942 / 2406 Mo/s) alors qu'un SATA du meme poste reste a 3 %.
-            # L'echantillon est trop court, et un SSD varie avec son cache SLC
-            # et sa temperature. Le discriminant fiable est rotation_rate rendu
-            # par smartctl (0 = SSD, sinon les tours/minute), pas un debit.
-            fiche["note_ecart"] = (
-                "Ecart indicatif seulement : trop court pour conclure. Pour "
-                "distinguer mecanique et SSD, se fier a smartctl.rotation_rate.")
+        # L'ECART BRUT NE CONCLUT RIEN (un NVMe sain monte a 65 %). C'est la
+        # FORME du profil qui parle : voir _profil_zbr, calibre sur 11 disques
+        # mecaniques le 02/09.
+        fiche["profil_zbr"] = _profil_zbr(fiche["zones"])
+        fiche["note_ecart"] = (
+            "L'ecart brut ne discrimine pas (un NVMe sain atteint 65 %). Ce qui "
+            "discrimine est profil_zbr : decroissance monotone et ratio "
+            "fin/debut entre 0,40 et 0,52 sur les 11 disques mecaniques mesures, "
+            "contre 0,98 a 1,84 et jamais monotone sur les SSD.")
         fiches.append(fiche)
 
     return {"nb_disques": len(fiches), "disques": fiches}
@@ -893,16 +906,52 @@ def _serie_solide(serie) -> tuple:
         return False, "un seul caractere repete"
     if len(nu.strip("0")) < 4:
         return False, "essentiellement des zeros"
+    # Serie generique de fabricant. Vu le 02/09 sur un volume Intel Optane :
+    # << Optane_0000 >>, qui passait tous les tests precedents alors qu'il est
+    # probablement identique sur toutes les machines equipees. Une terminaison
+    # en zeros n'est pas un numero, c'est un gabarit non renseigne.
+    if nu.endswith("0000"):
+        return False, "terminaison en zeros - serie generique de fabricant"
     return True, "ok"
 
 
-def _type_support(idt: dict, smart: dict) -> str:
-    """Mecanique ou electronique ? Regle complete, apres deux corrections.
+def _profil_zbr(zones) -> dict:
+    """Signature d'enregistrement par zones (ZBR) d'un disque mecanique.
 
-    rotation_rate reste le discriminant quand il est la, mais c'est un champ
-    ATA : il est TOUJOURS absent en NVMe (verifie sur 4 NVMe le 01/09). Et
-    l'ecart de debit entre zones ne conclut rien du tout (un NVMe sain monte a
-    65,9 % d'ecart). D'ou cette regle en cascade.
+    Sur un plateau, les pistes exterieures defilent plus vite que les
+    interieures : le debit chute regulierement du debut vers la fin du disque.
+    CALIBRE sur la campagne du 02/09, 11 disques mecaniques de 80 Go a 1 To,
+    5400 et 7200 tr/min, Seagate / WD / Toshiba / HGST :
+
+        ratio fin/debut = 0,40 a 0,52   et decroissance monotone   (11 / 11)
+
+    Aucun SSD de l'echantillon n'entre dans cette bande : les SSD mesurent
+    0,98 a 1,84 et ne decroissent jamais de facon monotone. La bande est
+    elargie a 0,30-0,65 pour la marge, ce qui exclut toujours le volume Intel
+    Optane (0,08, cache SSD en tete de disque) et la cle USB (0,77).
+
+    C'est ce profil, et non l'ecart brut, qui discrimine. L'ecart seul ne vaut
+    rien : un NVMe sain monte a 65 % d'ecart.
+    """
+    d = [z.get("debit_mo_s") for z in (zones or []) if z.get("debit_mo_s")]
+    if len(d) != 3 or not d[0]:
+        return {"ratio_fin_debut": None, "monotone_decroissant": None,
+                "signature_mecanique": None}
+    ratio = d[2] / d[0]
+    monotone = d[0] > d[1] > d[2]
+    return {"ratio_fin_debut": round(ratio, 2),
+            "monotone_decroissant": monotone,
+            "signature_mecanique": bool(monotone and 0.30 <= ratio <= 0.65)}
+
+
+def _type_support(idt: dict, smart: dict, zones=None) -> str:
+    """Mecanique ou electronique ? Regle en cascade, apres trois corrections.
+
+    rotation_rate est le discriminant quand il est la, mais il manque dans DEUX
+    cas verifies : toujours en NVMe (champ ATA), et sur les disques mecaniques
+    anterieurs a ATA8 - trois d'entre eux dans la campagne du 02/09
+    (ST380815AS, WD3200AAJS, WD1600AAJS) etaient rendus << indetermine >> alors
+    que leur profil ZBR les designait sans ambiguite. D'ou le repli par profil.
     """
     smart = smart or {}
     bus = (idt or {}).get("bus")
@@ -913,6 +962,10 @@ def _type_support(idt: dict, smart: dict) -> str:
         return "SSD"
     if isinstance(rr, int) and rr > 0:
         return f"Disque mecanique ({rr} tr/min)"
+    if _profil_zbr(zones).get("signature_mecanique"):
+        return "Disque mecanique (profil ZBR, vitesse inconnue)"
+    if bus == "RAID":
+        return "volume composite RAID - support reel inconnu"
     if bus == "USB":
         return "USB - support indetermine"
     return "indetermine"
@@ -976,7 +1029,8 @@ def _synthese_disques(detail: dict, smart: dict) -> dict:
             "modele":         idt.get("modele") or s.get("modele"),
             "taille_go":      f.get("taille_go"),
             "bus":            idt.get("bus"),
-            "type_support":   _type_support(idt, s),
+            "type_support":   _type_support(idt, s, f.get("zones")),
+            "profil_zbr":     _profil_zbr(f.get("zones")),
             "porte_la_sonde": f.get("porte_la_sonde"),
             "cle_identite":   cle,
             "source_cle":     source,

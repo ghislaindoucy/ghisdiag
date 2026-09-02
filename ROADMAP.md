@@ -554,6 +554,77 @@ n° 3 n'est plus une intention.
 population que le module vise en priorité — celle qui a des secteurs mourants. Tout le
 profil de latence attendu (temps par bloc, écart entre pistes extérieures et intérieures)
 reste **non observé**. À couvrir avant d'écrire le moteur de balayage.
+*(→ comblé le 02/09, voir ci-dessous.)*
+
+---
+
+### 🎯 Campagne du 02/09 — l'angle mort est comblé, les seuils sont calibrés
+
+16 rapports, **21 disques distincts, dont 12 mécaniques** (80 Go à 1 To, 5400 et
+7200 tr/min, Seagate / WD / Toshiba / HGST), plus SSD SATA, NVMe, eMMC, clé USB et un
+volume Intel Optane. C'est le jeu de calibration de référence du module.
+
+#### La signature d'un disque mécanique est nette et reproductible
+
+Le débit chute des pistes extérieures vers les intérieures (enregistrement par zones) :
+
+| | ratio fin/début | décroissance monotone |
+|---|---|---|
+| **11 disques mécaniques** | **0,40 – 0,52** | 11 / 11 |
+| SSD SATA et NVMe | 0,98 – 1,84 | 0 / 3 |
+| Volume Optane (cache SSD en tête) | 0,08 | oui |
+| Clé USB | 0,77 | oui |
+
+**Aucun recouvrement.** C'est la **forme** du profil qui discrimine, jamais l'écart brut
+— rappel : un NVMe sain atteint 65 % d'écart. La bande retenue dans le code est élargie
+à 0,30–0,65, ce qui exclut toujours l'Optane et l'USB.
+
+Gain immédiat : **3 disques mécaniques anciens** (ST380815AS, WD3200AAJS, WD1600AAJS)
+étaient classés « indéterminé » parce qu'ils sont antérieurs à ATA8 et ne publient pas
+`rotation_rate`. Le profil les identifie sans ambiguïté. Vérifié en rejouant les règles
+sur les 52 mesures archivées : 3 reclassements corrects, **aucun SSD entraîné**.
+
+#### ⚠️ Deux pièges de méthode que seuls des disques mécaniques révèlent
+
+**Le réveil des plateaux ressemble à un secteur mourant.** Premier bloc lu sur un
+WD10SPZX en veille : **313 ms**. C'est le démarrage du moteur, pas un défaut — mais
+strictement indistinguable si on le compte. Une lecture d'échauffement non mesurée est
+désormais faite avant chaque zone ; **le moteur de balayage devra faire de même**, sinon
+il annoncera un défaut sur chaque disque endormi.
+
+**16 Mio par zone peuvent tenir dans le cache du disque.** Les HDD modernes ont 64 à
+256 Mo de cache. Un WD10SPZX 5400 tr/min affiche 254 Mo/s en zone de fin — physiquement
+impossible pour ses plateaux, et son ratio ressort à 2,53 au lieu de ~0,45. C'est le seul
+des 12 à contredire la signature. Le balayage réel devra lire par blocs **plus gros que
+le cache**, ou à des offsets non prévisibles.
+
+#### SMART NVMe : la cause est le mode RAID du contrôleur
+
+Le message capturé est sans ambiguïté :
+`Read NVMe Identify Controller failed: IOCTL_STORAGE_QUERY_PROPERTY(NVMe) failed, Error=1`.
+
+Passer `-d nvme` n'y change rien : **c'est Windows qui refuse le passage de commande**,
+pas smartctl qui se trompe de type. La corrélation est nette sur l'échantillon — les
+machines qui exposent des périphériques `csmi` (contrôleur Intel RST en mode RAID) sont
+exactement celles où le NVMe reste muet ; celle en AHCI répond parfaitement (Samsung 980,
+série et usure 1 % lus sans peine).
+
+**Conséquence pour le module, et elle est structurante** : sur une machine en RST, il n'y
+aura **aucune donnée SMART** pour le disque système. Le test de surface devient alors la
+seule source de vérité. C'est un argument pour le projet, pas contre : cela confirme que
+lire SMART ne suffit pas — encore faut-il qu'il réponde.
+
+#### Le disque que Windows montre n'est pas toujours un disque
+
+Le volume `Optane+932GBHDD` (bus RAID) est un **composite** : cache Intel Optane devant un
+TOSHIBA MQ04ABF100 5400 tr/min. La lecture brute voit 784 Mo/s en tête (le cache) puis
+64 Mo/s (les plateaux), tandis que smartctl décrit le disque membre derrière `csmi0,0`.
+Le module devra traiter ce cas explicitement : ce volume n'est pas testable comme un
+disque, et son verdict porterait sur un objet qui n'existe pas physiquement.
+
+Son numéro de série, `Optane_0000`, est un **gabarit de fabricant** — probablement
+identique sur toutes les machines équipées. La règle de solidité rejette désormais les
+séries terminées par quatre zéros.
 
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
