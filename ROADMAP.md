@@ -469,8 +469,7 @@ qu'administrateur** (sans élévation, l'énumération des disques remonte vide)
 | Débit / latence par bloc | ✅ 1052 et 2778 Mo/s, `bloc_max` 3,79 et 0,62 ms |
 | Rapport persistant à côté de l'exe | ✅ |
 
-⏳ **Reste uniquement la validation en WinPE**, qui ne demande qu'une clé bootable et
-un PC — pas un atelier.
+✅ **Validation WinPE faite le 03/09** — voir « Phase 0 close » plus bas.
 
 **Quatre défauts trouvés par ces exécutions, tous corrigés.** C'est le rendement de la
 phase 0 : chacun aurait coûté un aller-retour en atelier.
@@ -626,6 +625,79 @@ Son numéro de série, `Optane_0000`, est un **gabarit de fabricant** — probab
 identique sur toutes les machines équipées. La règle de solidité rejette désormais les
 séries terminées par quatre zéros.
 
+---
+
+### ✅ Phase 0 CLOSE — validation WinPE du 03/09/2026
+
+5 exécutions sur **Hiren's BootCD PE** (Win11 22621), démarré par Ventoy. Les sept
+points du verdict passent au vert :
+
+| Point | Résultat en PE |
+|---|---|
+| `winpe_confirme` | ✅ marqueur `HKLM\SYSTEM\CurrentControlSet\Control\MiniNT` trouvé |
+| **tkinter** | ✅ fenêtre + `mainloop`, Tcl 8.6.15 — **l'UI graphique est possible** |
+| smartctl | ✅ opérationnel, 4 disques exploitables par run |
+| accès disque brut / `NO_BUFFERING` | ✅ |
+| n° de série lisible | ✅ les deux sources |
+| rapport persistant | ✅ écrit sur la clé, jamais sur `X:` |
+
+**Limite assumée** : ceci valide *Hiren's BootCD PE*, un WinPE garni (.NET, PowerShell),
+pas un PE minimal construit à l'ADK. C'est l'environnement réellement utilisé en atelier,
+donc c'est celui qui compte — mais la nuance est écrite plutôt que gommée.
+
+#### 📐 Contrainte d'UI découverte : l'écran fait 800 × 600
+
+C'est la résolution par défaut du PE tant qu'aucun pilote graphique n'est chargé.
+**Toute l'interface de GhisdiagDisk doit tenir dans 800 × 600**, sans scroll horizontal.
+C'est nettement plus contraint que Ghisdiag, dont l'en-tête compact vise déjà les 14"
+(~1280 × 720, cf. v1.8.1). À prendre comme contrainte de conception, pas comme détail.
+
+#### 🎯 Windows perturbe la mesure — chiffré, sur les mêmes disques physiques
+
+Trois disques ont été mesurés dans **les deux environnements**, appariés par n° de série
+(valeurs Windows issues des rapports du 02/09) :
+
+| Disque | Environnement | Médiane par bloc (ms) | **Maximum** par bloc (ms) | max / médiane |
+|---|---|---|---|---|
+| WD5000AAKX | Windows | 8,4 / 9,6 / 16,8 | 16,6 / 26,1 / 37,0 | jusqu'à **2,7** |
+| `WD-WCC2E5FK8EU6` | **WinPE** | 8,4 / 9,6 / 16,8 | 14,0 / 14,3 / 21,2 | jusqu'à **1,7** |
+| HGST HTS541010A9E680 | Windows | 9,8 / 11,5 / 19,4 | 9,9 / 33,9 / 40,9 | jusqu'à **2,9** |
+| `JD1009DM3B4RSK` | **WinPE** | 9,8 / 11,5 / 18,1 | 9,8 / 11,7 / 19,8 | jusqu'à **1,1** |
+| TOSHIBA DT01ACA100 | Windows | 5,5 / 6,4 / 10,4 | 5,6 / 28,5 / 38,8 | jusqu'à **4,4** |
+| `31QV335NS` | **WinPE** | 4,6 / 6,5 / 10,4 | 5,6 / 6,5 / 11,4 | jusqu'à **1,2** |
+
+**Les médianes sont identiques d'un environnement à l'autre. Seuls les maximums
+explosent sous Windows.** La médiane est robuste ; le maximum ne l'est pas — il capte
+l'I/O de fond de l'OS.
+
+Or `bloc_max` est précisément l'indicateur du secteur mourant. **Le balayage n'a donc de
+sens qu'en WinPE** : sous Windows, il faudrait un seuil si haut (> 5× la médiane) qu'on
+raterait les vrais défauts, ou si bas qu'on crierait au loup à chaque passage de
+l'indexeur. C'est l'argument le plus fort en faveur de l'architecture bootable — et il
+est maintenant chiffré, plus supposé.
+
+**Seuil proposé pour le moteur de balayage** : en PE, un bloc au-delà de **3× la médiane
+de sa zone** est une anomalie réelle (marge confortable au-dessus du 1,7 observé au pire
+sur des disques sains). Sous Windows, refuser de conclure.
+
+#### 🔎 La sonde a trouvé un vrai défaut, sur la clé Ventoy elle-même
+
+`PhysicalDrive3` (Kingston DataTraveler, 7,8 Go) mesure **4,2 Mo/s et 363–378 ms par bloc
+au milieu du support**, contre 44 Mo/s et 24 ms aux deux extrémités — et une exécution a
+carrément rendu `[Errno 23] ReadFile`, soit une **erreur CRC**.
+
+Deux lectures possibles, et je ne tranche pas : soit une zone réellement défaillante,
+soit la contention avec l'ISO Hiren's que cette même clé servait pendant la mesure. La
+constance des 363 ms sur les 16 blocs penche pour un défaut, l'erreur CRC aussi — mais
+une clé USB sollicitée peut aussi produire les deux. **À recontrôler clé au repos, sur
+une autre machine.**
+
+Dans les deux cas, une règle en sort : **exclure aussi le périphérique depuis lequel le
+PE a démarré**, et pas seulement celui qui porte la sonde — ici c'étaient deux clés
+différentes (la sonde tournait depuis `PhysicalDrive2`, l'ISO était servi par
+`PhysicalDrive3`). Mesurer un support occupé à alimenter le système donne des chiffres
+qui ne décrivent pas le support.
+
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
 Une case « mode destructif » est la mécanique même de l'accident : elle reste cochée de
@@ -748,7 +820,7 @@ principal.
 
 | Phase | Contenu | Poids |
 |---|---|---|
-| 0 | Spike WinPE (`atelier_winpe_probe.py`) — sonde écrite, reste à jouer en PE | petit, **bloquant** |
+| 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
 | 1 | Moteur T1 (balayage lecture + débit + latence), modes express/standard, session checkpointée | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
