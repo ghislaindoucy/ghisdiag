@@ -133,6 +133,7 @@ SEUILS DE RÉFÉRENCE (en dessous = NORMAL, ne pas alerter) :
 - Antivirus : Microsoft Defender désactivé alors qu'un antivirus tiers est actif = NORMAL (le tiers protège). Ce n'est pas un problème.
 - Mises à jour en attente : information, pas une urgence — sauf nombre élevé ou correctif de sécurité.
 - DCOM 10016, quelques avertissements GPO/profil isolés : bruit Windows courant, n'en fais pas un correctif sauf corrélation claire.
+- Thermique (UNIQUEMENT si un bench thermique du jour est joint en pièce jointe ; sinon tu ne disposes que de températures instantanées au repos, qui ne permettent AUCUN verdict sur le refroidissement) : plateau CPU en charge synthétique < 85 °C = normal ; 85–94 °C = à surveiller (nettoyage, pâte thermique), surtout si throttling_thermique = oui ; ≥ 95 °C ou arrêt d'urgence = problème avéré. throttling_thermique = « oui » à ≥ 90 °C = refroidissement insuffisant (CORRECTIF). limite_puissance = « oui » = bridage PL1/TDP NORMAL, ce n'est PAS un défaut. GPU dédié : plateau < 80 °C normal, hotspot < 95 °C normal. Ventilateur en charge au même régime qu'au repos alors que la température grimpe = ventilateur ou courbe défaillants. « non mesure » = RIEN à conclure, ni sain ni défaillant : dis-le tel quel.
 
 PROFONDEUR D'ANALYSE (la rigueur n'interdit pas la profondeur — elle l'exige) :
 - CROISE les sections entre elles : un événement disque (events.disk_events) se recoupe avec smart, un crash avec un driver de software.drivers, un service en échec avec startup.services, une lenteur de boot avec les programmes au démarrage. Signale explicitement chaque corrélation trouvée — et son absence quand elle disculpe un composant.
@@ -183,11 +184,18 @@ Règles pour cette question :
 """
 
 
-def _build_user_prompt(diagnostic_data: dict, question: str = "") -> str:
+def _build_user_prompt(diagnostic_data: dict, question: str = "",
+                       attachments: str = "") -> str:
     """Construit le prompt utilisateur (données + plan d'audit), mutualisé entre fournisseurs.
 
     Si `question` est non vide, un bloc d'instructions est ajouté en tête pour que le
     modèle y réponde dans le sujet (refus poli sinon) ; sinon comportement inchangé.
+
+    `attachments` : bloc de pièces jointes DÉJÀ RENDU (ai_attachments.render_attachments),
+    inséré AVANT le dump JSON du diagnostic. Il a son propre budget : la troncature
+    ci-dessous ne porte que sur le JSON du diagnostic, jamais sur lui — placé après
+    le JSON, il serait le premier sacrifié, en silence. Vide → prompt strictement
+    identique à l'ancien comportement.
     """
     # JSON COMPACT (sans indentation) : l'indentation gonflait le volume de ~50%
     # (169k vs 109k chars) et risquait de tronquer les sections les plus utiles
@@ -204,7 +212,7 @@ def _build_user_prompt(diagnostic_data: dict, question: str = "") -> str:
 
     return f"""{_build_question_block(question)}Voici le rapport de diagnostic complet d'un poste Windows (généré par Ghisdiag). Analyse les données et produis un audit technique DÉTAILLÉ, actionnable et HONNÊTE : approfondi dans les descriptions et les corrélations, strict sur les preuves.
 
-```json
+{attachments or ""}```json
 {diag_json}
 ```
 
@@ -228,6 +236,7 @@ Passe en revue CHAQUE domaine, y compris les sains — une à trois lignes par d
 - **Sécurité** : idem (antivirus, pare-feu, UAC, MAJ, échecs de connexion)
 - **Réseau** : idem (adaptateurs actifs, connectivité, débits anormaux)
 - **Logiciels & drivers** : idem (volumétrie, drivers en erreur, logiciels notoirement problématiques)
+- **Thermique (bench du jour)** : UNIQUEMENT si une pièce jointe « bench thermique » précède le JSON. Verdict sourcé sur le plateau en charge, le throttling en tri-état et l'état de déroulement du test (un test écourté ou « non mesure » ne conclut RIEN). Sans pièce jointe, écris « non testé (aucun bench thermique joint) » — pas « sain ».
 C'est ici que tu montres ton travail d'analyse : cite les valeurs, les comptes, les croisements entre sections.
 
 ## 4. PROBLÈMES AVÉRÉS
@@ -260,7 +269,8 @@ Séquence de commandes de maintenance saine à exécuter (copier-coller prêt à
 ## 10. MATÉRIEL & DURÉE DE VIE
 Deux volets :
 - **Défaillances** : uniquement si une donnée l'indique (SMART, whea_events, RAM saturée durablement, disque plein) — sois spécifique (composant, type/capacité recommandée).
-- **Projection** : âge et usure des disques (heures de fonctionnement, wear level, secteurs réalloués), adéquation RAM/CPU à la charge constatée, et recommandation d'upgrade chiffrée SI pertinente. Si le matériel est adapté et en bonne santé, dis-le en 2-3 lignes argumentées plutôt que « RAS »."""
+- **Projection** : âge et usure des disques (heures de fonctionnement, wear level, secteurs réalloués), adéquation RAM/CPU à la charge constatée, et recommandation d'upgrade chiffrée SI pertinente. Si le matériel est adapté et en bonne santé, dis-le en 2-3 lignes argumentées plutôt que « RAS ».
+- **Refroidissement** : si un bench thermique du jour est joint, c'est ici l'argument CHIFFRÉ d'un nettoyage, d'un remplacement de pâte thermique ou d'un ventilateur (plateau, ΔT, throttling, retour au calme, gain avant/après). Respecte le tri-état : un throttling « non mesure » ne se transforme jamais en « refroidissement sain » ni en « défaillant »."""
 
 
 # ── Appels API par famille ────────────────────────────────────────────────────
@@ -400,6 +410,7 @@ def analyze_diagnostic(
     api_key: str,
     progress_callback: Optional[callable] = None,
     question: str = "",
+    attachments: str = "",
 ) -> Optional[str]:
     """
     Envoie les données diagnostiques au fournisseur IA choisi pour une analyse complète.
@@ -411,6 +422,8 @@ def analyze_diagnostic(
         progress_callback: fonction pour la progression (optionnel)
         question: question libre du technicien, en rapport avec le diagnostic (optionnel).
                   Si fournie, l'IA y répond en tête de rapport (refus poli si hors-sujet).
+        attachments: bloc de pièces jointes rendu par ai_attachments.render_attachments
+                  (bench thermique du jour…), inséré avant le JSON. Vide = aucune.
 
     Returns:
         Texte de l'analyse (markdown), ou None.
@@ -432,7 +445,7 @@ def analyze_diagnostic(
         if progress_callback:
             progress_callback(f"Préparation des données pour {label}…")
 
-        user_prompt = _build_user_prompt(diagnostic_data, question)
+        user_prompt = _build_user_prompt(diagnostic_data, question, attachments)
 
         if progress_callback:
             progress_callback(f"Envoi des données à {label}…")

@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Dossier portable</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.1.0 — Document généré le 7 août 2026</div>
+  <div class="version">Version 2.2.0 — Document généré le 3 septembre 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -530,6 +530,16 @@ footer.pagefoot{
 <h3>Poser une question précise à l'IA</h3>
 <p>En plus de l'audit automatique, un <b>champ question optionnel</b> (500 caractères) apparaît dans le panneau « Analyse IA » dès qu'une clé API est configurée. Vous pouvez y joindre une question en rapport avec le poste — par exemple <i>« pourquoi le PC est-il si long à démarrer ? »</i> ou <i>« ce SSD est-il en fin de vie ? »</i>. L'IA y répond dans une section <b>« Réponse à ta question » placée en tête du rapport</b>, appuyée sur les données réelles du diagnostic, puis produit l'audit complet habituel en dessous. Laisser le champ vide ne change rien au comportement.</p>
 
+<h3>Le bench thermique du jour est joint à l'audit</h3>
+<p>Depuis la version 2.2.0, si un <b>bench thermique a été joué aujourd'hui</b> sur le poste (onglet Bench thermique), son résultat est <b>joint automatiquement</b> à l'analyse IA : températures de repos, de plateau et maximum, ΔT, ventilateurs, throttling, limite de puissance, déroulement du test et forme de la courbe. L'IA dispose ainsi d'une mesure <i>sous charge</i>, bien plus parlante qu'un instantané, pour juger le refroidissement et justifier un nettoyage ou un changement de pâte thermique.</p>
+<p>Trois règles à connaître :</p>
+<ul>
+  <li><b>Seul le bench du jour compte.</b> Un bench d'hier n'est jamais joint : on benche et on diagnostique dans la même passe. Sans bench du jour, l'audit est exactement celui d'avant.</li>
+  <li><b>CPU et GPU sont joints tous les deux</b> s'ils existent. Un « avant » et un « après » le même jour donnent le <b>delta</b> de la comparaison, avec ses réserves, plutôt que les deux sessions.</li>
+  <li><b>Un test incomplet ne conclut rien.</b> Si la charge a été écourtée, interrompue ou coupée par l'arrêt d'urgence, le throttling est transmis comme « non mesuré » et l'IA a interdiction d'en déduire que le refroidissement est sain — ou défaillant.</li>
+</ul>
+<p>Le panneau « Analyse IA » affiche <b>« 📎 Bench du jour joint à l'audit : CPU 14:32… »</b> avant le lancement, et l'en-tête du rapport IA rappelle les pièces jointes, y compris « aucune » : vous savez toujours ce que l'IA a vu.</p>
+
 <div class="callout">
   <b>Question hors-sujet.</b> La question doit concerner le poste ou son dépannage. Si elle sort de ce cadre (recette de cuisine, culture générale, autre machine…), l'IA la décline poliment en une phrase et produit quand même l'audit complet.
 </div>
@@ -624,7 +634,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 2.1.0. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 2.2.0. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 

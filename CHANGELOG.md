@@ -4,6 +4,58 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [2.2.0] — 2026-09-03
+
+### 📎 Le bench thermique du jour est joint à l'audit IA
+
+Jusqu'ici l'audit IA raisonnait sur un instantané de collecteurs alors qu'on
+disposait, quand un bench venait d'être joué, d'une **mesure sous charge** — la
+donnée la plus parlante pour juger un refroidissement. Elle rejoint le prompt.
+
+- **Mécanisme générique de pièce jointe** (`ai_attachments.py`) : un bloc
+  séparé, placé **avant** le dump JSON du diagnostic, avec **son propre budget**.
+  Le prompt est plafonné à 120 000 caractères et la troncature coupe la fin ;
+  une pièce glissée dans les données aurait été la première sacrifiée, en
+  silence. Seul le diagnostic se tronque désormais, jamais la pièce jointe.
+  Le module disque (GhisdiagDisk) se branchera sur le même rendu.
+- **La session du jour, et rien d'autre.** On benche et on diagnostique dans la
+  même passe ; une fenêtre plus large finirait par joindre un bench d'avant
+  intervention. Aucun bench du jour → aucune pièce jointe, et le prompt reste
+  **strictement** celui d'avant (invariant testé).
+- **Une session par cible** : le bench CPU **et** le bench GPU sont joints quand
+  les deux existent. Si le jour compte un « avant » et un « après » pour la même
+  cible, c'est le **delta** (`thermal_compare`) qui est joint, avec ses réserves
+  et son verdict, pas les deux sessions.
+- **Digest, jamais la session brute** : métriques, état de déroulement (complet,
+  écourté, avorté, arrêt d'urgence), et une **courbe ré-échantillonnée à
+  20 points** pour donner la forme de la rampe et du plateau. Les séries
+  d'échantillons restent hors prompt.
+- **Le tri-état survit au transfert.** Le throttling et la limite de puissance
+  sont rendus « oui » / « non » / « non mesure » avec leur raison (charge
+  écourtée ≠ fréquence illisible), et le prompt **interdit** à l'IA d'en tirer un
+  verdict, positif ou négatif. Aplatir ça en booléen aurait fait conclure
+  « refroidissement sain » à partir d'un test qui n'a jamais atteint le régime
+  établi — le faux négatif que la 2.0.3 avait éliminé.
+- **Prompt système complété** : seuils thermiques de référence (plateau CPU,
+  throttling à 90 °C, limite de puissance = comportement normal, GPU, hotspot),
+  domaine « Thermique (bench du jour) » dans la revue par domaine — « non testé »
+  sans pièce jointe, jamais « sain » — et renvoi en section Matériel & durée de
+  vie, où le bench devient l'argument chiffré d'un nettoyage ou d'un repâtage.
+- **Le technicien voit ce que l'IA a vu** : indicateur « 📎 Bench du jour joint à
+  l'audit : CPU 14:32, GPU 15:10 » dans le panneau Analyse IA, rafraîchi après
+  chaque bench ; ligne « Pièces jointes » dans le journal et dans l'en-tête du
+  rapport IA, y compris « aucune ».
+
+### 🧪 Tests
+
+- 21 tests sans matériel ni réseau : fenêtre de fraîcheur, sélection par cible,
+  delta avant/après, tri-état (v1 et v2), budget propre, invariant du prompt.
+- Rejeu des sessions réelles archivées sur le poste de développement (9 sessions
+  2026, dont une avortée à 3 échantillons) : aucun digest ne conclut « non » sur
+  un test incomplet.
+
+---
+
 ## [2.1.0] — 2026-08-05
 
 > **🩹 Correctif (re-build du 07/08/2026).** Le numéro de version ne change pas :
