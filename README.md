@@ -167,6 +167,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 - **Le tri-état est respecté** : un throttling « non mesuré » (charge écourtée, test avorté, arrêt d'urgence) n'est ni un oui ni un non, et l'IA a interdiction d'en conclure quoi que ce soit. Seuils thermiques de référence ajoutés au prompt ; « limite de puissance » y est explicitement un comportement normal.
 - **Tu vois ce que l'IA a vu** : indicateur « 📎 Bench du jour joint à l'audit » dans le panneau Analyse IA, et ligne « Pièces jointes » dans l'en-tête du rapport IA.
 
+- 🐛 **Les erreurs de l'analyse IA s'affichent enfin** (clé invalide, timeout, réseau) : elles étaient perdues dans un `NameError` silencieux ; idem pour le bouton « Réessayer » après une erreur fatale du diagnostic.
 [📖 Notes complètes →](./RELEASE_NOTES_v2.2.0.md)
 
 ### v2.1.0 (Août 2026)

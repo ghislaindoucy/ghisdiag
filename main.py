@@ -2904,15 +2904,20 @@ class GhisdiagApp(tk.Tk):
 
         except Exception as exc:
             logger.exception("Erreur fatale")
+            # Capturer le message MAINTENANT : Python supprime `exc` à la sortie
+            # du bloc except, et `_err` s'exécute plus tard sur le thread Tk.
+            # Sans cette copie, `_err` levait NameError, `_running` restait à
+            # True et le bouton « Réessayer » n'apparaissait jamais.
+            msg = str(exc)
             def _err():
                 self._stop_tick()
                 self._running = False
-                self.step_var.set(f"Erreur : {exc}")
+                self.step_var.set(f"Erreur : {msg}")
                 self.btn_start.configure(
                     state="normal", text="▶   Réessayer",
                     bg=ACCENT, fg=BG,
                 )
-                self._log(f"ERREUR : {exc}", "err")
+                self._log(f"ERREUR : {msg}", "err")
             self.after(0, _err)
 
     def _on_auto_open_changed(self, *_):
@@ -3341,23 +3346,31 @@ class GhisdiagApp(tk.Tk):
             if self.auto_open_var.get():
                 self.after(600, lambda: self._open_ai_html(html_path))
 
+        # Dans les trois gestionnaires ci-dessous, le message est copié dans
+        # `msg` AVANT d'être différé : Python supprime la variable d'exception
+        # à la sortie du bloc except, et ces lambdas s'exécutent plus tard sur le
+        # thread Tk. Elles levaient NameError — aucune erreur IA (clé invalide,
+        # timeout, réseau) n'était donc jamais affichée au technicien.
         except ValueError as e:
             # Clé API invalide / fournisseur inconnu
+            msg = str(e)
             self.after(0, self._close_ai_waiting_popup)
-            self.after(0, lambda: self._log(f"❌  IA : {str(e)}", "err"))
-            self.after(0, lambda: messagebox.showerror("Erreur analyse IA", str(e)))
+            self.after(0, lambda: self._log(f"❌  IA : {msg}", "err"))
+            self.after(0, lambda: messagebox.showerror("Erreur analyse IA", msg))
 
         except RuntimeError as e:
             # Erreur réseau ou timeout
+            msg = str(e)
             self.after(0, self._close_ai_waiting_popup)
-            self.after(0, lambda: self._log(f"⚠ IA : {str(e)}", "warn"))
+            self.after(0, lambda: self._log(f"⚠ IA : {msg}", "warn"))
             self.after(0, lambda: messagebox.showwarning(
-                "Avertissement", f"Analyse IA non disponible :\n{str(e)}"))
+                "Avertissement", f"Analyse IA non disponible :\n{msg}"))
 
         except Exception as e:
             logger.exception("Erreur lors de l'analyse IA")
+            msg = str(e)
             self.after(0, self._close_ai_waiting_popup)
-            self.after(0, lambda: self._log(f"❌  Erreur IA : {str(e)}", "err"))
+            self.after(0, lambda: self._log(f"❌  Erreur IA : {msg}", "err"))
 
     def _open_ai_html(self, path: Path):
         """Ouvre le rapport IA dans le navigateur."""
