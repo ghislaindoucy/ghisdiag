@@ -330,10 +330,24 @@ atelier sont traités.
 
 ---
 
-## 🔜 Chantiers préparés (pas encore engagés)
+## 🔜 Chantiers préparés — point d'entrée
 
-*Conception arrêtée le 07/08/2026. Rien n'est codé : ces deux sections fixent les
-décisions d'architecture et les garde-fous avant la première ligne.*
+> **Où on en est au 03/09/2026** — branche `claude/diagnostic-consolidation-86e9e8`,
+> [PR #33](https://github.com/ghislaindoucy/ghisdiag/pull/33). **Aucun code de production
+> n'est touché** : ce qui existe, c'est la conception ci-dessous plus la sonde de terrain
+> `atelier_winpe_probe.py`.
+>
+> | | État |
+> |---|---|
+> | **v2.2.0** — bench thermique joint au diag IA | conçu, **décisions tranchées**, rien de codé. Ne demande aucun matériel. |
+> | **GhisdiagDisk** — outil disque autonome bootable | **phase 0 CLOSE** (WinPE validé, seuils calibrés sur 12 disques mécaniques). Reste à écrire le moteur de balayage T1. |
+>
+> **Deux points d'attention avant d'engager quoi que ce soit :**
+> 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
+>    **mesures** — ne pas les re-concevoir de mémoire, les lire.
+> 2. Trois d'entre elles ont déjà été **révisées par les mesures** (smartctl comme source
+>    de référence, discriminant mécanique/SSD, clé d'identité). Les sections « Campagne »
+>    font foi sur les sections antérieures en cas de contradiction.
 
 ### v2.2.0 — 📎 Pièces jointes au diagnostic IA 🔜 *préparation*
 
