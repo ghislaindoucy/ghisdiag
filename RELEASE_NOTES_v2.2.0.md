@@ -77,13 +77,13 @@ l'exécutable.
 
 ## Empreinte de l'archive publiée
 
-> À renseigner après le build de la CI, juste avant la publication (voir la
-> checklist de release : mesurer SHA-256 et taille sur le fichier exact qu'on
-> uploade).
+Archive compilée et attestée par la CI GitHub sur le commit de merge
+`a16246657fee1dcd7848504d14d269831b6421e5` (workflow `build-release.yml`,
+`refs/tags/v2.2.0`).
 
 - **Fichier** : `Ghisdiag.zip`
-- **SHA-256** : _à renseigner_
-- **Taille** : _à renseigner_
+- **SHA-256** : `d536365d625a80eaf1f884f040d558af9953fbd99e20c8de9e35b8dc3a2ebe12`
+- **Taille** : 36 478 953 octets (34,8 Mo)
 
 ```powershell
 Get-FileHash Ghisdiag.zip -Algorithm SHA256
