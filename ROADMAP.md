@@ -328,11 +328,533 @@ atelier sont traités.
   relance à chaque bascule sur la cible GPU. Couvert par
   `tests/test_bench_gpu_detect.py`.
 
+---
+
+## 🔜 Chantiers préparés — point d'entrée
+
+> **Où on en est au 03/09/2026** — branche `claude/diagnostic-consolidation-86e9e8`,
+> [PR #33](https://github.com/ghislaindoucy/ghisdiag/pull/33). **Aucun code de production
+> n'est touché** : ce qui existe, c'est la conception ci-dessous plus la sonde de terrain
+> `atelier_winpe_probe.py`.
+>
+> | | État |
+> |---|---|
+> | **v2.2.0** — bench thermique joint au diag IA | conçu, **décisions tranchées**, rien de codé. Ne demande aucun matériel. |
+> | **GhisdiagDisk** — outil disque autonome bootable | **phase 0 CLOSE** (WinPE validé, seuils calibrés sur 12 disques mécaniques). Reste à écrire le moteur de balayage T1. |
+>
+> **Deux points d'attention avant d'engager quoi que ce soit :**
+> 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
+>    **mesures** — ne pas les re-concevoir de mémoire, les lire.
+> 2. Trois d'entre elles ont déjà été **révisées par les mesures** (smartctl comme source
+>    de référence, discriminant mécanique/SSD, clé d'identité). Les sections « Campagne »
+>    font foi sur les sections antérieures en cas de contradiction.
+
+### v2.2.0 — 📎 Pièces jointes au diagnostic IA 🔜 *préparation*
+
+**Le besoin** : quand un bench thermique vient d'être joué sur la machine, l'audit IA
+ne le voit pas. Il raisonne sur un instantané de collecteurs alors qu'on dispose d'une
+mesure sous charge — la donnée la plus parlante pour juger un refroidissement.
+
+Ce chantier livre le **mécanisme générique de pièce jointe** que réutilisera ensuite le
+module disque ; le bench thermique en est le premier client.
+
+- **Bloc séparé, placé AVANT le dump JSON** dans le prompt, avec son propre budget.
+  Le prompt est plafonné à 120 000 caractères et le JSON compact frôle déjà les 109 k
+  sur machine chargée (`ai_analyzer._build_user_prompt`) ; la troncature coupe la
+  **fin** de la chaîne. Une pièce jointe glissée dans `data` serait donc la première
+  sacrifiée, en silence. Seul le diag se tronque.
+- **Digest, jamais la session brute** : `metrics` + verdict, plus une courbe
+  ré-échantillonnée (~20 points) pour donner la forme de la rampe et du plateau. Les
+  séries d'échantillons (`clock_samples`, températures) restent hors prompt.
+- **Le tri-état doit survivre au transfert.** `thermal_bench` distingue soigneusement
+  « pas de throttling » de « non mesuré » (charge écourtée, session avortée, arrêt
+  d'urgence — cf. v2.0.3). Aplatir ça en booléen ferait conclure « refroidissement
+  sain » à partir d'un test qui n'a jamais atteint le régime établi : exactement le
+  faux négatif que ce code évite. Le digest porte explicitement
+  *non mesuré* / *écourté* / *avorté*, et le prompt interdit d'en tirer un verdict.
+- **Prompt système à compléter** : il n'a aujourd'hui aucun seuil thermique dans ses
+  « SEUILS DE RÉFÉRENCE » et aucun domaine thermique dans le plan d'audit — la donnée
+  serait ignorée ou interprétée au jugé. Ajouter les seuils (Tjmax, plancher de
+  throttling, écart CPU/GPU), une ligne de domaine en section 3 et un renvoi en
+  section 10 (matériel / durée de vie), où le bench est l'argument chiffré d'un
+  nettoyage ou d'un repâtage.
+- **Comparaison avant/après** : si `thermal_compare` a produit un avant/après, c'est le
+  **delta** qu'on joint, pas les deux sessions — l'information est là.
+
+**Tranché (07/08/2026)** :
+
+- **Fenêtre de fraîcheur : la session du jour, et rien d'autre.** C'est la réalité
+  atelier — on benche et on diagnostique dans la même passe. Une fenêtre plus large
+  ferait tôt ou tard joindre un bench d'avant intervention et conclure l'IA sur un état
+  périmé. Aucun bench du jour → aucune pièce jointe, et le prompt reste strictement
+  celui d'aujourd'hui (zéro régression).
+- **Une session par cible : le bench CPU **et** le bench GPU sont joints** quand les
+  deux existent. Ce sont deux mesures indépendantes, et l'écart entre les deux est
+  lui-même un signal de diagnostic. Le coût en prompt est négligeable une fois le
+  digest réduit.
+
+---
+
+### GhisdiagDisk — 💽 Test de santé disque autonome & bootable 🔜 *préparation — gros chantier*
+
+**Le besoin** : SMART dit ce que le firmware veut bien avouer ; seul un test de surface
+dit ce que le disque fait vraiment. Et les disques qu'on suspecte le plus sont ceux des
+machines qui **ne démarrent plus** — donc inaccessibles à un module intégré à Ghisdiag.
+
+**Décision d'architecture : outil autonome, bootable, à part.** Même dépôt, code
+partagé, mais second exécutable et second `.spec`. Ce qu'on y gagne :
+
+- on teste enfin la population qui en a besoin (machines qui ne bootent pas) ;
+- **zéro interférence** : hors OS installé, pas d'indexation, pas de pagefile, pas
+  d'antivirus en fond — les mesures de latence deviennent propres, et le problème des
+  faux positifs sur le disque système disparaît ;
+- **la clé USB devient l'archive** : les rapports s'accumulent, indexés par n° de série
+  de disque, et le delta SMART entre deux passages atelier tombe gratuitement.
+
+#### La contrainte qui commande tout : WinPE
+
+Live CD = **WinPE** (pas Linux, sinon on réécrit tout). WinPE n'a **ni .NET ni
+PowerShell** par défaut. Sont donc exclus d'office : toute la chaîne capteurs
+(`collectors/sensors.py` pilote un PS1 qui charge `LibreHardwareMonitorLib.dll` en
+.NET), tous les collecteurs `.ps1`, toute dépendance WMI ou lettre de lecteur (en PE
+les volumes ne sont pas forcément montés).
+
+Périmètre autorisé, et suffisant : **Python + `ctypes` sur `\\.\PhysicalDriveN` +
+`smartctl.exe`**. C'est aussi le périmètre qui évite d'ajouter un binaire natif de
+lecture disque brute — précisément ce que les heuristiques antivirus signalent. Les
+deux contraintes convergent. `collectors/disk_temp.py` est déjà sur smartctl (pas LHM)
+et reste réutilisable tel quel.
+
+#### Phase 0 — la sonde de validation est prête ✅
+
+Rien ne doit être développé avant d'avoir mesuré ces réponses sur une vraie machine
+bootée. La sonde `atelier_winpe_probe.py` (+ `WinPEProbe.spec`) existe et répond aux
+**six questions bloquantes** :
+
+1. **tkinter s'affiche-t-il en WinPE ?** — si non, le module se fera en mode console.
+   Ce n'est pas rédhibitoire, mais ça change toute l'UI.
+2. **smartctl répond-il en PE**, et sur quels contrôleurs ?
+3. **L'accès `\\.\PhysicalDriveN` fonctionne-t-il ?**
+4. **La lecture non bufferisée alignée secteur passe-t-elle ?** — le module en dépend :
+   sans elle on mesure le cache Windows, pas le disque.
+5. **Le n° de série du disque est-il lisible ?** — seule clé d'identité valable, le
+   hostname vaut `MINWINPC` en PE. Deux sources croisées : IOCTL et smartctl.
+6. **Le rapport peut-il être écrit à côté de l'exe ?** — en PE, `X:` est un disque RAM,
+   ce qui y est écrit disparaît à l'extinction.
+
+La sonde est **strictement en lecture seule** sur les disques et écrit son rapport
+**au fil de l'eau** : si tkinter fait tomber le process — le risque même qu'on mesure —
+tout ce qui précède reste sur la clé. Elle mesure aussi 64 Mio séquentiels avec le
+**temps maximum par bloc**, qui est l'indicateur clé du futur balayage (un bloc très
+lent = secteur en train de mourir), pour prouver que la mécanique de mesure tient en PE.
+
+**Procédure :**
+
+```
+py -m PyInstaller --clean --noconfirm WinPEProbe.spec
+```
+
+(`py -m PyInstaller` et non `pyinstaller` : même invocation que `build.bat`, la seule
+qui marche quand le paquet est installé sans que ses scripts soient dans le `PATH`.)
+
+puis copier tout `dist\WinPEProbe\` à la racine de la clé USB bootable, booter la
+machine d'atelier dessus, lancer `WinPEProbe.exe`, et récupérer le JSON
+`winpe_probe_<machine>_<horodatage>.json` écrit à côté. Le verdict des six points
+s'affiche aussi à l'écran, sans avoir à ouvrir le JSON.
+
+Cible de validation : **Hiren's BootCD PE** (Win10 PE déjà garni, répandu en atelier,
+aucun build ADK nécessaire) — si ça tourne là, l'outil est livrable.
+
+*Essai sur un Windows normal* : `test_winpe_probe_atelier.bat`, **en tant
+qu'administrateur** (sans élévation, l'énumération des disques remonte vide).
+
+**État au 08/08/2026** — sonde jouée sur **trois exécutions élevées**, deux machines
+(Windows 11 24H2 et Windows 10 22H2), en sources et en exe compilé.
+
+**Tout le socle technique est validé hors WinPE :**
+
+| Point | Résultat |
+|---|---|
+| tkinter | ✅ fenêtre + `mainloop`, Tcl 8.6.15, sur les deux machines |
+| smartctl | ✅ opérationnel, et **sans élévation** |
+| Énumération `\\.\PhysicalDriveN` | ✅ 3 disques par machine, taille et secteur lus |
+| Lecture brute alignée | ✅ signature MBR/GPT vue |
+| `NO_BUFFERING` + tampon aligné | ✅ |
+| Débit / latence par bloc | ✅ 1052 et 2778 Mo/s, `bloc_max` 3,79 et 0,62 ms |
+| Rapport persistant à côté de l'exe | ✅ |
+
+✅ **Validation WinPE faite le 03/09** — voir « Phase 0 close » plus bas.
+
+**Quatre défauts trouvés par ces exécutions, tous corrigés.** C'est le rendement de la
+phase 0 : chacun aurait coûté un aller-retour en atelier.
+
+1. **Le rapport partait dans `_internal\`.** En onedir PyInstaller 6 tout le bundle
+   atterrit là et `__file__` pointe dedans : le technicien aurait cherché le JSON à côté
+   de l'exe sans jamais le trouver. Le dossier d'écriture vient désormais de
+   `sys.executable`, distinct du dossier de lecture des ressources.
+2. **La console se refermait avant le verdict** en double-clic — le geste normal en
+   WinPE. Pause finale ajoutée, et les exceptions s'affichent avant elle.
+3. **La révision de firmware était rendue comme n° de série.** Offsets du
+   `STORAGE_DEVICE_DESCRIPTOR` décalés de 4 octets (8/12/16/20 au lieu de 12/16/20/24).
+   Défaut **invisible** : le champ était rempli, le verdict annonçait
+   `serie_disque_lisible: true`. Deux disques de même modèle et même firmware auraient
+   partagé la même « clé d'identité » et leurs rapports se seraient écrasés.
+4. **Le croisement des sources manquait.** C'est lui qui aurait attrapé le point 3 tout
+   seul : deux sources indépendantes qui ne partagent aucun n° de série alors qu'elles
+   répondent toutes les deux, c'est qu'une des deux décode mal. Ajouté, et **par
+   disque** — une intersection non vide suffisait à masquer le cas réel.
+
+**Décisions d'architecture que ces mesures imposent :**
+
+- **Le n° de série doit être assaini avant de servir de nom de fichier.** L'IOCTL rend
+  pour une clé USB un série contenant des octets de contrôle non imprimables. Utilisé
+  tel quel dans le nom du rapport, il produit un fichier illisible ou un échec
+  d'écriture.
+- **Les règles d'exclusion sont gratuites** : le `BusType` et le drapeau `RemovableMedia`
+  du même IOCTL donnent directement `USB` / `SATA` / `NVMe` / `RAID` et l'amovibilité.
+  Le dédoublonnage par n° de série sera nécessaire : derrière un contrôleur Intel RST,
+  smartctl voit **deux fois le même disque** (`/dev/sdb` et `/dev/csmi1,0`).
+
+---
+
+### 📊 Campagne de collecte (08/08 → 01/09/2026) — 6 machines
+
+Sonde jouée sur 6 postes (Win11 24H2 et Win10 22H2) : **8 disques internes, dont
+5 NVMe et 3 SSD SATA**. Elle a invalidé deux décisions prises trop vite et révélé un
+angle mort.
+
+**1. ⚠️ Décision RÉVISÉE — smartctl ne peut pas être « la source de référence ».**
+Sur **2 machines sur 4**, smartctl restait entièrement muet sur le disque système NVMe
+(tous les champs nuls) alors qu'il répondait sur le lecteur DVD de la même machine. Une
+source absente une fois sur deux n'est pas une référence.
+
+*Cause identifiée* : `--scan-open` rendait bien le **type** du périphérique (`nvme`,
+`ata`, `scsi`) et la sonde **le jetait**, interrogeant ensuite sans `-d <type>`. Corrigé.
+À revalider à la prochaine campagne — et si le silence persiste, il faudra un lecteur
+SMART NVMe natif (`IOCTL_STORAGE_QUERY_PROPERTY` /
+`StorageDeviceProtocolSpecificProperty`), sans quoi le module n'aurait aucune donnée
+SMART sur les machines concernées.
+
+**2. La clé d'identité ne peut venir d'une seule source — et un champ rempli n'est pas
+un identifiant.** Deux contre-exemples relevés :
+
+- la clé USB rend `\x031`, assaini en **« 1 »** ;
+- les NVMe rendent par IOCTL leur EUI-64, souvent presque tout en zéros
+  (`0000_0000_0000_0000_0C82_D500_0000_0371`), et certains fabricants partagent le même
+  préfixe sur toute une gamme.
+
+Indexer l'archive là-dessus ferait collisionner des rapports de machines différentes.
+**Décision** : clé composite avec **niveau de confiance** (forte = smartctl, moyenne =
+IOCTL, faible = repli explicite `MODELE-TAILLE-SANS-SERIE`), et un série n'est retenu que
+s'il est *discriminant* — au moins 6 caractères, pas un caractère répété, pas
+essentiellement des zéros. Prototypé dans la sonde (`synthese_disques`).
+
+**3. `rotation_rate` est TOUJOURS absent en NVMe** (champ ATA) — vérifié sur 5 NVMe. Le
+discriminant mécanique/SSD devient une règle en cascade : bus NVMe ou log NVMe présent
+→ SSD ; sinon `rotation_rate` 0 → SSD, > 0 → mécanique ; sinon indéterminé.
+
+**4. L'écart de débit entre zones ne conclut rien** — jusqu'à **65,9 %** sur un NVMe
+parfaitement sain, contre 3 % sur un SATA du même poste. Et la **zone de début est
+systématiquement la plus lente** sur NVMe : mesurer uniquement au début donnerait une
+image fausse du disque. Le mode express devra échantillonner plusieurs zones **et**
+annoncer la dispersion, jamais conclure dessus.
+
+**5. Exclusion du disque porteur : validée 6/6.** La sonde se reconnaît sur le
+périphérique depuis lequel elle tourne, y compris lancée depuis la clé USB. Le garde-fou
+n° 3 n'est plus une intention.
+
+**6. 🕳️ L'angle mort : pas un seul disque mécanique dans l'échantillon.** Or c'est la
+population que le module vise en priorité — celle qui a des secteurs mourants. Tout le
+profil de latence attendu (temps par bloc, écart entre pistes extérieures et intérieures)
+reste **non observé**. À couvrir avant d'écrire le moteur de balayage.
+*(→ comblé le 02/09, voir ci-dessous.)*
+
+---
+
+### 🎯 Campagne du 02/09 — l'angle mort est comblé, les seuils sont calibrés
+
+16 rapports, **21 disques distincts, dont 12 mécaniques** (80 Go à 1 To, 5400 et
+7200 tr/min, Seagate / WD / Toshiba / HGST), plus SSD SATA, NVMe, eMMC, clé USB et un
+volume Intel Optane. C'est le jeu de calibration de référence du module.
+
+#### La signature d'un disque mécanique est nette et reproductible
+
+Le débit chute des pistes extérieures vers les intérieures (enregistrement par zones) :
+
+| | ratio fin/début | décroissance monotone |
+|---|---|---|
+| **11 disques mécaniques** | **0,40 – 0,52** | 11 / 11 |
+| SSD SATA et NVMe | 0,98 – 1,84 | 0 / 3 |
+| Volume Optane (cache SSD en tête) | 0,08 | oui |
+| Clé USB | 0,77 | oui |
+
+**Aucun recouvrement.** C'est la **forme** du profil qui discrimine, jamais l'écart brut
+— rappel : un NVMe sain atteint 65 % d'écart. La bande retenue dans le code est élargie
+à 0,30–0,65, ce qui exclut toujours l'Optane et l'USB.
+
+Gain immédiat : **3 disques mécaniques anciens** (ST380815AS, WD3200AAJS, WD1600AAJS)
+étaient classés « indéterminé » parce qu'ils sont antérieurs à ATA8 et ne publient pas
+`rotation_rate`. Le profil les identifie sans ambiguïté. Vérifié en rejouant les règles
+sur les 52 mesures archivées : 3 reclassements corrects, **aucun SSD entraîné**.
+
+#### ⚠️ Deux pièges de méthode que seuls des disques mécaniques révèlent
+
+**Le réveil des plateaux ressemble à un secteur mourant.** Premier bloc lu sur un
+WD10SPZX en veille : **313 ms**. C'est le démarrage du moteur, pas un défaut — mais
+strictement indistinguable si on le compte. Une lecture d'échauffement non mesurée est
+désormais faite avant chaque zone ; **le moteur de balayage devra faire de même**, sinon
+il annoncera un défaut sur chaque disque endormi.
+
+**16 Mio par zone peuvent tenir dans le cache du disque.** Les HDD modernes ont 64 à
+256 Mo de cache. Un WD10SPZX 5400 tr/min affiche 254 Mo/s en zone de fin — physiquement
+impossible pour ses plateaux, et son ratio ressort à 2,53 au lieu de ~0,45. C'est le seul
+des 12 à contredire la signature. Le balayage réel devra lire par blocs **plus gros que
+le cache**, ou à des offsets non prévisibles.
+
+#### SMART NVMe : la cause est le mode RAID du contrôleur
+
+Le message capturé est sans ambiguïté :
+`Read NVMe Identify Controller failed: IOCTL_STORAGE_QUERY_PROPERTY(NVMe) failed, Error=1`.
+
+Passer `-d nvme` n'y change rien : **c'est Windows qui refuse le passage de commande**,
+pas smartctl qui se trompe de type. La corrélation est nette sur l'échantillon — les
+machines qui exposent des périphériques `csmi` (contrôleur Intel RST en mode RAID) sont
+exactement celles où le NVMe reste muet ; celle en AHCI répond parfaitement (Samsung 980,
+série et usure 1 % lus sans peine).
+
+**Conséquence pour le module, et elle est structurante** : sur une machine en RST, il n'y
+aura **aucune donnée SMART** pour le disque système. Le test de surface devient alors la
+seule source de vérité. C'est un argument pour le projet, pas contre : cela confirme que
+lire SMART ne suffit pas — encore faut-il qu'il réponde.
+
+#### Le disque que Windows montre n'est pas toujours un disque
+
+Le volume `Optane+932GBHDD` (bus RAID) est un **composite** : cache Intel Optane devant un
+TOSHIBA MQ04ABF100 5400 tr/min. La lecture brute voit 784 Mo/s en tête (le cache) puis
+64 Mo/s (les plateaux), tandis que smartctl décrit le disque membre derrière `csmi0,0`.
+Le module devra traiter ce cas explicitement : ce volume n'est pas testable comme un
+disque, et son verdict porterait sur un objet qui n'existe pas physiquement.
+
+Son numéro de série, `Optane_0000`, est un **gabarit de fabricant** — probablement
+identique sur toutes les machines équipées. La règle de solidité rejette désormais les
+séries terminées par quatre zéros.
+
+---
+
+### ✅ Phase 0 CLOSE — validation WinPE du 03/09/2026
+
+5 exécutions sur **Hiren's BootCD PE** (Win11 22621), démarré par Ventoy. Les sept
+points du verdict passent au vert :
+
+| Point | Résultat en PE |
+|---|---|
+| `winpe_confirme` | ✅ marqueur `HKLM\SYSTEM\CurrentControlSet\Control\MiniNT` trouvé |
+| **tkinter** | ✅ fenêtre + `mainloop`, Tcl 8.6.15 — **l'UI graphique est possible** |
+| smartctl | ✅ opérationnel, 4 disques exploitables par run |
+| accès disque brut / `NO_BUFFERING` | ✅ |
+| n° de série lisible | ✅ les deux sources |
+| rapport persistant | ✅ écrit sur la clé, jamais sur `X:` |
+
+**Limite assumée** : ceci valide *Hiren's BootCD PE*, un WinPE garni (.NET, PowerShell),
+pas un PE minimal construit à l'ADK. C'est l'environnement réellement utilisé en atelier,
+donc c'est celui qui compte — mais la nuance est écrite plutôt que gommée.
+
+#### 📐 Contrainte d'UI découverte : l'écran fait 800 × 600
+
+C'est la résolution par défaut du PE tant qu'aucun pilote graphique n'est chargé.
+**Toute l'interface de GhisdiagDisk doit tenir dans 800 × 600**, sans scroll horizontal.
+C'est nettement plus contraint que Ghisdiag, dont l'en-tête compact vise déjà les 14"
+(~1280 × 720, cf. v1.8.1). À prendre comme contrainte de conception, pas comme détail.
+
+#### 🎯 Windows perturbe la mesure — chiffré, sur les mêmes disques physiques
+
+Trois disques ont été mesurés dans **les deux environnements**, appariés par n° de série
+(valeurs Windows issues des rapports du 02/09) :
+
+| Disque | Environnement | Médiane par bloc (ms) | **Maximum** par bloc (ms) | max / médiane |
+|---|---|---|---|---|
+| WD5000AAKX | Windows | 8,4 / 9,6 / 16,8 | 16,6 / 26,1 / 37,0 | jusqu'à **2,7** |
+| `WD-WCC2E5FK8EU6` | **WinPE** | 8,4 / 9,6 / 16,8 | 14,0 / 14,3 / 21,2 | jusqu'à **1,7** |
+| HGST HTS541010A9E680 | Windows | 9,8 / 11,5 / 19,4 | 9,9 / 33,9 / 40,9 | jusqu'à **2,9** |
+| `JD1009DM3B4RSK` | **WinPE** | 9,8 / 11,5 / 18,1 | 9,8 / 11,7 / 19,8 | jusqu'à **1,1** |
+| TOSHIBA DT01ACA100 | Windows | 5,5 / 6,4 / 10,4 | 5,6 / 28,5 / 38,8 | jusqu'à **4,4** |
+| `31QV335NS` | **WinPE** | 4,6 / 6,5 / 10,4 | 5,6 / 6,5 / 11,4 | jusqu'à **1,2** |
+
+**Les médianes sont identiques d'un environnement à l'autre. Seuls les maximums
+explosent sous Windows.** La médiane est robuste ; le maximum ne l'est pas — il capte
+l'I/O de fond de l'OS.
+
+Or `bloc_max` est précisément l'indicateur du secteur mourant. **Le balayage n'a donc de
+sens qu'en WinPE** : sous Windows, il faudrait un seuil si haut (> 5× la médiane) qu'on
+raterait les vrais défauts, ou si bas qu'on crierait au loup à chaque passage de
+l'indexeur. C'est l'argument le plus fort en faveur de l'architecture bootable — et il
+est maintenant chiffré, plus supposé.
+
+**Seuil proposé pour le moteur de balayage** : en PE, un bloc au-delà de **3× la médiane
+de sa zone** est une anomalie réelle (marge confortable au-dessus du 1,7 observé au pire
+sur des disques sains). Sous Windows, refuser de conclure.
+
+#### 🔎 La sonde a trouvé un vrai défaut, sur la clé Ventoy elle-même
+
+`PhysicalDrive3` (Kingston DataTraveler, 7,8 Go) mesure **4,2 Mo/s et 363–378 ms par bloc
+au milieu du support**, contre 44 Mo/s et 24 ms aux deux extrémités — et une exécution a
+carrément rendu `[Errno 23] ReadFile`, soit une **erreur CRC**.
+
+Deux lectures possibles, et je ne tranche pas : soit une zone réellement défaillante,
+soit la contention avec l'ISO Hiren's que cette même clé servait pendant la mesure. La
+constance des 363 ms sur les 16 blocs penche pour un défaut, l'erreur CRC aussi — mais
+une clé USB sollicitée peut aussi produire les deux. **À recontrôler clé au repos, sur
+une autre machine.**
+
+Dans les deux cas, une règle en sort : **exclure aussi le périphérique depuis lequel le
+PE a démarré**, et pas seulement celui qui porte la sonde — ici c'étaient deux clés
+différentes (la sonde tournait depuis `PhysicalDrive2`, l'ISO était servi par
+`PhysicalDrive3`). Mesurer un support occupé à alimenter le système donne des chiffres
+qui ne décrivent pas le support.
+
+#### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
+
+Une case « mode destructif » est la mécanique même de l'accident : elle reste cochée de
+la machine précédente, ou on la coche sur le mauvais disque.
+
+| | Ce que ça écrit | Risque client | Cible |
+|---|---|---|---|
+| **T1 — Lecture seule** | rien, jamais | nul | tout disque, y compris mourant avec données |
+| **T2 — Écriture sur espace libre** | un fichier temporaire créé puis supprimé | faible | disque monté, sain, avec de la place |
+| **T3 — Écriture brute pleine surface** | tout le périphérique | destruction totale | disque à effacer, disque neuf, disque condamné |
+
+**Pourquoi T3 mérite d'exister** : c'est le seul moyen de détecter la **corruption
+silencieuse** — un disque qui accepte une écriture, la confirme, et relit autre chose.
+SMART ne le voit pas, la lecture seule ne peut pas le voir. Usages atelier :
+valider un disque neuf avant montage (burn-in), certifier un effacement avant revente.
+
+**T2 traverse la couche NTFS** : il mesure autant le système de fichiers que le disque,
+à ne pas vendre pour plus que ça. Et il remplit le disque → à interdire sur un volume
+système presque plein.
+
+#### Garde-fous, par ordre d'efficacité réelle
+
+1. **Fichier-marqueur sur la clé** — T3 n'est proposé que si
+   `ECRITURE_DESTRUCTIVE_AUTORISEE.txt` est présent à côté de l'exe. La clé d'atelier
+   courante ne le contient pas : elle est **physiquement incapable** de détruire quoi
+   que ce soit, quel que soit le nombre de clics. Une seconde clé étiquetée sert aux
+   effacements. Protection la plus forte de la liste — elle ne dépend pas de la
+   vigilance du technicien à 23 h.
+2. **Confirmation par saisie du n° de série**, pas par bouton. Protège surtout du
+   **mauvais disque**, qui est l'accident le plus fréquent : en PE sans lettres de
+   lecteur, `PhysicalDrive0` et `PhysicalDrive1` se confondent en une seconde.
+3. **Exclusion inconditionnelle du périphérique de boot** — en PE on a booté sur la clé
+   du technicien, elle apparaît dans la liste des disques. Jamais sélectionnable.
+4. **Inventaire du contenu affiché avant de proposer T3** (partitions, labels, taux
+   d'occupation). Refus sur volume chiffré BitLocker ou schéma de partitions illisible :
+   dans le doute, on ne détruit pas.
+5. **Passe de lecture systématique avant toute écriture**, même en T3 — si le disque
+   « vide » contient une partition pleine, ça remonte avant qu'un octet ne soit écrit.
+6. **Aucune persistance du choix** : T1 au lancement, toujours. Le bouton T3 n'a pas le
+   focus clavier par défaut.
+
+#### ⚠️ Avertissement métier à intégrer à l'outil
+
+**Balayer intégralement un disque mourant peut l'achever.** Sur un disque mécanique en
+défaillance, des heures de lecture de surface accélèrent la dégradation et réduisent les
+chances de récupération. L'ordre correct est **imager d'abord, tester ensuite**.
+
+Traduction dans l'outil : mode express par défaut, et écran d'avertissement au
+lancement d'un scan long quand SMART est déjà dégradé. Versant commercial : le rapport
+est d'autant plus solide qu'il peut dire *« test non poussé volontairement, données
+préservées, imagerie recommandée »*.
+
+#### Ce que contient un test
+
+Par ordre de rapport valeur / effort :
+
+1. **Balayage de lecture** (le cœur) — lecture brute en relevant les secteurs illisibles
+   **et les temps de lecture aberrants** : un bloc qui met 800 ms à sortir est un secteur
+   en train de mourir que SMART ne compte pas encore.
+2. **Profil de latence en lecture aléatoire** (p50/p99) — contrôleur SSD dégradé, SMR
+   qui rame, NAND fatiguée.
+3. **Débit séquentiel comparé à la classe** du périphérique — un SATA SSD à 40 Mo/s,
+   c'est un disque mourant ou un lien retombé en mode dégradé.
+4. **Projection d'usure** — NVMe `percentage_used` + écritures hôte rapportées à l'âge
+   → durée de vie restante en années. Quasi gratuit (donnée déjà collectée) et c'est ce
+   qui parle le plus au client.
+5. **Delta SMART historique** — secteurs réalloués qui *augmentent* entre deux passages
+   atelier : signal bien plus fort qu'une valeur absolue.
+6. **Auto-test SMART** (`smartctl -t short`) + journal d'auto-tests — 2 min, déjà outillé.
+7. **Écriture soutenue** (falaise de cache SLC) et **throttling thermique NVMe** — là on
+   réutilise l'infrastructure du bench thermique. *(T2/T3)*
+
+#### Contraintes d'exécution
+
+- **Durée** : balayage complet d'un HDD 4 To à 120 Mo/s ≈ 9 h. D'où trois modes —
+  **express** (début/fin + N zones réparties, ~2 min), **standard** (~15 min),
+  **complet** (opt-in explicite, on laisse tourner la nuit).
+- **Journalisation incrémentale obligatoire** : un scan de 9 h interrompu (gel, disque
+  qui lâche, coupure) doit laisser un rapport partiel exploitable. Écriture au fil de
+  l'eau, reprise sur checkpoint.
+- **Écriture des rapports à côté de l'exe** (donc sur la clé USB), repli sur `Documents`
+  sous Windows normal. En PE, `X:` est un disque RAM : tout ce qui y est écrit disparaît
+  à l'extinction.
+- **Identité du rapport sans le nom de machine** : en WinPE le hostname est `MINWINPC`,
+  inutilisable. Clé d'identification = **n° de série du disque** (+ série carte mère si
+  disponible). C'est aussi ce qui permettra à Ghisdiag de retrouver le rapport
+  correspondant et de le joindre au diag IA (mécanisme v2.2.0).
+- **Exclusions** : USB, RAID, disques virtuels — comme le bench thermique le fait déjà.
+
+#### Le rapport client
+
+Livrable distinct du JSON, et c'est là qu'est la valeur commerciale : il justifie un
+devis de remplacement. **HTML auto-porté** (s'ouvre partout, aucune dépendance) ; pas de
+PDF généré sur place — Chrome n'existe pas en PE, la conversion se fera au besoin sur le
+poste du technicien, comme pour la notice.
+
+Contenu : identité machine + disque + n° de série, date, version de l'outil, verdict en
+trois états, et les chiffres qui l'étayent. Et surtout **le mode de test en en-tête, en
+clair** :
+
+- T1/T2 → « **Test non destructif** — aucune écriture sur les données existantes,
+  contenu du disque préservé. »
+- T3 → « **Test destructif** — l'intégralité du contenu a été effacée », avec un champ
+  **autorisation** rempli avant lancement (nom du client / référence du devis) et repris
+  dans le rapport.
+
+Un rapport horodaté qui dit noir sur blanc « aucune écriture » est ce qui clôt une
+discussion si un client revient en disant qu'il a perdu des fichiers.
+
+#### Coût à assumer
+
+**Deuxième exe = deuxième front antivirus.** Un binaire autonome qui ouvre le disque en
+accès brut coche des cases heuristiques que Ghisdiag ne coche pas. Il lui faudra sa
+propre attestation SLSA et son propre passage VirusTotal, à chaque release. En
+contrepartie son périmètre est bien plus maigre (ni `collectors/*.ps1`, ni DLL .NET, ni
+PawnIO — juste `smartctl.exe`), donc un binaire plus léger et moins suspect que le
+principal.
+
+#### Phasage
+
+| Phase | Contenu | Poids |
+|---|---|---|
+| 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
+| 1 | Moteur T1 (balayage lecture + débit + latence), modes express/standard, session checkpointée | gros |
+| 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
+| 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
+| 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
+| 5 | T3 (écriture brute) + fichier-marqueur + saisie du n° de série + champ autorisation | moyen |
+
+**Recommandation v1 : T1 seul.** Il couvre déjà le cas d'usage principal — juger un
+disque suspect sans toucher aux données — et c'est le seul niveau utilisable sur les
+machines qui inquiètent. Mais **l'architecture à trois niveaux se pose dès maintenant**
+(le niveau est un attribut de la session, il apparaît dans le rapport, le
+fichier-marqueur est déjà lu), pour que T3 s'ajoute plus tard sans rouvrir le chemin
+d'écriture d'un outil déjà en production. Greffer un mode destructif après coup sur une
+base qui n'a jamais écrit, c'est là qu'on se blesse.
+
+---
+
 ### Plus tard / opportuniste
 
 - **Signature de code** de l'exe (réduction des faux positifs antivirus — process déjà
   documenté dans build.bat, il manque le certificat)
-- Benchmark disque simple (débit séquentiel/aléatoire avant/après remplacement)
 - Export PDF du rapport
 - Mode « rapport client » simplifié (vulgarisé, sans jargon)
 
