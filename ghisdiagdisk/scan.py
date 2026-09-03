@@ -460,7 +460,6 @@ class ScanEngine:
             try:
                 lus = self.lecteur.lire(pos, n)
             except OSError as exc:
-                t_err = self.clock()
                 nb_illisibles += 1
                 sous, ok = self._localiser_illisibles(pos, n, str(exc))
                 plages.extend(sous)
