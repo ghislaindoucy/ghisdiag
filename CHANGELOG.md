@@ -46,6 +46,18 @@ donnée la plus parlante pour juger un refroidissement. Elle rejoint le prompt.
   chaque bench ; ligne « Pièces jointes » dans le journal et dans l'en-tête du
   rapport IA, y compris « aucune ».
 
+### 🐛 Les erreurs de l'analyse IA n'étaient jamais affichées
+
+Clé API invalide, timeout, panne réseau : le message était bien construit, mais
+il était différé vers le thread d'interface dans une lambda qui lisait la
+variable d'exception **après** la fin du bloc `except`, où Python l'a déjà
+supprimée. La lambda levait `NameError` et le technicien ne voyait ni la ligne
+de journal, ni la boîte de dialogue — juste une popup d'attente qui se fermait.
+Même défaut sur l'erreur fatale du diagnostic : le bouton « Réessayer » ne
+réapparaissait jamais et l'application restait « en cours ». Le message est
+désormais copié avant d'être différé. Relevé par pyflakes, corrigé aux quatre
+endroits.
+
 ### 🧪 Tests
 
 - 21 tests sans matériel ni réseau : fenêtre de fraîcheur, sélection par cible,

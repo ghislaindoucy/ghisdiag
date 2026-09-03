@@ -49,6 +49,15 @@ sert comme argument chiffré d'un nettoyage ou d'un changement de pâte.
   jointes », y compris « aucune ». Un audit qui parle de throttling est
   vérifiable.
 
+## Corrigé au passage : les erreurs de l'analyse IA s'affichent enfin
+
+Clé invalide, timeout ou panne réseau pendant l'audit IA : jusqu'ici la popup
+d'attente se fermait et **rien** n'apparaissait, ni dans le journal ni à
+l'écran. Le message était différé vers l'interface par une fonction qui lisait
+la variable d'exception après que Python l'avait supprimée. Corrigé, ainsi que
+le même défaut sur l'erreur fatale du diagnostic, où le bouton « Réessayer » ne
+revenait jamais.
+
 ## Sous le capot
 
 - La pièce jointe est un **bloc séparé, placé avant le JSON du diagnostic, avec
