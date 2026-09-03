@@ -340,7 +340,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | conçu, **décisions tranchées**, rien de codé. Ne demande aucun matériel. |
-> | **GhisdiagDisk** — outil disque autonome bootable | **phase 0 CLOSE** (WinPE validé, seuils calibrés sur 12 disques mécaniques). Reste à écrire le moteur de balayage T1. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, **phase 1 ÉCRITE le 03/09** (moteur T1 + CLI console + 49 tests sans matériel, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). **Pas encore validée en atelier** : aucune exécution élevée ni en WinPE. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -712,6 +712,80 @@ différentes (la sonde tournait depuis `PhysicalDrive2`, l'ISO était servi par
 `PhysicalDrive3`). Mesurer un support occupé à alimenter le système donne des chiffres
 qui ne décrivent pas le support.
 
+### ✅ Phase 1 — le moteur de balayage T1 est écrit (03/09/2026)
+
+Branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`, empilée sur la PR #33. Livré : le
+paquet `ghisdiagdisk/`, le lanceur `ghisdiagdisk_main.py`, `GhisdiagDisk.spec` (second
+exe, même recette que `WinPEProbe.spec`) et `test_ghisdiagdisk_atelier.bat`. **49 tests
+sans matériel** (faux disque + horloge virtuelle), 237 au total dans le dépôt. Build
+PyInstaller vérifié (exe de 1,7 Mo, `smartctl.exe` embarqué).
+
+**⚠️ Pas encore validé en atelier** : aucune exécution élevée sous Windows ni en WinPE.
+Les constantes ci-dessous sont des choix raisonnés à partir des campagnes, pas des
+mesures — c'est la validation qui dira si elles tiennent. La sonde
+`atelier_winpe_probe.py` reste figée comme référence de terrain ; `rawdisk.py` en est
+l'extraction réutilisable, avec les mêmes offsets et les mêmes pièges documentés.
+
+| Module | Rôle |
+|---|---|
+| `rawdisk.py` | Win32 brut : énumération par index, identité IOCTL (offsets 12/16/20/24), partitions GPT/MBR lues sur le disque, `LecteurDisque` NO_BUFFERING + tampon VirtualAlloc, **double exclusion** porteur de l'exe / support de boot du PE (`PEBootRamdiskSourceDrive`) |
+| `smart.py` | smartctl avec le **type conservé** (`-d`), dédoublonnage RST, attributs 5/187/196/197/198/199, détection « muet derrière RST », projection d'usure NVMe |
+| `inventory.py` | clé composite à niveau de confiance, cascade mécanique/SSD, profil ZBR calibré, règles d'exclusion et avertissements |
+| `niveaux.py` | T1/T2/T3, fichier-marqueur, **refus explicite** de T2/T3 (jamais de rétrogradation silencieuse vers T1) |
+| `scan.py` | plan, moteur pur (lecteur + horloge injectables), checkpoint/reprise, synthèse, verdict |
+| `cli.py` | console (lisible en 800×600), Ctrl+C = arrêt propre avec session écrite |
+
+**Décisions prises en écrivant le moteur** (à confirmer par la validation) :
+
+- **Plan** : express = 12 zones × 256 Mio (offset 0, fin *exacte* du disque, 10 réparties) ;
+  standard = 48 × 1 Gio ; complet = 1 Gio contigus. Les zones dépassent le cache d'un
+  disque (piège du WD10SPZX). Bloc de mesure = 1 Mio : un secteur mourant doit ressortir,
+  pas se diluer.
+- **Échauffement non mesuré avant chaque zone, lu AU-DELÀ de la fenêtre** (ou 64 Mio
+  avant, pour la zone de fin) : la lecture anticipée du disque ne pré-charge donc pas la
+  zone mesurée. Un seul échauffement en mode complet (têtes déjà en place).
+- **Anomalie = bloc > max(3 × médiane de sa zone, 25 ms)**. Le plancher de 25 ms vise les
+  SSD (médiane < 1 ms : 3× serait du bruit d'ordonnanceur) — **non calibré**, à vérifier
+  sur NVMe en PE. Bloc > 500 ms = « mourant » → à remplacer.
+- **Hors WinPE, refus de conclure sur les latences** (verdict *non concluant*, chiffres
+  quand même dans la session). **Les secteurs illisibles et le débit concluent partout** :
+  une erreur CRC est une erreur CRC, et les médianes sont identiques Windows/PE.
+- **Secteur illisible** : bissection jusqu'au secteur physique (4 Kio), plafonnée à
+  64 échecs par bloc (on ne martèle pas un disque mort), plages fusionnées et exprimées
+  en LBA. **Arrêt de sécurité à 64 blocs illisibles** : « imager d'abord ».
+- **Verdict** tri-état + non concluant, toujours avec ses raisons. À remplacer : secteur
+  illisible, bloc mourant, SMART en échec, arrêt de sécurité. À surveiller : blocs lents,
+  débit médian sous le plancher de la classe (NVMe 300, SSD 100, HDD 25 Mo/s —
+  volontairement bas), SMART 5/197/198 > 0, erreurs média NVMe. La **portée** est
+  toujours dite : « sain » en express signifie sain sur ~0,1 % de la surface.
+- **Exclusions** : porteur de l'exe et boot PE (jamais), virtuel, composite `Optane+…`,
+  clé USB amovible. Le NVMe derrière RST (bus RAID) **reste testable** — c'est la
+  population visée — avec avertissement ; un disque en dock USB aussi, sans comparaison
+  à la classe.
+- **Lecture aléatoire** : 200 × 4 Kio à offsets tirés au sort (graine dans la session),
+  p50 / p99 / max.
+- **Session** : `rapports_disque\ghisdiagdisk_<clé>_T1_<horodatage>.json` à côté de
+  l'exe (repli `Documents\Ghisdiag\disque`), écriture atomique après chaque zone,
+  reprise refusée si la clé d'identité **ou** la taille diffèrent.
+- **Pas d'UI graphique dans cette livraison** : la console tient en 800×600 et l'UI
+  tkinter n'a de sens qu'une fois le moteur validé. Elle rappellera les mêmes fonctions.
+
+**Prochaine étape — validation atelier, dans cet ordre :**
+
+1. `test_ghisdiagdisk_atelier.bat --lister` **élevé** sous Windows : inventaire, clés,
+   exclusions (le porteur doit être exclu, le disque système testable).
+2. `py -m PyInstaller --clean --noconfirm GhisdiagDisk.spec`, copier `dist\GhisdiagDisk\`
+   sur la clé CLAUDE, booter Hiren's PE : `--lister`, puis `--disque N --mode express`
+   sur les trois disques déjà mesurés (WD5000AAKX, HGST HTS541010A9E680, Toshiba
+   DT01ACA100). Attendu : médianes retombant sur celles du 03/09, **zéro anomalie**.
+3. Un NVMe en PE : le plancher de 25 ms ne doit ni inventer ni masquer d'anomalie.
+4. Un disque **connu défaillant** (la clé Ventoy suspecte, en dock, ou un HDD réformé) :
+   le verdict doit basculer et le JSON localiser les plages.
+5. Un Ctrl+C en pleine zone puis `--reprendre <session>` : les zones faites ne sont
+   pas relues, le verdict final est complet.
+
+---
+
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
 Une case « mode destructif » est la mécanique même de l'accident : elle reste cochée de
@@ -835,7 +909,7 @@ principal.
 | Phase | Contenu | Poids |
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
-| 1 | Moteur T1 (balayage lecture + débit + latence), modes express/standard, session checkpointée | gros |
+| 1 | ✅ **Moteur T1 ÉCRIT le 03/09** (balayage lecture + débit + latence + lecture aléatoire, modes express/standard/complet, session checkpointée et reprenable, CLI console). Reste la **validation atelier** — voir « Phase 1 » ci-dessus | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
