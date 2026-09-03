@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.1.0)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.2.0)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -159,6 +159,16 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.2.0 (Septembre 2026)
+📎 **Le bench thermique du jour rejoint l'audit IA**
+- **Un bench joué aujourd'hui est joint automatiquement à l'analyse IA** — métriques, déroulement du test et courbe ré-échantillonnée, dans un bloc séparé placé avant les données du diagnostic, avec son propre budget : la pièce jointe n'est jamais tronquée au profit du reste.
+- **La session du jour, et rien d'autre** : pas de bench, pas de pièce jointe, et l'audit reste exactement celui d'avant. CPU **et** GPU sont joints quand les deux existent ; un « avant » et un « après » le même jour donnent le **delta**, pas les deux sessions.
+- **Le tri-état est respecté** : un throttling « non mesuré » (charge écourtée, test avorté, arrêt d'urgence) n'est ni un oui ni un non, et l'IA a interdiction d'en conclure quoi que ce soit. Seuils thermiques de référence ajoutés au prompt ; « limite de puissance » y est explicitement un comportement normal.
+- **Tu vois ce que l'IA a vu** : indicateur « 📎 Bench du jour joint à l'audit » dans le panneau Analyse IA, et ligne « Pièces jointes » dans l'en-tête du rapport IA.
+
+- 🐛 **Les erreurs de l'analyse IA s'affichent enfin** (clé invalide, timeout, réseau) : elles étaient perdues dans un `NameError` silencieux ; idem pour le bouton « Réessayer » après une erreur fatale du diagnostic.
+[📖 Notes complètes →](./RELEASE_NOTES_v2.2.0.md)
 
 ### v2.1.0 (Août 2026)
 ⚙️ **Setup / MAJ passe en premier onglet, et sait régler l'heure**
