@@ -131,6 +131,7 @@ from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
 try:
     import ai_analyzer
     from ai_analyzer import analyze_diagnostic, test_api_key
+    import ai_attachments
     from ai_report import generate_ai_report
     _HAS_AI = True
 except ImportError as _exc:
@@ -852,6 +853,16 @@ class GhisdiagApp(tk.Tk):
             font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
         )
         self.ai_status_lbl.pack(side="left")
+
+        # Pièces jointes du jour (bench thermique) : ce que l'audit IA verra en
+        # plus du diagnostic. Affiché AVANT de lancer, pour que le technicien
+        # sache s'il doit d'abord bencher. Rafraîchi avec l'état IA et après
+        # chaque bench.
+        self.ai_attach_lbl = tk.Label(
+            ai_hdr, text="",
+            font=("Segoe UI", 9), bg=SURFACE, fg=FG_MUTED,
+        )
+        self.ai_attach_lbl.pack(side="left", padx=(16, 0))
 
         tk.Button(
             ai_hdr, text="Configurer l'IA…",
@@ -2846,9 +2857,14 @@ class GhisdiagApp(tk.Tk):
                 machine_name = data["meta"].get("machine", "UNKNOWN")
                 # Capturée sur le thread principal dans _start (voir _pending_ai_question).
                 question = getattr(self, "_pending_ai_question", "")
+                # Pièces jointes : le bench thermique DU JOUR (CPU et/ou GPU), en
+                # digest, dans un bloc à budget propre placé avant le JSON. Aucun
+                # bench du jour → liste vide → prompt strictement inchangé.
+                attachments = ai_attachments.build_attachments(self._out_dir)
                 thread = threading.Thread(
                     target=self._run_ai_analysis,
-                    args=(diagnostic_data_copy, provider_id, ai_key, machine_name, question),
+                    args=(diagnostic_data_copy, provider_id, ai_key, machine_name,
+                          question, attachments),
                     daemon=True,
                 )
                 thread.start()
@@ -2937,6 +2953,28 @@ class GhisdiagApp(tk.Tk):
             lbl.configure(text=f"{name} — clé non renseignée (cliquez sur Configurer)", fg=FG_MUTED)
         # Le champ question n'a de sens que si une clé IA est active.
         self._toggle_ai_question_row(has_key)
+        self._refresh_ai_attachments(has_key)
+
+    def _refresh_ai_attachments(self, has_key=None):
+        """Libellé « bench du jour joint » : ce que l'IA verra en plus du diagnostic."""
+        lbl = getattr(self, "ai_attach_lbl", None)
+        if lbl is None or not _HAS_AI:
+            return
+        if has_key is None:
+            has_key = bool(self._active_ai_key().strip())
+        if not has_key:
+            lbl.configure(text="")
+            return
+        try:
+            out_dir = Path(self.out_dir_var.get().strip() or str(DEFAULT_REPORTS_DIR))
+            resume = ai_attachments.resume_attachments(
+                ai_attachments.build_attachments(out_dir))
+        except Exception:
+            resume = ""
+        if resume:
+            lbl.configure(text=f"📎 Bench du jour joint à l'audit : {resume}", fg=GREEN)
+        else:
+            lbl.configure(text="📎 Aucun bench thermique du jour à joindre", fg=FG_MUTED)
 
     def _toggle_ai_question_row(self, show: bool):
         """Affiche/masque la rangée de question selon qu'une clé IA est active."""
@@ -3252,20 +3290,30 @@ class GhisdiagApp(tk.Tk):
         self._ai_popup = None
 
     def _run_ai_analysis(self, diagnostic_data: dict, provider_id: str,
-                         api_key: str, machine_name: str, question: str = ""):
+                         api_key: str, machine_name: str, question: str = "",
+                         attachments=None):
         """Lance l'analyse IA en thread séparé (ne bloque pas l'UI)."""
         name = ai_analyzer.provider_label(provider_id)
+        attachments = attachments or []
+        attachments_label = ai_attachments.resume_attachments(attachments)
+        attachments_block = ai_attachments.render_attachments(attachments)
         # Ouvrir la popup d'attente depuis le thread UI
         self.after(0, lambda: self._open_ai_waiting_popup(name))
         try:
             self.after(0, lambda: self._log(f"🤖  Analyse IA ({name}) en cours…", "info"))
             if question:
                 self.after(0, lambda: self._log(f"   Question jointe : {question}", "dim"))
+            # Toujours dit, même « aucune » : le technicien doit savoir ce que
+            # l'IA a vu au-delà du diagnostic.
+            self.after(0, lambda: self._log(
+                f"   Pièces jointes : {attachments_label or 'aucune (pas de bench thermique du jour)'}",
+                "dim"))
 
             progress_msg = lambda m: self.after(0, lambda msg=m: self._log(f"   {msg}", "dim"))
             analysis_text = analyze_diagnostic(
                 diagnostic_data, provider_id, api_key,
                 progress_callback=progress_msg, question=question,
+                attachments=attachments_block,
             )
 
             if not analysis_text:
@@ -3282,6 +3330,7 @@ class GhisdiagApp(tk.Tk):
                 model_label=ai_analyzer.model_label(provider_id),
                 app_version=VERSION,
                 question=question,
+                attachments_label=attachments_label,
             )
 
             self.ai_report_path = html_path
@@ -4193,6 +4242,12 @@ class GhisdiagApp(tk.Tk):
     def _bench_refresh_sessions(self):
         self._bench_sessions_list.delete(0, "end")
         self._bench_session_files = []
+        # Un bench vient peut-être de finir : l'indicateur « bench du jour
+        # joint » de l'onglet Diagnostic doit le refléter sans relancer l'appli.
+        try:
+            self._refresh_ai_attachments()
+        except Exception:
+            pass
         try:
             out = str(Path(self.out_dir_var.get()) / "thermal")
             sessions = bench_list_sessions(out)

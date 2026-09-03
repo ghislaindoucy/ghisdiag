@@ -333,6 +333,7 @@ def generate_ai_report(
     model_label: str = "",
     app_version: str = "",
     question: str = "",
+    attachments_label: str = "",
 ) -> Path:
     """
     Génère un rapport HTML à partir de l'analyse IA.
@@ -366,6 +367,13 @@ def generate_ai_report(
             f'<p><strong>Question du technicien :</strong> {html.escape(question.strip())}</p>'
             if question and question.strip() else ""
         )
+        # Ce que l'IA a VU en plus du diagnostic : sans cette ligne, un audit qui
+        # parle de throttling est invérifiable pour le technicien qui le lit.
+        attachments_line = (
+            f'<p><strong>Pièces jointes :</strong> {html.escape(attachments_label.strip())}</p>'
+            if attachments_label and attachments_label.strip()
+            else '<p><strong>Pièces jointes :</strong> aucune (pas de bench thermique du jour)</p>'
+        )
         version_line = f" v{html.escape(app_version)}" if app_version else ""
 
         html_content = f"""<!DOCTYPE html>
@@ -387,6 +395,7 @@ def generate_ai_report(
             <p><strong>Fournisseur :</strong> {html.escape(provider_label)}</p>
             {model_line}
             {question_line}
+            {attachments_line}
         </div>
     </header>
 

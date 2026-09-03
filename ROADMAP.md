@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.1.0** (2026-08-05) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.1.0)
+**Version actuelle : 2.2.0** (2026-09-03) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.2.0)
 
 ---
 
@@ -175,6 +175,73 @@ graphique (dépoussiérage, changement de pâte/pads).
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
 
+### v2.2.0 — 📎 Pièces jointes au diagnostic IA ✅ *livré*
+
+**Le besoin** : quand un bench thermique vient d'être joué sur la machine, l'audit IA
+ne le voit pas. Il raisonne sur un instantané de collecteurs alors qu'on dispose d'une
+mesure sous charge — la donnée la plus parlante pour juger un refroidissement.
+
+Ce chantier livre le **mécanisme générique de pièce jointe** que réutilisera ensuite le
+module disque ; le bench thermique en est le premier client.
+
+- **Bloc séparé, placé AVANT le dump JSON** dans le prompt, avec son propre budget.
+  Le prompt est plafonné à 120 000 caractères et le JSON compact frôle déjà les 109 k
+  sur machine chargée (`ai_analyzer._build_user_prompt`) ; la troncature coupe la
+  **fin** de la chaîne. Une pièce jointe glissée dans `data` serait donc la première
+  sacrifiée, en silence. Seul le diag se tronque.
+- **Digest, jamais la session brute** : `metrics` + verdict, plus une courbe
+  ré-échantillonnée (~20 points) pour donner la forme de la rampe et du plateau. Les
+  séries d'échantillons (`clock_samples`, températures) restent hors prompt.
+- **Le tri-état doit survivre au transfert.** `thermal_bench` distingue soigneusement
+  « pas de throttling » de « non mesuré » (charge écourtée, session avortée, arrêt
+  d'urgence — cf. v2.0.3). Aplatir ça en booléen ferait conclure « refroidissement
+  sain » à partir d'un test qui n'a jamais atteint le régime établi : exactement le
+  faux négatif que ce code évite. Le digest porte explicitement
+  *non mesuré* / *écourté* / *avorté*, et le prompt interdit d'en tirer un verdict.
+- **Prompt système à compléter** : il n'a aujourd'hui aucun seuil thermique dans ses
+  « SEUILS DE RÉFÉRENCE » et aucun domaine thermique dans le plan d'audit — la donnée
+  serait ignorée ou interprétée au jugé. Ajouter les seuils (Tjmax, plancher de
+  throttling, écart CPU/GPU), une ligne de domaine en section 3 et un renvoi en
+  section 10 (matériel / durée de vie), où le bench est l'argument chiffré d'un
+  nettoyage ou d'un repâtage.
+- **Comparaison avant/après** : si `thermal_compare` a produit un avant/après, c'est le
+  **delta** qu'on joint, pas les deux sessions — l'information est là.
+
+**Tranché (07/08/2026)** :
+
+- **Fenêtre de fraîcheur : la session du jour, et rien d'autre.** C'est la réalité
+  atelier — on benche et on diagnostique dans la même passe. Une fenêtre plus large
+  ferait tôt ou tard joindre un bench d'avant intervention et conclure l'IA sur un état
+  périmé. Aucun bench du jour → aucune pièce jointe, et le prompt reste strictement
+  celui d'aujourd'hui (zéro régression).
+- **Une session par cible : le bench CPU **et** le bench GPU sont joints** quand les
+  deux existent. Ce sont deux mesures indépendantes, et l'écart entre les deux est
+  lui-même un signal de diagnostic. Le coût en prompt est négligeable une fois le
+  digest réduit.
+
+**✅ Livré le 03/09/2026** — tout ce qui précède est implémenté tel que tranché :
+
+- `ai_attachments.py` : `build_attachments(dossier)` → sessions du jour
+  (`thermal\`), une par cible, delta `thermal_compare` si avant + après ;
+  `digest_bench` (métriques, déroulement complet/écourté/avorté/urgence,
+  throttling et limite de puissance en « oui / non / non mesure » avec raison,
+  courbe à 20 points) ; `render_attachments` avec **budget propre de 12 000
+  caractères** (les courbes sautent d'abord, le diagnostic jamais) ;
+  `resume_attachments` pour l'UI.
+- `ai_analyzer._build_user_prompt(data, question, attachments)` : bloc inséré
+  entre l'intro et le JSON ; vide → prompt strictement identique (testé).
+  Prompt système : seuils thermiques, domaine « Thermique (bench du jour) »
+  (« non testé » sans pièce jointe), renvoi en section 10.
+- `main.py` : pièces jointes construites au lancement de l'analyse, libellé
+  « 📎 Bench du jour joint à l'audit : … » dans le panneau IA (rafraîchi après
+  chaque bench), ligne « Pièces jointes » dans le journal et dans l'en-tête du
+  rapport IA (`ai_report.py`).
+- 21 tests (`tests/test_ai_attachments.py`) + rejeu des 9 sessions réelles
+  archivées. **Reste** : un essai de bout en bout en atelier (bench réel puis
+  audit IA réel) pour juger la lecture que fait le modèle du bloc.
+
+---
+
 ### v2.1.0 — ⚙️ Setup en tête, heure et veille ✅ *livré*
 
 - **« Setup / MAJ » passe en 1er onglet** (il était 5e) : c'est l'onglet du
@@ -339,7 +406,7 @@ atelier sont traités.
 >
 > | | État |
 > |---|---|
-> | **v2.2.0** — bench thermique joint au diag IA | conçu, **décisions tranchées**, rien de codé. Ne demande aucun matériel. |
+> | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
 > | **GhisdiagDisk** — outil disque autonome bootable | **phase 0 CLOSE** (WinPE validé, seuils calibrés sur 12 disques mécaniques). Reste à écrire le moteur de balayage T1. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
@@ -348,52 +415,6 @@ atelier sont traités.
 > 2. Trois d'entre elles ont déjà été **révisées par les mesures** (smartctl comme source
 >    de référence, discriminant mécanique/SSD, clé d'identité). Les sections « Campagne »
 >    font foi sur les sections antérieures en cas de contradiction.
-
-### v2.2.0 — 📎 Pièces jointes au diagnostic IA 🔜 *préparation*
-
-**Le besoin** : quand un bench thermique vient d'être joué sur la machine, l'audit IA
-ne le voit pas. Il raisonne sur un instantané de collecteurs alors qu'on dispose d'une
-mesure sous charge — la donnée la plus parlante pour juger un refroidissement.
-
-Ce chantier livre le **mécanisme générique de pièce jointe** que réutilisera ensuite le
-module disque ; le bench thermique en est le premier client.
-
-- **Bloc séparé, placé AVANT le dump JSON** dans le prompt, avec son propre budget.
-  Le prompt est plafonné à 120 000 caractères et le JSON compact frôle déjà les 109 k
-  sur machine chargée (`ai_analyzer._build_user_prompt`) ; la troncature coupe la
-  **fin** de la chaîne. Une pièce jointe glissée dans `data` serait donc la première
-  sacrifiée, en silence. Seul le diag se tronque.
-- **Digest, jamais la session brute** : `metrics` + verdict, plus une courbe
-  ré-échantillonnée (~20 points) pour donner la forme de la rampe et du plateau. Les
-  séries d'échantillons (`clock_samples`, températures) restent hors prompt.
-- **Le tri-état doit survivre au transfert.** `thermal_bench` distingue soigneusement
-  « pas de throttling » de « non mesuré » (charge écourtée, session avortée, arrêt
-  d'urgence — cf. v2.0.3). Aplatir ça en booléen ferait conclure « refroidissement
-  sain » à partir d'un test qui n'a jamais atteint le régime établi : exactement le
-  faux négatif que ce code évite. Le digest porte explicitement
-  *non mesuré* / *écourté* / *avorté*, et le prompt interdit d'en tirer un verdict.
-- **Prompt système à compléter** : il n'a aujourd'hui aucun seuil thermique dans ses
-  « SEUILS DE RÉFÉRENCE » et aucun domaine thermique dans le plan d'audit — la donnée
-  serait ignorée ou interprétée au jugé. Ajouter les seuils (Tjmax, plancher de
-  throttling, écart CPU/GPU), une ligne de domaine en section 3 et un renvoi en
-  section 10 (matériel / durée de vie), où le bench est l'argument chiffré d'un
-  nettoyage ou d'un repâtage.
-- **Comparaison avant/après** : si `thermal_compare` a produit un avant/après, c'est le
-  **delta** qu'on joint, pas les deux sessions — l'information est là.
-
-**Tranché (07/08/2026)** :
-
-- **Fenêtre de fraîcheur : la session du jour, et rien d'autre.** C'est la réalité
-  atelier — on benche et on diagnostique dans la même passe. Une fenêtre plus large
-  ferait tôt ou tard joindre un bench d'avant intervention et conclure l'IA sur un état
-  périmé. Aucun bench du jour → aucune pièce jointe, et le prompt reste strictement
-  celui d'aujourd'hui (zéro régression).
-- **Une session par cible : le bench CPU **et** le bench GPU sont joints** quand les
-  deux existent. Ce sont deux mesures indépendantes, et l'écart entre les deux est
-  lui-même un signal de diagnostic. Le coût en prompt est négligeable une fois le
-  digest réduit.
-
----
 
 ### GhisdiagDisk — 💽 Test de santé disque autonome & bootable 🔜 *préparation — gros chantier*
 
