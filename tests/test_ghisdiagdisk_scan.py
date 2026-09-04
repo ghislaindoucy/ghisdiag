@@ -237,16 +237,111 @@ class TestMoteurDefauts(unittest.TestCase):
         self.h = Horloge()
         self.fiche = fiche_test()
 
-    def test_bloc_lent_a_surveiller(self):
+    def test_grappe_de_blocs_lents_a_surveiller(self):
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
+        s0 = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
+        cible = s0["plan"]["segments"][2]["offset"] + 5 * MIB
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr,
+                       lents={cible: 100.0, cible + MIB: 100.0})
+        s = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 2)
+        self.assertEqual(s["synthese"]["nb_blocs_isoles"], 0)
+        self.assertEqual(s["segments"][2]["anomalies"][0]["offset"], cible)
+        self.assertEqual(s["synthese"]["zones_avec_anomalies"], [2])
+        self.assertTrue(any("grappe" in r for r in s["verdict"]["raisons"]))
+
+    def test_bloc_lent_isole_est_le_tic_du_firmware(self):
+        """Validation du 04/09 : un Seagate sain emet un bloc de 26-130 ms
+        toutes les 58 s. Isole et sous 150 ms, il est compte a part et ne
+        pese pas ; au-dela de 150 ms il compte meme seul."""
         d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
         s0 = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
         cible = s0["plan"]["segments"][2]["offset"] + 5 * MIB
         d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents={cible: 100.0})
         s = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "sain")
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 0)
+        self.assertEqual(s["synthese"]["nb_blocs_isoles"], 1)
+        self.assertEqual(s["segments"][2]["anomalies_isolees"][0]["offset"], cible)
+        self.assertTrue(any("isole" in n for n in s["verdict"]["notes"]))
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents={cible: 200.0})
+        s = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
         self.assertEqual(s["verdict"]["etat"], "a_surveiller")
         self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 1)
-        self.assertEqual(s["segments"][2]["anomalies"][0]["offset"], cible)
-        self.assertEqual(s["synthese"]["zones_avec_anomalies"], [2])
+
+    def test_zone_dense_tout_compte(self):
+        """4 blocs lents disperses (a plus de 8 blocs l'un de l'autre) dans une
+        meme zone : ce n'est plus un tic, tout compte (BX500 du 04/09)."""
+        cfg = _cfg(segment_octets=64 * MIB)
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
+        s0 = ScanEngine(d, self.fiche, cfg, ENV_PE, clock=self.h).run()
+        base = s0["plan"]["segments"][3]["offset"]
+        lents = {base + k * MIB: 100.0 for k in (0, 16, 32, 48)}
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents=lents)
+        s = ScanEngine(d, self.fiche, cfg, ENV_PE, clock=self.h).run()
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 4)
+        self.assertEqual(s["synthese"]["nb_blocs_isoles"], 0)
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        # Trois seulement, espaces pareil : trois tics isoles.
+        lents = {base + k * MIB: 100.0 for k in (0, 16, 32)}
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents=lents)
+        s = ScanEngine(d, self.fiche, cfg, ENV_PE, clock=self.h).run()
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 0)
+        self.assertEqual(s["synthese"]["nb_blocs_isoles"], 3)
+        self.assertEqual(s["verdict"]["etat"], "sain")
+
+    def test_zone_uniformement_lente_a_surveiller(self):
+        """Lexar NQ100 du 04/09 : une zone 10x plus lente que les autres n'a
+        aucun bloc << anormal >> (le seuil suit sa mediane) - elle doit
+        pourtant ressortir. Hors PE : mesuree, non concluante."""
+        f = fiche_test(classe="ssd")                       # 2 ms/Mio = 524 Mo/s
+        d0 = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 2.0)
+        s0 = ScanEngine(d0, f, _cfg(), ENV_PE, clock=self.h).run()
+        z = s0["plan"]["segments"][4]
+        # 9 ms/Mio = 116 Mo/s : AU-DESSUS du plancher SSD (100), seule la
+        # comparaison entre zones peut la voir (ratio 4,5).
+        lente = lambda off: 9.0 if z["offset"] <= off < z["offset"] + z["longueur"] else 2.0
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lente), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 0)
+        self.assertEqual(s["synthese"]["zones_sous_plancher"], [])
+        self.assertEqual([x["index"] for x in s["synthese"]["zones_degradees"]], [4])
+        self.assertAlmostEqual(s["synthese"]["zones_degradees"][0]["ratio"], 4.5, delta=0.2)
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertTrue(any("uniformement lente" in r for r in s["verdict"]["raisons"]))
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lente), f,
+                       _cfg(), ENV_WIN, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "non_concluant")
+        self.assertTrue(any("zone(s) lente(s)" in r for r in s["verdict"]["raisons"]))
+
+    def test_surface_degradee_a_remplacer(self):
+        """3 zones sur 6 uniformement lentes : ce n'est plus << a surveiller >>."""
+        d0 = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
+        s0 = ScanEngine(d0, self.fiche, _cfg(), ENV_PE, clock=self.h).run()
+        zs = [s0["plan"]["segments"][i] for i in (1, 3, 5)]
+        lente = lambda off: (100.0 if any(z["offset"] <= off < z["offset"] + z["longueur"]
+                                          for z in zs) else _zbr(off))
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lente), self.fiche,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(len(s["synthese"]["zones_degradees"]), 3)
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+        self.assertTrue(any("surface en train de lacher" in r for r in s["verdict"]["raisons"]))
+
+    def test_zone_sous_plancher_masquee_par_la_mediane(self):
+        """WD Green du 04/09 : une zone a 95 Mo/s sur un SSD a 300 Mo/s de
+        mediane. Le plancher global ne la voit pas, le plancher par zone si."""
+        f = fiche_test(classe="ssd")
+        d0 = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 2.0)
+        s0 = ScanEngine(d0, f, _cfg(), ENV_PE, clock=self.h).run()
+        z = s0["plan"]["segments"][2]
+        lente = lambda off: 12.0 if z["offset"] <= off < z["offset"] + z["longueur"] else 2.0
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lente), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertGreater(s["synthese"]["debit_median_mo_s"], 100)
+        self.assertEqual([x["index"] for x in s["synthese"]["zones_sous_plancher"]], [2])
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertTrue(any("les masque" in r for r in s["verdict"]["raisons"]))
 
     def test_bloc_mourant_a_remplacer(self):
         d0 = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
@@ -259,7 +354,7 @@ class TestMoteurDefauts(unittest.TestCase):
         self.assertTrue(any("mourir" in r for r in s["verdict"]["raisons"]))
 
     def test_bloc_lent_hors_pe_non_concluant(self):
-        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents={5 * MIB: 100.0})
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr, lents={5 * MIB: 200.0})
         s = ScanEngine(d, self.fiche, _cfg(), ENV_WIN, clock=self.h).run()
         self.assertEqual(s["verdict"]["etat"], "non_concluant")
         self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 1)   # mesure quand meme
@@ -273,9 +368,10 @@ class TestMoteurDefauts(unittest.TestCase):
         s = ScanEngine(d, f, _cfg(), ENV_PE, clock=self.h).run()
         self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 0)
         self.assertEqual(s["verdict"]["etat"], "sain")
-        d = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 0.4, lents={3 * MIB: 60.0})
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 0.4,
+                       lents={3 * MIB: 60.0, 4 * MIB: 60.0})
         s = ScanEngine(d, f, _cfg(), ENV_PE, clock=self.h).run()
-        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 1)
+        self.assertEqual(s["synthese"]["nb_blocs_anormaux"], 2)
 
     def test_secteur_illisible_localise_et_concluant_partout(self):
         # Defaut place dans la premiere zone : un seul secteur physique de
@@ -312,11 +408,27 @@ class TestMoteurDefauts(unittest.TestCase):
         self.assertLess(len(d.lectures), 3 * (scan.MAX_SOUS_LECTURES_BLOC + 64))
 
     def test_debit_sous_plancher_classe(self):
+        """Tout le SSD a 52 Mo/s : plancher global ET toutes les zones sous le
+        plancher -> a remplacer (Lexar du 04/09), concluant meme sous Windows."""
         f = fiche_test(classe="ssd")
         d = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 20.0)   # ~52 Mo/s
         s = ScanEngine(d, f, _cfg(), ENV_PE, clock=self.h).run()
-        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
         self.assertTrue(any("plancher" in r for r in s["verdict"]["raisons"]))
+        self.assertTrue(any("surface en train de lacher" in r for r in s["verdict"]["raisons"]))
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 20.0), f,
+                       _cfg(), ENV_WIN, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+
+    def test_smart_187_pese(self):
+        """ST500DM002 du 04/09 : 108 erreurs non corrigeables rapportees et
+        rien dans le verdict. L'attribut 187 compte desormais."""
+        f = fiche_test(smart={"smart_actif": True,
+                              "attributs_ata": {"erreurs_non_corrigeables_rapportees": 108}})
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertTrue(any("187" in r and "108" in r for r in s["verdict"]["raisons"]))
 
     def test_debit_non_compare_derriere_usb(self):
         f = fiche_test(classe="ssd", avert=["disque derriere un pont USB : ..."])
@@ -354,6 +466,7 @@ class TestSessionEtReprise(unittest.TestCase):
         s = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h,
                        on_segment=_seg, annulation=annul).run()
         self.assertEqual(s["statut"], "interrompu")
+        self.assertEqual(s["arret"], scan.ARRET_UTILISATEUR)     # le motif est ecrit
         self.assertEqual(len(s["segments"]), 2)
         self.assertEqual(s["verdict"]["etat"], "non_concluant")
         self.assertTrue(any("interrompu" in r for r in s["verdict"]["raisons"]))
@@ -439,6 +552,62 @@ class TestSessionEtReprise(unittest.TestCase):
             self.assertNotIn(".0Go", chemin.stem.replace(chemin.suffix, ""))
             scan.sauver_session(s, chemin)
             self.assertTrue(chemin.exists())
+
+
+class TestTriDesAnomalies(unittest.TestCase):
+    """trier_anomalies est pur : (retenus, isoles)."""
+
+    def test_isole_sous_150_ms(self):
+        r, i = scan.trier_anomalies([{"offset": 100 * MIB, "ms": 60.0}], MIB)
+        self.assertEqual((r, len(i)), ([], 1))
+
+    def test_isole_au_dela_de_150_ms(self):
+        r, i = scan.trier_anomalies([{"offset": 100 * MIB, "ms": 150.0}], MIB)
+        self.assertEqual((len(r), i), (1, []))
+
+    def test_voisins_a_moins_de_8_blocs(self):
+        a = [{"offset": 100 * MIB, "ms": 40.0}, {"offset": 108 * MIB, "ms": 40.0},
+             {"offset": 300 * MIB, "ms": 40.0}]
+        r, i = scan.trier_anomalies(a, MIB)
+        self.assertEqual([x["offset"] for x in r], [100 * MIB, 108 * MIB])
+        self.assertEqual([x["offset"] for x in i], [300 * MIB])
+        r, i = scan.trier_anomalies([{"offset": 100 * MIB, "ms": 40.0},
+                                     {"offset": 109 * MIB, "ms": 40.0}], MIB)
+        self.assertEqual(len(i), 2)
+
+    def test_zone_dense(self):
+        a = [{"offset": k * 50 * MIB, "ms": 30.0} for k in range(4)]
+        r, i = scan.trier_anomalies(a, MIB)
+        self.assertEqual((len(r), i), (4, []))
+
+    def test_migration_schema_1(self):
+        """Une session du 03/09 (schema 1) reprise ou relue est retriee ; une
+        zone dont la liste etait tronquee (> 50) reste dense."""
+        h = Horloge()
+        s = ScanEngine(FauxDisque(h, 64 * GO, ms_par_mib=_zbr), fiche_test(),
+                       _cfg(), ENV_PE, clock=h).run()
+        v1 = json.loads(json.dumps(s))
+        v1["schema"] = 1
+        seg = v1["segments"][1]
+        for k in ("nb_blocs_isoles", "anomalies_isolees"):
+            seg.pop(k, None)
+        seg["anomalies"] = [{"offset": seg["offset"] + 3 * MIB, "ms": 70.0}]
+        seg["nb_blocs_anormaux"] = 1
+        dense = v1["segments"][2]
+        for k in ("nb_blocs_isoles", "anomalies_isolees"):
+            dense.pop(k, None)
+        dense["anomalies"] = [{"offset": dense["offset"] + k * MIB, "ms": 30.0} for k in range(50)]
+        dense["nb_blocs_anormaux"] = 300
+        m = scan.migrer_session(v1)
+        self.assertEqual(m["schema"], scan.SCHEMA_VERSION)
+        self.assertEqual(m["schema_origine"], 1)
+        self.assertEqual((m["segments"][1]["nb_blocs_anormaux"], m["segments"][1]["nb_blocs_isoles"]), (0, 1))
+        self.assertEqual((m["segments"][2]["nb_blocs_anormaux"], m["segments"][2]["nb_blocs_isoles"]), (300, 0))
+        self.assertEqual(m["synthese"]["nb_blocs_isoles"], 1)
+        self.assertEqual(m["verdict"]["etat"], "a_surveiller")   # la zone dense
+        # Idempotent, et la reprise accepte la session migree.
+        self.assertIs(scan.migrer_session(m), m)
+        scan.reprendre_session(m, fiche_test())
 
 
 class TestConfig(unittest.TestCase):

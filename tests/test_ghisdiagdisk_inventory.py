@@ -100,6 +100,38 @@ class TestAppariement(unittest.TestCase):
         idt = {"numero_serie": "0000_0000_0000_0C82", "modele": "Samsung SSD 980"}
         self.assertEqual(inventory.apparier_smart(idt, smarts)["numero_serie"], "S4EVNX0N123456")
         self.assertEqual(inventory.apparier_smart({"modele": "Inconnu"}, smarts), {})
+        self.assertEqual(inventory.apparier_smart_detail(idt, smarts)[1], "modele")
+        self.assertEqual(inventory.apparier_smart_detail({"modele": "Inconnu"}, smarts),
+                         ({}, "aucun"))
+
+    def test_absence_de_smart_expliquee_dans_la_fiche(self):
+        """NVMe Samsung du 04/09 : SMART null et aucun moyen de savoir pourquoi.
+        La fiche dit desormais ce que smartctl a vu."""
+        geo = {"index": 1, "taille_octets": 256 * 10 ** 9, "taille_go": 256.1,
+               "secteur_logique": 512, "secteur_physique": 512}
+        idt = {"modele": "SAMSUNG MZVLQ256HBJD-00B00", "numero_serie": "0025_38D7_1145_F173.",
+               "bus": "NVMe", "amovible": False}
+        vues = {"disponible": True, "entrees": [
+            {"modele": "CT240BX500SSD1", "numero_serie": "2240E6743207", "exploitable": True},
+            {"modele": None, "numero_serie": None, "exploitable": False,
+             "messages": ["IOCTL_STORAGE_QUERY_PROPERTY (NVMe) failed, Error=1"]}]}
+        f = inventory.construire_fiche(geo, idt, {}, {"porteur_exe": [], "boot_pe": []},
+                                       smart_appariement="aucun", smart_info=vues)
+        self.assertFalse(f["smart_disponible"])
+        self.assertEqual(f["smart_appariement"], "aucun")
+        self.assertIn("aucune des 2 entree(s)", f["smart_absence"])
+        self.assertIn("0025_38D7_1145_F173", f["smart_absence"])
+        self.assertIn("CT240BX500SSD1", f["smart_absence"])
+        self.assertIn("IOCTL_STORAGE_QUERY_PROPERTY", f["smart_absence"])
+        self.assertEqual(inventory.expliquer_smart_absent(idt, {"disponible": False}),
+                         "smartctl absent (tools\\smartctl.exe introuvable)")
+        self.assertIn("aucun peripherique",
+                      inventory.expliquer_smart_absent(idt, {"disponible": True, "entrees": []}))
+        sm = {"numero_serie": "S4EV", "modele": "X", "exploitable": True}
+        f = inventory.construire_fiche(geo, idt, sm, {"porteur_exe": [], "boot_pe": []},
+                                       smart_appariement="modele", smart_info=vues)
+        self.assertEqual(f["smart_appariement"], "modele")
+        self.assertIsNone(f["smart_absence"])
 
 
 class TestExclusions(unittest.TestCase):

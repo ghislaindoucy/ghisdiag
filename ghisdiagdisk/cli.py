@@ -16,7 +16,6 @@ l'arret proprement, la session est ecrite jusqu'a la derniere zone finie.
 """
 
 import argparse
-import sys
 import threading
 import time
 from pathlib import Path
@@ -82,6 +81,8 @@ def afficher_fiche(d: dict):
             _ligne("  SMART muet : controleur RAID/RST - le test de surface est la seule source.")
     else:
         _ligne("  SMART : indisponible pour ce disque")
+        if d.get("smart_absence"):
+            _ligne(f"    ({d['smart_absence']})")
     if d.get("usure"):
         _ligne(f"  usure projetee : ~{d['usure']['annees_restantes_estimees']} an(s) restant(s) "
                f"({d['usure']['hypothese']})")
@@ -93,7 +94,8 @@ def _smart_degrade(d: dict) -> bool:
     return (s.get("smart_actif") is False
             or any(isinstance(attrs.get(k), (int, float)) and attrs.get(k) > 0
                    for k in ("secteurs_en_attente", "secteurs_realloues",
-                             "secteurs_non_corrigeables_hors_ligne")))
+                             "secteurs_non_corrigeables_hors_ligne",
+                             "erreurs_non_corrigeables_rapportees")))
 
 
 def _demander(question: str) -> str:
@@ -125,6 +127,8 @@ def executer_balayage(fiche: dict, cfg: scan.ScanConfig, ctx: dict,
             alerte = f"  ILLISIBLE : {res['nb_secteurs_illisibles']} secteur(s)"
         elif res["nb_blocs_anormaux"]:
             alerte = f"  {res['nb_blocs_anormaux']} bloc(s) lent(s), max {res['bloc_max_ms']} ms"
+        elif res.get("nb_blocs_isoles"):
+            alerte = f"  ({res['nb_blocs_isoles']} bloc(s) lent(s) isole(s), max {res['bloc_max_ms']} ms)"
         print(f"\r  zone {res['index'] + 1:>3} @ {res['offset_go']:>8.1f} Go : "
               f"{str(res['debit_mo_s']):>7} Mo/s  med {res['bloc_median_ms']} ms  "
               f"max {res['bloc_max_ms']} ms{alerte}", flush=True)

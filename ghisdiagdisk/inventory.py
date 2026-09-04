@@ -131,18 +131,46 @@ def classe_support(type_sup: str, bus: Optional[str]) -> str:
 
 # --- Appariement smartctl / IOCTL --------------------------------------------
 
-def apparier_smart(idt: dict, smarts: list) -> dict:
-    """Par numero de serie d'abord, par modele ensuite - jamais par position
-    (smartctl voit aussi les lecteurs optiques et duplique derriere RST)."""
+def apparier_smart_detail(idt: dict, smarts: list) -> tuple:
+    """-> (entree smartctl ou {}, "serie" | "modele" | "aucun").
+
+    Par numero de serie d'abord, par modele ensuite - jamais par position
+    (smartctl voit aussi les lecteurs optiques et duplique derriere RST).
+    """
     serie  = _norm((idt or {}).get("numero_serie"))
     modele = _norm((idt or {}).get("modele"))
     for s in smarts:
         if serie and _norm(s.get("numero_serie")) == serie:
-            return s
+            return s, "serie"
     for s in smarts:
         if modele and _norm(s.get("modele")) == modele:
-            return s
-    return {}
+            return s, "modele"
+    return {}, "aucun"
+
+
+def apparier_smart(idt: dict, smarts: list) -> dict:
+    return apparier_smart_detail(idt, smarts)[0]
+
+
+def expliquer_smart_absent(idt: dict, smart_info: Optional[dict]) -> str:
+    """Pourquoi ce disque n'a pas de SMART - ecrit dans la fiche pour que le
+    rapport se suffise (04/09 : un NVMe Samsung sans SMART, impossible de
+    savoir apres coup si smartctl ne l'avait pas vu ou si l'appariement
+    avait echoue : la serie IOCTL est un EUI-64, pas le S/N smartctl)."""
+    info = smart_info or {}
+    if not info.get("disponible"):
+        return "smartctl absent (tools\\smartctl.exe introuvable)"
+    entrees = info.get("entrees") or []
+    if not entrees:
+        return "smartctl n'a liste aucun peripherique"
+    vues = []
+    for e in entrees:
+        vues.append(f"{e.get('modele') or '?'} / {e.get('numero_serie') or '?'}"
+                    + (" (inexploitable)" if not e.get("exploitable") else "")
+                    + (f" [{'; '.join(e['messages'][:2])}]" if e.get("messages") else ""))
+    return (f"aucune des {len(entrees)} entree(s) smartctl ne correspond a la serie IOCTL "
+            f"{(idt or {}).get('numero_serie')!r} ni au modele {(idt or {}).get('modele')!r} ; "
+            f"vues : {' | '.join(vues)}")
 
 
 # --- Exclusions --------------------------------------------------------------
@@ -187,7 +215,9 @@ def regles_exclusion(fiche: dict, exclus: dict) -> tuple:
 # --- Fiche -------------------------------------------------------------------
 
 def construire_fiche(geo: dict, idt: dict, smart_entree: dict, exclus: dict,
-                     partitions: Optional[dict] = None) -> dict:
+                     partitions: Optional[dict] = None,
+                     smart_appariement: Optional[str] = None,
+                     smart_info: Optional[dict] = None) -> dict:
     """Fiche consolidee d'un disque a partir des trois sources (pure)."""
     from . import smart as _smart
     fiche = {"index": geo.get("index"), "peripherique": geo.get("peripherique"),
@@ -200,6 +230,9 @@ def construire_fiche(geo: dict, idt: dict, smart_entree: dict, exclus: dict,
     fiche["classe"] = classe_support(fiche["type_support"], fiche["bus"])
     fiche["smart"] = smart_entree or None
     fiche["smart_disponible"] = bool(smart_entree)
+    fiche["smart_appariement"] = (smart_appariement if smart_entree else "aucun")
+    fiche["smart_absence"] = (None if smart_entree
+                              else expliquer_smart_absent(idt, smart_info))
     fiche["usure"] = _smart.projection_usure(smart_entree) if smart_entree else None
     fiche["partitions"] = partitions
     testable, raisons, avert = regles_exclusion(fiche, exclus or {})
@@ -237,10 +270,15 @@ def inventaire_machine(avec_smart: bool = True, avec_partitions: bool = True) ->
                 parts = rawdisk.partitions(i, geo["secteur_logique"])
             except Exception as exc:
                 parts = {"schema": "illisible", "erreur": str(exc), "partitions": []}
-        fiches.append(construire_fiche(geo, idt, apparier_smart(idt, smarts), exclus, parts))
+        entree, comment = apparier_smart_detail(idt, smarts)
+        fiches.append(construire_fiche(geo, idt, entree, exclus, parts,
+                                       smart_appariement=comment, smart_info=smart_info))
     return {"contexte": ctx, "exclusions": exclus, "smartctl": {
                 "disponible": smart_info.get("disponible"),
-                "nb_entrees": len(smart_info.get("entrees") or [])},
+                "nb_entrees": len(smart_info.get("entrees") or []),
+                "entrees": [{k: e.get(k) for k in ("peripherique", "type_smartctl", "modele",
+                                                   "numero_serie", "exploitable", "messages")}
+                            for e in (smart_info.get("entrees") or [])]},
             "disques": fiches,
             "avertissement_elevation": (not ctx["admin"] and not fiches and
                                         ctx["environnement"] == "windows")}

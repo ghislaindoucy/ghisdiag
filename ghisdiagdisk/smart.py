@@ -18,7 +18,6 @@ Aucune exception ne remonte : indisponibilite => champs None / liste vide.
 
 import json
 import subprocess
-from pathlib import Path
 from typing import Optional
 
 from . import rawdisk

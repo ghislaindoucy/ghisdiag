@@ -10,7 +10,17 @@ Ce que mesure un balayage, et pourquoi (ROADMAP, campagnes du 02 et 03/09) :
     est 1,7x ; sous Windows il monte a 4,4x a cause de l'I/O de fond de l'OS).
     Sous Windows le moteur mesure quand meme, mais REFUSE DE CONCLURE sur les
     latences - les medianes, elles, sont identiques dans les deux
-    environnements, donc le debit reste exploitable ;
+    environnements, donc le debit reste exploitable.
+    Validation atelier du 04/09 : un disque mecanique sain emet un bloc lent
+    ISOLE (26-130 ms) a periode fixe (Seagate : toutes les 58,5 s), c'est
+    le firmware qui fait son menage, pas la surface. Un bloc lent ne compte
+    donc que s'il est en GRAPPE (un voisin lent a moins de 8 blocs, ou 4+
+    dans la zone) ou au-dela de 150 ms ; les isoles restent dans la session
+    a titre d'information ;
+  - la MEDIANE PAR ZONE comparee a celle des autres zones : une zone
+    uniformement lente (Lexar NQ100 : 5 zones sur 12 a 8-14x la mediane du
+    disque, sans aucun bloc << anormal >> puisque le seuil s'adapte a la
+    zone) est un defaut de surface a part entiere ;
   - les SECTEURS ILLISIBLES (ReadFile en echec : CRC, erreur E/S), localises
     par bissection jusqu'au secteur physique, et concluants dans TOUS les
     environnements ;
@@ -44,7 +54,7 @@ import random
 import statistics
 import threading
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -52,8 +62,8 @@ from typing import Callable, Optional
 from . import __version__, OUTIL
 from . import inventory, niveaux
 
-SCHEMA_VERSION = 1
-
+SCHEMA_VERSION = 2          # 2 (04/09) : blocs lents isoles separes des grappes,
+                            # zones degradees / sous plancher dans la synthese
 MODES = ("express", "standard", "complet")
 
 MIB = 1024 * 1024
@@ -78,6 +88,26 @@ PLANCHER_ANOMALIE_MS   = 25.0    # sur SSD la mediane est < 1 ms : 3x mediane
                                  # serait du bruit d'ordonnanceur. A VALIDER.
 SEUIL_BLOC_MOURANT_MS  = 500.0   # bloc en re-essais internes du disque
 MAX_BLOCS_ILLISIBLES   = 64      # au-dela on arrete : preserver les donnees
+
+# Tri des blocs lents (validation atelier du 04/09, 8 disques) : un bloc lent
+# ISOLE est le tic periodique du firmware (Seagate ST1000DM003 : 120 blocs de
+# 26 a 131 ms, un toutes les 58,5 s, SMART vierge a 43 000 h), il ne compte
+# pas. Il compte s'il a un voisin lent a moins de VOISINAGE blocs, si la zone
+# en contient MIN_ANOMALIES_ZONE_DENSE ou plus, ou s'il depasse SEUIL_ISOLEE
+# (les vraies grappes vues : 3 blocs contigus a 60-380 ms en fin de disque,
+# 7 blocs a 47-131 ms dans 1 Gio).
+VOISINAGE_GRAPPE_BLOCS   = 8
+MIN_ANOMALIES_ZONE_DENSE = 4
+SEUIL_ANOMALIE_ISOLEE_MS = 150.0
+
+# Zone degradee : mediane de la zone > RATIO x la reference du disque (quart
+# le plus rapide des medianes de zone). Calibre le 04/09 : sain <= 2,8x (NVMe
+# zones pleines/vides, ZBR d'un HDD <= 2,3x) ; degrade >= 4,1x (WD Green, 34
+# realloues), >= 8,3x (Lexar mourant). Au-dela d'une part PART_ZONES_A_REMPLACER
+# de zones degradees ou sous le plancher de la classe, le disque est a remplacer.
+RATIO_ZONE_DEGRADEE      = 4.0
+PART_ZONES_A_REMPLACER   = 0.25
+MIN_BLOCS_ZONE_STATS     = 16    # en dessous, la zone (interrompue) n'est pas jugee
 MAX_SOUS_LECTURES_BLOC = 64      # echecs de bissection par bloc avant de
                                  # declarer le reste presume illisible
 LECTURES_ALEATOIRES    = 200
@@ -87,6 +117,8 @@ LECTURES_ALEATOIRES    = 200
 # malade, on ne crie pas au loup). Un SATA SSD a 40 Mo/s est mourant ou sur un
 # lien degrade.
 DEBIT_MIN_CLASSE_MO_S = {"nvme": 300.0, "ssd": 100.0, "hdd": 25.0}
+
+ARRET_UTILISATEUR = "arret demande par l'utilisateur (Ctrl+C) - session reprenable"
 
 ETATS = ("sain", "a_surveiller", "a_remplacer", "non_concluant")
 _RANG = {"sain": 0, "non_concluant": 1, "a_surveiller": 2, "a_remplacer": 3}
@@ -203,6 +235,32 @@ def _stats_temps(temps: list) -> dict:
             "bloc_moyen_ms":  round(sum(temps) / len(temps), 3)}
 
 
+def trier_anomalies(anomalies: list, bloc_octets: int,
+                    voisinage: int = VOISINAGE_GRAPPE_BLOCS,
+                    dense: int = MIN_ANOMALIES_ZONE_DENSE,
+                    seuil_isolee_ms: float = SEUIL_ANOMALIE_ISOLEE_MS) -> tuple:
+    """Separe les blocs lents d'une zone en (retenus, isoles) - pure.
+
+    `anomalies` : [{"offset", "ms"}] d'UNE zone. Un bloc est retenu s'il a
+    un autre bloc lent a moins de `voisinage` blocs, si la zone en compte
+    `dense` ou plus, ou si sa latence atteint `seuil_isolee_ms`. Le reste est
+    le tic periodique d'un firmware sain : compte a part, ne pese pas.
+    """
+    if len(anomalies) >= dense:
+        return list(anomalies), []
+    offsets = sorted(a["offset"] for a in anomalies)
+    portee = voisinage * max(1, int(bloc_octets))
+    retenus, isoles = [], []
+    for a in anomalies:
+        o = a["offset"]
+        voisin = any(0 < abs(o - x) <= portee for x in offsets)
+        if voisin or float(a.get("ms") or 0.0) >= seuil_isolee_ms:
+            retenus.append(a)
+        else:
+            isoles.append(a)
+    return retenus, isoles
+
+
 def _debit(octets: int, duree_ms: float) -> Optional[float]:
     return round(octets / 1e6 / (duree_ms / 1000.0), 1) if duree_ms > 0 else None
 
@@ -308,9 +366,40 @@ def sauver_session(session: dict, chemin: Path) -> Path:
     return chemin
 
 
+def migrer_session(session: dict) -> dict:
+    """Schema 1 (03/09) -> 2 : les blocs lents isoles sont retries a partir
+    des anomalies conservees dans chaque zone. Quand la liste etait tronquee
+    (plus de 50 anomalies), la zone est dense : tout reste retenu. Une session
+    deja au schema courant est rendue telle quelle."""
+    if not isinstance(session, dict) or session.get("schema") == SCHEMA_VERSION:
+        return session
+    if session.get("schema") != 1:
+        return session
+    bloc = int((session.get("config") or {}).get("bloc_octets") or BLOC_OCTETS)
+    for seg in session.get("segments") or []:
+        if "nb_blocs_isoles" in seg:
+            continue
+        anomalies = seg.get("anomalies") or []
+        if (seg.get("nb_blocs_anormaux") or 0) > len(anomalies):
+            seg["nb_blocs_isoles"], seg["anomalies_isolees"] = 0, []
+            continue
+        retenus, isoles = trier_anomalies(anomalies, bloc)
+        seg["anomalies"] = retenus[:50]
+        seg["nb_blocs_anormaux"] = len(retenus)
+        seg["nb_blocs_isoles"] = len(isoles)
+        seg["anomalies_isolees"] = isoles[:20]
+    session["schema_origine"] = 1
+    session["schema"] = SCHEMA_VERSION
+    if session.get("synthese") is not None:
+        session["synthese"] = synthese(session)
+    if session.get("verdict") is not None:
+        session["verdict"] = calculer_verdict(session)
+    return session
+
+
 def charger_session(chemin) -> Optional[dict]:
     try:
-        return json.loads(Path(chemin).read_text(encoding="utf-8"))
+        return migrer_session(json.loads(Path(chemin).read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return None
 
@@ -368,6 +457,7 @@ class ScanEngine:
         for seg in restants:
             if self._annulation.is_set():
                 s["statut"] = "interrompu"
+                s["arret"] = ARRET_UTILISATEUR
                 break
             # Echauffement : a chaque zone en mode echantillonne (on arrive de
             # loin), seulement a la premiere en mode complet (tetes deja la).
@@ -386,6 +476,7 @@ class ScanEngine:
                               "Imager d'abord, tester ensuite.")
             elif res.get("interrompu"):
                 s["statut"] = "interrompu"
+                s["arret"] = ARRET_UTILISATEUR
             self._progression(f"zone {seg.index + 1}/{len(plan)}")
             if self._checkpoint:
                 self._checkpoint(s)
@@ -398,6 +489,7 @@ class ScanEngine:
             s["lecture_aleatoire"] = self._lecture_aleatoire()
             if self._annulation.is_set():
                 s["statut"] = "interrompu"
+                s["arret"] = ARRET_UTILISATEUR
 
         s["termine_a"] = datetime.now().isoformat(timespec="seconds")
         duree_precedente = s.get("duree_s") or 0.0
@@ -484,7 +576,7 @@ class ScanEngine:
         temps = [ms for _, ms in blocs]
         st = _stats_temps(temps)
         seuil = None
-        anomalies, mourants = [], 0
+        anomalies, isolees, mourants = [], [], 0
         if st["bloc_median_ms"] is not None:
             seuil = max(cfg.facteur_anomalie * st["bloc_median_ms"], cfg.plancher_anomalie_ms)
             for off, ms in blocs:
@@ -492,6 +584,7 @@ class ScanEngine:
                     anomalies.append({"offset": off, "ms": round(ms, 2)})
                 if ms > cfg.seuil_mourant_ms:
                     mourants += 1
+            anomalies, isolees = trier_anomalies(anomalies, cfg.bloc_octets)
         duree = sum(temps)
         plages = _fusionner_plages(plages, self.secteur)
         return {
@@ -507,8 +600,10 @@ class ScanEngine:
             **st,
             "seuil_anomalie_ms":    round(seuil, 2) if seuil is not None else None,
             "nb_blocs_anormaux":    len(anomalies),
+            "nb_blocs_isoles":      len(isolees),
             "nb_blocs_mourants":    mourants,
             "anomalies":            anomalies[:50],
+            "anomalies_isolees":    isolees[:20],
             "nb_blocs_illisibles":  nb_illisibles,
             "nb_secteurs_illisibles": sum(p["secteurs"] for p in plages),
             "plages_illisibles":    plages[:100],
@@ -619,6 +714,31 @@ def synthese(session: dict) -> dict:
     if len(debits) >= 3:
         # Meme regle que la calibration (3 zones : debut / milieu / fin).
         profil = inventory.profil_zbr([debits[0], debits[len(debits) // 2], debits[-1]])
+
+    # Zones jugees les unes par rapport aux autres : une zone uniformement
+    # lente n'a AUCUN bloc anormal (le seuil s'adapte a sa propre mediane).
+    # Reference = quart le plus rapide des zones (p25 des medianes) : la
+    # mediane serait entrainee des que la moitie du disque est atteinte.
+    disque = session.get("disque") or {}
+    juges = [s for s in segs if s.get("bloc_median_ms") is not None
+             and (s.get("nb_blocs") or 0) >= MIN_BLOCS_ZONE_STATS]
+    reference = _percentile([s["bloc_median_ms"] for s in juges], 0.25) if juges else None
+    reference = round(reference, 3) if reference else None
+    degradees = []
+    if reference:
+        for s in juges:
+            ratio = s["bloc_median_ms"] / reference
+            if ratio >= RATIO_ZONE_DEGRADEE:
+                degradees.append({"index": s["index"], "offset_go": s["offset_go"],
+                                  "bloc_median_ms": s["bloc_median_ms"],
+                                  "ratio": round(ratio, 1)})
+    plancher = DEBIT_MIN_CLASSE_MO_S.get(disque.get("classe"))
+    usb = any("USB" in a for a in (disque.get("avertissements") or []))
+    sous_plancher = []
+    if plancher and not usb:
+        sous_plancher = [{"index": s["index"], "offset_go": s["offset_go"],
+                          "debit_mo_s": s["debit_mo_s"]}
+                         for s in juges if s.get("debit_mo_s") and s["debit_mo_s"] < plancher]
     return {
         "nb_segments_mesures":    len(segs),
         "nb_segments_prevus":     (session.get("plan") or {}).get("nb_segments"),
@@ -633,7 +753,12 @@ def synthese(session: dict) -> dict:
         "profil_zbr":             profil,
         "bloc_max_ms":            max(maxs) if maxs else None,
         "nb_blocs_anormaux":      sum(s.get("nb_blocs_anormaux", 0) for s in segs),
+        "nb_blocs_isoles":        sum(s.get("nb_blocs_isoles", 0) for s in segs),
         "nb_blocs_mourants":      sum(s.get("nb_blocs_mourants", 0) for s in segs),
+        "reference_zones_ms":     reference,
+        "nb_zones_jugees":        len(juges),
+        "zones_degradees":        degradees,
+        "zones_sous_plancher":    sous_plancher,
         "nb_blocs_illisibles":    sum(s.get("nb_blocs_illisibles", 0) for s in segs),
         "nb_secteurs_illisibles": sum(s.get("nb_secteurs_illisibles", 0) for s in segs),
         "nb_plages_illisibles":   sum(s.get("nb_plages_illisibles", 0) for s in segs),
@@ -651,9 +776,13 @@ def _smart_prealable(disque: dict) -> list:
     if smart.get("smart_actif") is False:
         raisons.append(("a_remplacer", "SMART : etat de sante declare en echec par le disque"))
     attrs = smart.get("attributs_ata") or {}
+    # 187 (erreurs non corrigeables rapportees) manquait a la liste : le
+    # ST500DM002 du 04/09 en avait 108 et n'etait juge que sur 3 blocs lents.
     for cle, libelle in (("secteurs_en_attente", "secteur(s) en attente de reallocation"),
                          ("secteurs_realloues", "secteur(s) realloue(s)"),
-                         ("secteurs_non_corrigeables_hors_ligne", "secteur(s) non corrigeable(s)")):
+                         ("secteurs_non_corrigeables_hors_ligne", "secteur(s) non corrigeable(s)"),
+                         ("erreurs_non_corrigeables_rapportees",
+                          "erreur(s) non corrigeable(s) rapportee(s) (attribut 187)")):
         v = attrs.get(cle)
         if isinstance(v, (int, float)) and v > 0:
             raisons.append(("a_surveiller", f"SMART : {int(v)} {libelle}"))
@@ -687,21 +816,34 @@ def calculer_verdict(session: dict) -> dict:
 
     n_mour = synth.get("nb_blocs_mourants") or 0
     n_anor = synth.get("nb_blocs_anormaux") or 0
+    n_isol = synth.get("nb_blocs_isoles") or 0
     seuil = session.get("config", {}).get("seuil_mourant_ms")
+    zones_degr = synth.get("zones_degradees") or []
+    zones_sous = synth.get("zones_sous_plancher") or []
     if concl_latence:
         if n_mour:
             avis.append(("a_remplacer", f"{n_mour} bloc(s) au-dela de {seuil:.0f} ms : "
                                         "secteur(s) en re-essais internes, en train de mourir"))
         elif n_anor:
-            avis.append(("a_surveiller", f"{n_anor} bloc(s) anormalement lent(s) "
+            avis.append(("a_surveiller", f"{n_anor} bloc(s) anormalement lent(s) en grappe "
                                          f"(> {session['config']['facteur_anomalie']:.0f}x la "
                                          "mediane de leur zone), max "
                                          f"{synth.get('bloc_max_ms')} ms"))
-    elif n_mour or n_anor:
+        if zones_degr:
+            pire = max(zones_degr, key=lambda z: z["ratio"])
+            avis.append(("a_surveiller",
+                         f"{len(zones_degr)} zone(s) uniformement lente(s) (mediane > "
+                         f"{RATIO_ZONE_DEGRADEE:.0f}x le quart le plus rapide du disque), pire : "
+                         f"{pire['ratio']}x a {pire['offset_go']} Go ({pire['bloc_median_ms']} ms/bloc)"))
+    elif n_mour or n_anor or zones_degr:
         avis.append(("non_concluant",
-                     f"{n_anor} bloc(s) lent(s) observe(s) (max {synth.get('bloc_max_ms')} ms) "
+                     f"{n_anor} bloc(s) lent(s) et {len(zones_degr)} zone(s) lente(s) "
+                     f"observe(s) (max {synth.get('bloc_max_ms')} ms) "
                      "mais mesure hors WinPE : l'I/O de fond de l'OS pollue les maximums, "
                      "aucune conclusion sur les latences. Rejouer le balayage en WinPE."))
+    if n_isol:
+        notes.append(f"{n_isol} bloc(s) lent(s) isole(s) non retenu(s) (tic periodique "
+                     "d'un firmware sain, pas un defaut de surface)")
 
     classe = disque.get("classe")
     usb = any("USB" in a for a in (disque.get("avertissements") or []))
@@ -712,8 +854,28 @@ def calculer_verdict(session: dict) -> dict:
             avis.append(("a_surveiller", f"debit median {debit} Mo/s sous le plancher de la "
                                          f"classe {classe} ({plancher:.0f} Mo/s) : disque "
                                          "mourant ou lien degrade"))
+        elif zones_sous:
+            pire = min(zones_sous, key=lambda z: z["debit_mo_s"])
+            avis.append(("a_surveiller",
+                         f"{len(zones_sous)} zone(s) sous le plancher de la classe {classe} "
+                         f"({plancher:.0f} Mo/s), pire : {pire['debit_mo_s']} Mo/s a "
+                         f"{pire['offset_go']} Go - le debit median ({debit} Mo/s) les masque"))
     elif usb and debit is not None:
         notes.append("debit non compare a la classe (pont USB)")
+
+    # Une part importante de la surface degradee ou sous le plancher : ce
+    # n'est plus << a surveiller >>, c'est un disque qui part (Lexar NQ100 du
+    # 04/09 : 5 zones sur 12, verdict express aligne sur le verdict complet).
+    n_juges = synth.get("nb_zones_jugees") or 0
+    touchees = {z["index"] for z in zones_sous}          # le debit conclut partout
+    if concl_latence:                                    # les latences, en PE seulement
+        touchees |= {z["index"] for z in zones_degr}
+    if n_juges and len(touchees) >= 2 \
+            and len(touchees) / n_juges >= PART_ZONES_A_REMPLACER:
+        avis.append(("a_remplacer",
+                     f"{len(touchees)} zone(s) sur {n_juges} degradee(s) ou sous le plancher "
+                     f"({round(len(touchees) / n_juges * 100)} % de la surface mesuree) : "
+                     "surface en train de lacher"))
 
     avis.extend(_smart_prealable(disque))
 
