@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, **phase 1 ÉCRITE le 03/09** (moteur T1 + CLI console + 49 tests sans matériel, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). **Pas encore validée en atelier** : aucune exécution élevée ni en WinPE. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09 et **VALIDÉE EN ATELIER le 04/09** (8 disques, 15 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Cinq défauts de verdict trouvés et corrigés le 04/09, les 15 rapports rejoués en tests — voir « Validation atelier du 04/09 » ci-dessous. Reste : `--reprendre` en réel, les 3 disques de référence du 03/09, un second passage sur le BX500 `2305E6A6D126`. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -766,8 +766,12 @@ l'extraction réutilisable, avec les mêmes offsets et les mêmes pièges docume
   avant, pour la zone de fin) : la lecture anticipée du disque ne pré-charge donc pas la
   zone mesurée. Un seul échauffement en mode complet (têtes déjà en place).
 - **Anomalie = bloc > max(3 × médiane de sa zone, 25 ms)**. Le plancher de 25 ms vise les
-  SSD (médiane < 1 ms : 3× serait du bruit d'ordonnanceur) — **non calibré**, à vérifier
-  sur NVMe en PE. Bloc > 500 ms = « mourant » → à remplacer.
+  SSD (médiane < 1 ms : 3× serait du bruit d'ordonnanceur) — confirmé sur NVMe en PE le
+  04/09. Bloc > 500 ms = « mourant » → à remplacer. **Depuis le 04/09** : un bloc lent
+  isolé (pas de voisin lent à moins de 8 blocs, moins de 4 dans la zone, sous 150 ms)
+  est le tic périodique d'un firmware sain, compté à part et sans poids ; et une zone
+  dont la médiane dépasse 4× le quart le plus rapide du disque est « dégradée » même
+  sans aucun bloc anormal.
 - **Hors WinPE, refus de conclure sur les latences** (verdict *non concluant*, chiffres
   quand même dans la session). **Les secteurs illisibles et le débit concluent partout** :
   une erreur CRC est une erreur CRC, et les médianes sont identiques Windows/PE.
@@ -775,10 +779,11 @@ l'extraction réutilisable, avec les mêmes offsets et les mêmes pièges docume
   64 échecs par bloc (on ne martèle pas un disque mort), plages fusionnées et exprimées
   en LBA. **Arrêt de sécurité à 64 blocs illisibles** : « imager d'abord ».
 - **Verdict** tri-état + non concluant, toujours avec ses raisons. À remplacer : secteur
-  illisible, bloc mourant, SMART en échec, arrêt de sécurité. À surveiller : blocs lents,
-  débit médian sous le plancher de la classe (NVMe 300, SSD 100, HDD 25 Mo/s —
-  volontairement bas), SMART 5/197/198 > 0, erreurs média NVMe. La **portée** est
-  toujours dite : « sain » en express signifie sain sur ~0,1 % de la surface.
+  illisible, bloc mourant, SMART en échec, arrêt de sécurité, **≥ 25 % des zones
+  dégradées ou sous le plancher** (04/09). À surveiller : blocs lents en grappe, zone
+  dégradée, débit médian **ou une zone** sous le plancher de la classe (NVMe 300, SSD 100,
+  HDD 25 Mo/s — volontairement bas), SMART 5/187/197/198 > 0, erreurs média NVMe. La
+  **portée** est toujours dite : « sain » en express signifie sain sur ~0,1 % de la surface.
 - **Exclusions** : porteur de l'exe et boot PE (jamais), virtuel, composite `Optane+…`,
   clé USB amovible. Le NVMe derrière RST (bus RAID) **reste testable** — c'est la
   population visée — avec avertissement ; un disque en dock USB aussi, sans comparaison
@@ -791,19 +796,64 @@ l'extraction réutilisable, avec les mêmes offsets et les mêmes pièges docume
 - **Pas d'UI graphique dans cette livraison** : la console tient en 800×600 et l'UI
   tkinter n'a de sens qu'une fois le moteur validé. Elle rappellera les mêmes fonctions.
 
-**Prochaine étape — validation atelier, dans cet ordre :**
+**Plan de validation atelier (03/09), et ce qu'il en est au 04/09 :**
 
-1. `test_ghisdiagdisk_atelier.bat --lister` **élevé** sous Windows : inventaire, clés,
-   exclusions (le porteur doit être exclu, le disque système testable).
-2. `py -m PyInstaller --clean --noconfirm GhisdiagDisk.spec`, copier `dist\GhisdiagDisk\`
-   sur la clé CLAUDE, booter Hiren's PE : `--lister`, puis `--disque N --mode express`
-   sur les trois disques déjà mesurés (WD5000AAKX, HGST HTS541010A9E680, Toshiba
-   DT01ACA100). Attendu : médianes retombant sur celles du 03/09, **zéro anomalie**.
-3. Un NVMe en PE : le plancher de 25 ms ne doit ni inventer ni masquer d'anomalie.
-4. Un disque **connu défaillant** (la clé Ventoy suspecte, en dock, ou un HDD réformé) :
-   le verdict doit basculer et le JSON localiser les plages.
-5. Un Ctrl+C en pleine zone puis `--reprendre <session>` : les zones faites ne sont
-   pas relues, le verdict final est complet.
+1. ✅ `--lister` élevé sous Windows puis en PE : inventaire, clés, exclusions corrects.
+2. ⏳ Les trois disques déjà mesurés (WD5000AAKX, HGST HTS541010A9E680, Toshiba
+   DT01ACA100) n'ont pas été repassés : pas de recoupement des médianes avec le 03/09.
+3. ✅ NVMe en PE (Samsung PM991 256 Go, 3 modes, 100 % de la surface) : zéro fausse
+   anomalie, plancher de 25 ms confirmé.
+4. ✅ Disque connu défaillant (Lexar NQ100 240 Go) : verdict basculé, plages localisées.
+5. ⏳ Ctrl+C en pleine zone ✅ (deux sessions partielles propres) ; `--reprendre` **non
+   exercé** (aucun rapport avec `reprises` > 0).
+
+### ✅ Validation atelier du 04/09/2026 — 8 disques, 15 rapports, 5 défauts corrigés
+
+Hiren's BootCD PE sur la clé CLAUDE, `GhisdiagDisk.exe` 0.1.0. Rapports dans
+`H:\GhisdiagDisk\rapports_disque\`, **rejoués en tests** (`tests/fixtures/ghisdiagdisk_atelier_20260904/`,
+`tests/test_ghisdiagdisk_atelier_0409.py`) : chaque verdict attendu a été arrêté à la
+main sur les mesures, pas recopié du code.
+
+| Disque | Modes | Ce que les mesures disent | Verdict après correction |
+|---|---|---|---|
+| Samsung PM991 NVMe 256 Go | express, standard, complet | 2,8 Go/s, 0 anomalie à 100 %, zones pleines 2,5× plus lentes que les vides | sain ×3 |
+| Crucial BX500 `2240E6743207` | complet | 519 Mo/s, max 11 ms sur 240 Go | sain |
+| Crucial BX500 `2305E6A6D126` | complet | 33 blocs de 25-54 ms groupés entre 6,4 et 8,6 Go, 6 zones avec un max à 23,8 ms juste sous le plancher | à surveiller (**à repasser** pour tester la reproductibilité) |
+| WD Green 240 `22194U800957` | complet | 34 réalloués à 81 h, premiers 80 Go à 95-170 Mo/s (4-5× plus lents) | à surveiller |
+| Lexar NQ100 (défaillant) | complet interrompu, express | 7 blocs > 500 ms, 12 Mo/s ; en express 5 zones/12 à 8-14× la médiane | à remplacer ×2 |
+| WD10JPCX 5400 | express, complet interrompu | signature ZBR 0,48, un seul bloc à 33 ms | sain, puis non concluant (partiel) |
+| ST1000DM003 (43 659 h, SMART vierge) | express, standard, complet | 120 blocs isolés de 26-131 ms **toutes les 58,5 s**, plus deux vraies grappes (82,7 Go : 7 blocs à 131 ms ; fin de disque : 377 ms) | sain, à surveiller, à surveiller |
+| ST500DM002 `ZA435B94` | standard | 108 erreurs non corrigeables (SMART 187), 3 tics isolés | à surveiller (via 187) |
+
+**Les cinq défauts du moteur du 03/09, et leur correction (schéma de session 2) :**
+
+1. **SMART 187 parsé mais ignoré** par le verdict → ajouté à `_smart_prealable` et à
+   l'avertissement « SMART déjà dégradé » de la console.
+2. **Une zone uniformément lente était invisible** : le plancher de débit ne regardait que
+   la médiane globale, et le seuil d'anomalie suit la médiane de la zone elle-même. La
+   synthèse porte désormais `zones_degradees` (médiane de zone > **4×** le quart le plus
+   rapide du disque ; sain ≤ 2,8× observé, dégradé ≥ 4,1×) et `zones_sous_plancher`
+   (plancher de classe appliqué **par zone**). Au-delà de **25 % des zones** touchées, le
+   disque est à remplacer : l'express du Lexar concorde maintenant avec son complet.
+3. **Le tic périodique d'un firmware sain comptait comme anomalie** (express sain,
+   standard 20, complet 135 sur le même Seagate). Un bloc lent n'est retenu que s'il
+   est en **grappe** (voisin lent à moins de 8 blocs, ou 4+ dans la zone) ou s'il dépasse
+   **150 ms** ; les isolés restent dans la session (`nb_blocs_isoles`, `anomalies_isolees`)
+   et dans une note du verdict. Les vraies grappes du Seagate ressortent toujours.
+4. **Plancher de 25 ms posé juste au-dessus d'un mode ~23,8 ms du BX500** : pas de
+   changement, un second passage sur `2305E6A6D126` dira si la zone se reproduit.
+5. **SMART absent sans explication** (NVMe Samsung : la série IOCTL est l'EUI-64, pas le
+   S/N smartctl) : la fiche porte `smart_appariement` (série / modèle / aucun) et
+   `smart_absence` qui liste ce que smartctl a vu ; l'inventaire garde les entrées
+   smartctl. Un SMART manquant se diagnostique désormais depuis le rapport.
+
+En plus : `arret` porte le motif sur Ctrl+C (`"arret demande par l'utilisateur"`), et
+`charger_session` migre les sessions du schéma 1 (les 15 rapports du 04/09 passent
+par ce chemin). 66 tests GhisdiagDisk, 275 au total.
+
+**Reste à faire avant de merger la phase 1** : `--reprendre` sur une session réelle
+interrompue ; repasser le BX500 `2305E6A6D126` en complet ; les trois disques de
+référence du 03/09 si l'occasion se présente.
 
 ---
 
@@ -930,7 +980,7 @@ principal.
 | Phase | Contenu | Poids |
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
-| 1 | ✅ **Moteur T1 ÉCRIT le 03/09** (balayage lecture + débit + latence + lecture aléatoire, modes express/standard/complet, session checkpointée et reprenable, CLI console). Reste la **validation atelier** — voir « Phase 1 » ci-dessus | gros |
+| 1 | ✅ **Moteur T1 ÉCRIT le 03/09, VALIDÉ EN ATELIER le 04/09** (8 disques, 15 rapports, 5 défauts de verdict corrigés et gravés en tests). Reste `--reprendre` en réel et les 3 disques de référence — voir « Validation atelier du 04/09 » ci-dessus | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
