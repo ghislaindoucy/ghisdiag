@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | **phase 0 CLOSE** (WinPE validé, seuils calibrés sur 12 disques mécaniques). Reste à écrire le moteur de balayage T1. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04 et 05/09** (14 disques, 23 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Cinq défauts de verdict corrigés le 04/09, deux défauts de `--reprendre` corrigés le 05/09, tout est rejoué en tests. Reste le seul essai jamais fait : `--reprendre` sur une session réelle. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -733,6 +733,171 @@ différentes (la sonde tournait depuis `PhysicalDrive2`, l'ISO était servi par
 `PhysicalDrive3`). Mesurer un support occupé à alimenter le système donne des chiffres
 qui ne décrivent pas le support.
 
+### ✅ Phase 1 — le moteur de balayage T1 est écrit (03/09/2026)
+
+Branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`, empilée sur la PR #33. Livré : le
+paquet `ghisdiagdisk/`, le lanceur `ghisdiagdisk_main.py`, `GhisdiagDisk.spec` (second
+exe, même recette que `WinPEProbe.spec`) et `test_ghisdiagdisk_atelier.bat`. **49 tests
+sans matériel** (faux disque + horloge virtuelle), 237 au total dans le dépôt. Build
+PyInstaller vérifié (exe de 1,7 Mo, `smartctl.exe` embarqué).
+
+**⚠️ Pas encore validé en atelier** : aucune exécution élevée sous Windows ni en WinPE.
+Les constantes ci-dessous sont des choix raisonnés à partir des campagnes, pas des
+mesures — c'est la validation qui dira si elles tiennent. La sonde
+`atelier_winpe_probe.py` reste figée comme référence de terrain ; `rawdisk.py` en est
+l'extraction réutilisable, avec les mêmes offsets et les mêmes pièges documentés.
+
+| Module | Rôle |
+|---|---|
+| `rawdisk.py` | Win32 brut : énumération par index, identité IOCTL (offsets 12/16/20/24), partitions GPT/MBR lues sur le disque, `LecteurDisque` NO_BUFFERING + tampon VirtualAlloc, **double exclusion** porteur de l'exe / support de boot du PE (`PEBootRamdiskSourceDrive`) |
+| `smart.py` | smartctl avec le **type conservé** (`-d`), dédoublonnage RST, attributs 5/187/196/197/198/199, détection « muet derrière RST », projection d'usure NVMe |
+| `inventory.py` | clé composite à niveau de confiance, cascade mécanique/SSD, profil ZBR calibré, règles d'exclusion et avertissements |
+| `niveaux.py` | T1/T2/T3, fichier-marqueur, **refus explicite** de T2/T3 (jamais de rétrogradation silencieuse vers T1) |
+| `scan.py` | plan, moteur pur (lecteur + horloge injectables), checkpoint/reprise, synthèse, verdict |
+| `cli.py` | console (lisible en 800×600), Ctrl+C = arrêt propre avec session écrite |
+
+**Décisions prises en écrivant le moteur** (à confirmer par la validation) :
+
+- **Plan** : express = 12 zones × 256 Mio (offset 0, fin *exacte* du disque, 10 réparties) ;
+  standard = 48 × 1 Gio ; complet = 1 Gio contigus. Les zones dépassent le cache d'un
+  disque (piège du WD10SPZX). Bloc de mesure = 1 Mio : un secteur mourant doit ressortir,
+  pas se diluer.
+- **Échauffement non mesuré avant chaque zone, lu AU-DELÀ de la fenêtre** (ou 64 Mio
+  avant, pour la zone de fin) : la lecture anticipée du disque ne pré-charge donc pas la
+  zone mesurée. Un seul échauffement en mode complet (têtes déjà en place).
+- **Anomalie = bloc > max(3 × médiane de sa zone, 25 ms)**. Le plancher de 25 ms vise les
+  SSD (médiane < 1 ms : 3× serait du bruit d'ordonnanceur) — confirmé sur NVMe en PE le
+  04/09. Bloc > 500 ms = « mourant » → à remplacer. **Depuis le 04/09** : un bloc lent
+  isolé (pas de voisin lent à moins de 8 blocs, moins de 4 dans la zone, sous 150 ms)
+  est le tic périodique d'un firmware sain, compté à part et sans poids ; et une zone
+  dont la médiane dépasse 4× le quart le plus rapide du disque est « dégradée » même
+  sans aucun bloc anormal.
+- **Hors WinPE, refus de conclure sur les latences** (verdict *non concluant*, chiffres
+  quand même dans la session). **Les secteurs illisibles et le débit concluent partout** :
+  une erreur CRC est une erreur CRC, et les médianes sont identiques Windows/PE.
+- **Secteur illisible** : bissection jusqu'au secteur physique (4 Kio), plafonnée à
+  64 échecs par bloc (on ne martèle pas un disque mort), plages fusionnées et exprimées
+  en LBA. **Arrêt de sécurité à 64 blocs illisibles** : « imager d'abord ».
+- **Verdict** tri-état + non concluant, toujours avec ses raisons. À remplacer : secteur
+  illisible, bloc mourant, SMART en échec, arrêt de sécurité, **≥ 25 % des zones
+  dégradées ou sous le plancher** (04/09). À surveiller : blocs lents en grappe, zone
+  dégradée, débit médian **ou une zone** sous le plancher de la classe (NVMe 300, SSD 100,
+  HDD 25 Mo/s — volontairement bas), SMART 5/187/197/198 > 0, erreurs média NVMe. La
+  **portée** est toujours dite : « sain » en express signifie sain sur ~0,1 % de la surface.
+- **Exclusions** : porteur de l'exe et boot PE (jamais), virtuel, composite `Optane+…`,
+  clé USB amovible. Le NVMe derrière RST (bus RAID) **reste testable** — c'est la
+  population visée — avec avertissement ; un disque en dock USB aussi, sans comparaison
+  à la classe.
+- **Lecture aléatoire** : 200 × 4 Kio à offsets tirés au sort (graine dans la session),
+  p50 / p99 / max.
+- **Session** : `rapports_disque\ghisdiagdisk_<clé>_T1_<horodatage>.json` à côté de
+  l'exe (repli `Documents\Ghisdiag\disque`), écriture atomique après chaque zone,
+  reprise refusée si la clé d'identité **ou** la taille diffèrent.
+- **Pas d'UI graphique dans cette livraison** : la console tient en 800×600 et l'UI
+  tkinter n'a de sens qu'une fois le moteur validé. Elle rappellera les mêmes fonctions.
+
+**Plan de validation atelier (03/09), et ce qu'il en est au 04/09 :**
+
+1. ✅ `--lister` élevé sous Windows puis en PE : inventaire, clés, exclusions corrects.
+2. ⏳ Les trois disques déjà mesurés (WD5000AAKX, HGST HTS541010A9E680, Toshiba
+   DT01ACA100) n'ont pas été repassés : pas de recoupement des médianes avec le 03/09.
+3. ✅ NVMe en PE (Samsung PM991 256 Go, 3 modes, 100 % de la surface) : zéro fausse
+   anomalie, plancher de 25 ms confirmé.
+4. ✅ Disque connu défaillant (Lexar NQ100 240 Go) : verdict basculé, plages localisées.
+5. ⏳ Ctrl+C en pleine zone ✅ (deux sessions partielles propres) ; `--reprendre` **non
+   exercé** (aucun rapport avec `reprises` > 0).
+
+### ✅ Validation atelier du 04/09/2026 — 8 disques, 15 rapports, 5 défauts corrigés
+
+Hiren's BootCD PE sur la clé CLAUDE, `GhisdiagDisk.exe` 0.1.0. Rapports dans
+`H:\GhisdiagDisk\rapports_disque\`, **rejoués en tests** (`tests/fixtures/ghisdiagdisk_atelier_20260904/`,
+`tests/test_ghisdiagdisk_atelier_0409.py`) : chaque verdict attendu a été arrêté à la
+main sur les mesures, pas recopié du code.
+
+| Disque | Modes | Ce que les mesures disent | Verdict après correction |
+|---|---|---|---|
+| Samsung PM991 NVMe 256 Go | express, standard, complet | 2,8 Go/s, 0 anomalie à 100 %, zones pleines 2,5× plus lentes que les vides | sain ×3 |
+| Crucial BX500 `2240E6743207` | complet | 519 Mo/s, max 11 ms sur 240 Go | sain |
+| Crucial BX500 `2305E6A6D126` | complet | 33 blocs de 25-54 ms groupés entre 6,4 et 8,6 Go, 6 zones avec un max à 23,8 ms juste sous le plancher | à surveiller (**à repasser** pour tester la reproductibilité) |
+| WD Green 240 `22194U800957` | complet | 34 réalloués à 81 h, premiers 80 Go à 95-170 Mo/s (4-5× plus lents) | à surveiller |
+| Lexar NQ100 (défaillant) | complet interrompu, express | 7 blocs > 500 ms, 12 Mo/s ; en express 5 zones/12 à 8-14× la médiane | à remplacer ×2 |
+| WD10JPCX 5400 | express, complet interrompu | signature ZBR 0,48, un seul bloc à 33 ms | sain, puis non concluant (partiel) |
+| ST1000DM003 (43 659 h, SMART vierge) | express, standard, complet | 120 blocs isolés de 26-131 ms **toutes les 58,5 s**, plus deux vraies grappes (82,7 Go : 7 blocs à 131 ms ; fin de disque : 377 ms) | sain, à surveiller, à surveiller |
+| ST500DM002 `ZA435B94` | standard | 108 erreurs non corrigeables (SMART 187), 3 tics isolés | à surveiller (via 187) |
+
+**Les cinq défauts du moteur du 03/09, et leur correction (schéma de session 2) :**
+
+1. **SMART 187 parsé mais ignoré** par le verdict → ajouté à `_smart_prealable` et à
+   l'avertissement « SMART déjà dégradé » de la console.
+2. **Une zone uniformément lente était invisible** : le plancher de débit ne regardait que
+   la médiane globale, et le seuil d'anomalie suit la médiane de la zone elle-même. La
+   synthèse porte désormais `zones_degradees` (médiane de zone > **4×** le quart le plus
+   rapide du disque ; sain ≤ 2,8× observé, dégradé ≥ 4,1×) et `zones_sous_plancher`
+   (plancher de classe appliqué **par zone**). Au-delà de **25 % des zones** touchées, le
+   disque est à remplacer : l'express du Lexar concorde maintenant avec son complet.
+3. **Le tic périodique d'un firmware sain comptait comme anomalie** (express sain,
+   standard 20, complet 135 sur le même Seagate). Un bloc lent n'est retenu que s'il
+   est en **grappe** (voisin lent à moins de 8 blocs, ou 4+ dans la zone) ou s'il dépasse
+   **150 ms** ; les isolés restent dans la session (`nb_blocs_isoles`, `anomalies_isolees`)
+   et dans une note du verdict. Les vraies grappes du Seagate ressortent toujours.
+4. **Plancher de 25 ms posé juste au-dessus d'un mode ~23,8 ms du BX500** : pas de
+   changement, un second passage sur `2305E6A6D126` dira si la zone se reproduit.
+5. **SMART absent sans explication** (NVMe Samsung : la série IOCTL est l'EUI-64, pas le
+   S/N smartctl) : la fiche porte `smart_appariement` (série / modèle / aucun) et
+   `smart_absence` qui liste ce que smartctl a vu ; l'inventaire garde les entrées
+   smartctl. Un SMART manquant se diagnostique désormais depuis le rapport.
+
+En plus : `arret` porte le motif sur Ctrl+C (`"arret demande par l'utilisateur"`), et
+`charger_session` migre les sessions du schéma 1 (les 15 rapports du 04/09 passent
+par ce chemin). 66 tests GhisdiagDisk, 275 au total.
+
+### ✅ Deuxième journée d'atelier, 05/09/2026 — 6 disques, 8 rapports
+
+Passage du build corrigé la veille. **Les cinq correctifs tiennent** : schéma 2 partout,
+SMART apparié par série, motif d'arrêt écrit sur Ctrl+C, tic isolé compté à part.
+
+| Ce qui était en attente | Résultat |
+|---|---|
+| BX500 `2305E6A6D126` à repasser | **Sain deux fois**, 100 % de la surface, zéro anomalie. Les 33 blocs lents du 04/09 entre 6,4 et 8,6 Go **ne se reproduisent pas** (max 4 ms aujourd'hui contre 54 ms). L'événement était transitoire, le plancher de 25 ms a eu raison. |
+| Disques de référence du 03/09 | WD5000AAKX : médianes 8,38 / 9,87 / 16,76 ms contre 8,4 / 9,6 / 16,8 le 03/09. HGST : 9,75 / 11,82 / 18,52 contre 9,8 / 11,5 / 18,1. **Écart maximal 0,42 ms.** (Le Toshiba passé était un MK3259GSXP, pas le DT01ACA100 du 03/09 : ce n'est pas un recoupement.) |
+| Cadence du tic firmware | Confirmée : un bloc isolé toutes les **50 à 52 s** sur le Seagate, identique aux 6 293 s du 04/09 et aux 103 s du 05/09. |
+| `--reprendre` | **Deux bugs trouvés, corrigés le 05/09** — voir ci-dessous. |
+
+**Le bug du Ctrl+C, et sa cause exacte.** La console affichait « Aucune session produite »
+alors que le fichier était complet sur le disque. Cause : `executer_balayage` attendait le
+thread de balayage avec `Thread.join()` / `Thread.is_alive()`. **Quand un `KeyboardInterrupt`
+interrompt `join()`, CPython (vérifié sur 3.12.10) relâche le verrou d'état du thread et
+appelle `_stop()` avant de relever l'exception** : l'objet `Thread` se déclare terminé
+(`_is_stopped = True`, `is_alive()` → `False` pour toujours) alors que le thread tourne
+encore. Le fil principal sortait donc instantanément de son attente. Corrigé : on attend
+un `threading.Event` posé par le worker lui-même dans un `finally`, jamais l'objet Thread
+(`cli.patienter`, immunisé aussi aux Ctrl+C répétés et à une interruption tombant pendant
+le message). Filet supplémentaire : si le moteur ne rend rien, la dernière session
+checkpointée est reprise et conclue plutôt que perdue.
+
+**Le second, plus bête mais aussi bloquant** : `--reprendre` exigeait un nom de fichier
+complet, tapé à la main en WinPE. `--reprendre <mauvais nom>` répondait « session
+illisible » sans dire quoi taper. Désormais `--reprendre` **sans valeur** prend la session
+interrompue la plus récente (du disque choisi s'il est donné), et un nom erroné **liste**
+les sessions reprenables avec leur avancement. Une session terminée ou arrêtée pour
+sécurité n'est pas proposée.
+
+Nouveau fichier `tests/test_ghisdiagdisk_cli.py` (15 tests) : la boucle d'attente est
+testée avec un Event qui lève `KeyboardInterrupt`, et un vrai `interrupt_main()` pendant
+un balayage vérifie de bout en bout que la session revient avec son verdict. 290 tests
+au total.
+
+**Reste à faire avant de merger la phase 1** : le seul test jamais exercé est
+`--reprendre` sur une session réelle — la session Seagate `Z1D3AEYY` du 05/09 (19 zones
+sur 932) attend sur la clé. Reste aussi, hors chemin critique, le critère de latence
+**absolue** par classe : le Lexar interrompu après une seule zone sort « à surveiller »
+(8 Mo/s, 175 ms de médiane, 483 ms de maximum) alors que le même disque en express sort
+« à remplacer » — avec une seule zone, la comparaison entre zones est impossible. Les
+mesures donnent le seuil : zones saines de SSD à 2,0-2,1 ms, WD Green déjà réalloué à
+10 ms, Lexar mourants de 27,7 à 207 ms.
+
+---
+
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
 Une case « mode destructif » est la mécanique même de l'accident : elle reste cochée de
@@ -856,7 +1021,7 @@ principal.
 | Phase | Contenu | Poids |
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
-| 1 | Moteur T1 (balayage lecture + débit + latence), modes express/standard, session checkpointée | gros |
+| 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04 et 05/09** (14 disques, 23 rapports ; 7 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près). Reste `--reprendre` sur une session réelle | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
