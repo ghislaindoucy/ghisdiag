@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09 et **VALIDÉE EN ATELIER le 04/09** (8 disques, 15 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Cinq défauts de verdict trouvés et corrigés le 04/09, les 15 rapports rejoués en tests — voir « Validation atelier du 04/09 » ci-dessous. Reste : `--reprendre` en réel, les 3 disques de référence du 03/09, un second passage sur le BX500 `2305E6A6D126`. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04 et 05/09** (14 disques, 23 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Cinq défauts de verdict corrigés le 04/09, deux défauts de `--reprendre` corrigés le 05/09, tout est rejoué en tests. Reste le seul essai jamais fait : `--reprendre` sur une session réelle. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -851,9 +851,50 @@ En plus : `arret` porte le motif sur Ctrl+C (`"arret demande par l'utilisateur"`
 `charger_session` migre les sessions du schéma 1 (les 15 rapports du 04/09 passent
 par ce chemin). 66 tests GhisdiagDisk, 275 au total.
 
-**Reste à faire avant de merger la phase 1** : `--reprendre` sur une session réelle
-interrompue ; repasser le BX500 `2305E6A6D126` en complet ; les trois disques de
-référence du 03/09 si l'occasion se présente.
+### ✅ Deuxième journée d'atelier, 05/09/2026 — 6 disques, 8 rapports
+
+Passage du build corrigé la veille. **Les cinq correctifs tiennent** : schéma 2 partout,
+SMART apparié par série, motif d'arrêt écrit sur Ctrl+C, tic isolé compté à part.
+
+| Ce qui était en attente | Résultat |
+|---|---|
+| BX500 `2305E6A6D126` à repasser | **Sain deux fois**, 100 % de la surface, zéro anomalie. Les 33 blocs lents du 04/09 entre 6,4 et 8,6 Go **ne se reproduisent pas** (max 4 ms aujourd'hui contre 54 ms). L'événement était transitoire, le plancher de 25 ms a eu raison. |
+| Disques de référence du 03/09 | WD5000AAKX : médianes 8,38 / 9,87 / 16,76 ms contre 8,4 / 9,6 / 16,8 le 03/09. HGST : 9,75 / 11,82 / 18,52 contre 9,8 / 11,5 / 18,1. **Écart maximal 0,42 ms.** (Le Toshiba passé était un MK3259GSXP, pas le DT01ACA100 du 03/09 : ce n'est pas un recoupement.) |
+| Cadence du tic firmware | Confirmée : un bloc isolé toutes les **50 à 52 s** sur le Seagate, identique aux 6 293 s du 04/09 et aux 103 s du 05/09. |
+| `--reprendre` | **Deux bugs trouvés, corrigés le 05/09** — voir ci-dessous. |
+
+**Le bug du Ctrl+C, et sa cause exacte.** La console affichait « Aucune session produite »
+alors que le fichier était complet sur le disque. Cause : `executer_balayage` attendait le
+thread de balayage avec `Thread.join()` / `Thread.is_alive()`. **Quand un `KeyboardInterrupt`
+interrompt `join()`, CPython (vérifié sur 3.12.10) relâche le verrou d'état du thread et
+appelle `_stop()` avant de relever l'exception** : l'objet `Thread` se déclare terminé
+(`_is_stopped = True`, `is_alive()` → `False` pour toujours) alors que le thread tourne
+encore. Le fil principal sortait donc instantanément de son attente. Corrigé : on attend
+un `threading.Event` posé par le worker lui-même dans un `finally`, jamais l'objet Thread
+(`cli.patienter`, immunisé aussi aux Ctrl+C répétés et à une interruption tombant pendant
+le message). Filet supplémentaire : si le moteur ne rend rien, la dernière session
+checkpointée est reprise et conclue plutôt que perdue.
+
+**Le second, plus bête mais aussi bloquant** : `--reprendre` exigeait un nom de fichier
+complet, tapé à la main en WinPE. `--reprendre <mauvais nom>` répondait « session
+illisible » sans dire quoi taper. Désormais `--reprendre` **sans valeur** prend la session
+interrompue la plus récente (du disque choisi s'il est donné), et un nom erroné **liste**
+les sessions reprenables avec leur avancement. Une session terminée ou arrêtée pour
+sécurité n'est pas proposée.
+
+Nouveau fichier `tests/test_ghisdiagdisk_cli.py` (15 tests) : la boucle d'attente est
+testée avec un Event qui lève `KeyboardInterrupt`, et un vrai `interrupt_main()` pendant
+un balayage vérifie de bout en bout que la session revient avec son verdict. 290 tests
+au total.
+
+**Reste à faire avant de merger la phase 1** : le seul test jamais exercé est
+`--reprendre` sur une session réelle — la session Seagate `Z1D3AEYY` du 05/09 (19 zones
+sur 932) attend sur la clé. Reste aussi, hors chemin critique, le critère de latence
+**absolue** par classe : le Lexar interrompu après une seule zone sort « à surveiller »
+(8 Mo/s, 175 ms de médiane, 483 ms de maximum) alors que le même disque en express sort
+« à remplacer » — avec une seule zone, la comparaison entre zones est impossible. Les
+mesures donnent le seuil : zones saines de SSD à 2,0-2,1 ms, WD Green déjà réalloué à
+10 ms, Lexar mourants de 27,7 à 207 ms.
 
 ---
 
@@ -980,7 +1021,7 @@ principal.
 | Phase | Contenu | Poids |
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
-| 1 | ✅ **Moteur T1 ÉCRIT le 03/09, VALIDÉ EN ATELIER le 04/09** (8 disques, 15 rapports, 5 défauts de verdict corrigés et gravés en tests). Reste `--reprendre` en réel et les 3 disques de référence — voir « Validation atelier du 04/09 » ci-dessus | gros |
+| 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04 et 05/09** (14 disques, 23 rapports ; 7 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près). Reste `--reprendre` sur une session réelle | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |

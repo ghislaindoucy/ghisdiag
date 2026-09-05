@@ -10,9 +10,20 @@ appelant les memes fonctions (inventaire, moteur, verdict).
     GhisdiagDisk.exe --lister            inventaire seul
     GhisdiagDisk.exe --disque 1 --mode express --oui
     GhisdiagDisk.exe --reprendre rapports_disque\ghisdiagdisk_XXX.json
+    GhisdiagDisk.exe --disque 0 --reprendre        (la plus recente du disque)
 
 Le balayage tourne dans un thread de travail : Ctrl+C dans la console demande
 l'arret proprement, la session est ecrite jusqu'a la derniere zone finie.
+
+ATTENTION, piege CPython (atelier du 05/09) : apres un Ctrl+C, le thread de
+travail ne peut plus etre attendu ni avec `Thread.join()` ni avec
+`Thread.is_alive()`. Quand un KeyboardInterrupt interrompt `join()`,
+`Thread._wait_for_tstate_lock` relache le verrou d'etat et appelle `_stop()`
+avant de relever l'exception : l'objet Thread se declare TERMINE alors que le
+balayage tourne toujours (verifie sur Python 3.12.10). Le fil principal
+sortait donc de son attente et affichait << Aucune session produite >> pendant
+que la zone en cours finissait de s'ecrire. On attend desormais un
+`threading.Event` pose par le worker lui-meme (voir `patienter`).
 """
 
 import argparse
@@ -105,17 +116,45 @@ def _demander(question: str) -> str:
         return ""
 
 
+def patienter(fin: threading.Event, annulation: threading.Event,
+              annoncer=None, pas: float = 0.5) -> bool:
+    """Attend que le thread de balayage pose `fin`. Rend True si un arret a
+    ete demande.
+
+    Ctrl+C, autant de fois qu'on veut, pose `annulation` et NE FAIT PAS sortir
+    de l'attente : le moteur doit finir sa zone et ecrire la session. Tout le
+    corps de la boucle est dans le `try` pour qu'une interruption arrivee
+    pendant le message ne s'echappe pas non plus.
+
+    On n'utilise ni `join()` ni `is_alive()` : voir l'avertissement en tete de
+    module (apres un Ctrl+C, l'objet Thread ment sur son etat).
+    """
+    annonce = False
+    while not fin.is_set():
+        try:
+            if annulation.is_set() and not annonce:
+                annonce = True
+                if annoncer is not None:
+                    annoncer()
+            fin.wait(pas)
+        except KeyboardInterrupt:
+            annulation.set()
+    return annulation.is_set()
+
+
 def executer_balayage(fiche: dict, cfg: scan.ScanConfig, ctx: dict,
-                      dossier: Path, session=None) -> dict:
+                      dossier: Path, session=None, pas: float = 0.5) -> dict:
     """Lance le moteur sur le disque reel, avec progression console et
     arret propre sur Ctrl+C. Rend la session terminee."""
     annulation = threading.Event()
-    etat = {"session": None, "erreur": None}
+    fin = threading.Event()
+    etat = {"session": None, "erreur": None, "derniere": None}
     chemin = {"p": None}
 
     def _checkpoint(s):
         if chemin["p"] is None:
             chemin["p"] = scan.chemin_session(dossier, s)
+        etat["derniere"] = s          # filet : de quoi conclure meme si run() ne rend rien
         scan.sauver_session(s, chemin["p"])
 
     def _progression(fraction, texte):
@@ -140,28 +179,98 @@ def executer_balayage(fiche: dict, cfg: scan.ScanConfig, ctx: dict,
                                          on_segment=_segment, on_progression=_progression,
                                          checkpoint=_checkpoint, annulation=annulation)
                 etat["session"] = moteur.run()
-        except Exception as exc:          # noqa: BLE001 - remonte au thread principal
+        except BaseException as exc:      # noqa: BLE001 - remonte au thread principal
             etat["erreur"] = exc
+        finally:
+            fin.set()                     # pose QUOI QU'IL ARRIVE : c'est la seule
+                                          # attente fiable apres un Ctrl+C
 
     th = threading.Thread(target=_travail, name="GhisdiagDiskScan", daemon=True)
     th.start()
-    try:
-        while th.is_alive():
-            th.join(0.5)
-    except KeyboardInterrupt:
-        _ligne("\n  Arret demande - fin de la zone en cours, puis ecriture de la session...")
-        annulation.set()
-        while th.is_alive():
-            try:
-                th.join(0.5)
-            except KeyboardInterrupt:
-                pass
+    patienter(fin, annulation, annoncer=lambda: _ligne(
+        "\n  Arret demande - fin de la zone en cours, puis ecriture de la session..."))
     if etat["erreur"] is not None:
         raise etat["erreur"]
     s = etat["session"]
+    if s is None and etat["derniere"] is not None:
+        # Le moteur n'a pas rendu la main mais des zones sont ecrites : on
+        # conclut sur ce qui a ete mesure plutot que de ne rien dire.
+        s = etat["derniere"]
+        s.setdefault("statut", "interrompu")
+        s["synthese"] = scan.synthese(s)
+        s["verdict"] = scan.calculer_verdict(s)
     if s is not None:
         s["_fichier"] = str(chemin["p"]) if chemin["p"] else None
     return s
+
+
+def sessions_reprenables(dossier) -> list:
+    """Sessions du dossier qu'on peut reprendre, la plus recente d'abord.
+
+    Un arret de securite (trop de blocs illisibles) n'est PAS reprenable :
+    on imagerait d'abord, on testerait ensuite.
+    """
+    out = []
+    try:
+        fichiers = list(Path(dossier).glob("ghisdiagdisk_*.json"))
+    except OSError:
+        return out
+    for f in fichiers:
+        s = scan.charger_session(f)
+        if not s or s.get("statut") not in ("interrompu", "en_cours"):
+            continue
+        d = s.get("disque") or {}
+        out.append({"fichier": f, "session": s, "cle": d.get("cle_identite"),
+                    "modele": d.get("modele"), "mode": s.get("mode"),
+                    "zones": len(s.get("segments") or []),
+                    "prevues": (s.get("plan") or {}).get("nb_segments"),
+                    "demarre_a": s.get("demarre_a") or ""})
+    out.sort(key=lambda x: x["demarre_a"], reverse=True)
+    return out
+
+
+def resoudre_reprise(valeur: str, dossier, cle_disque=None):
+    """-> (session, chemin) ou (None, None) apres avoir explique et propose.
+
+    `valeur` est un chemin de fichier, un dossier, ou "auto" (= la session
+    reprenable la plus recente, du disque choisi s'il est connu). Taper un nom
+    de fichier a la main en WinPE est penible : --reprendre sans argument doit
+    marcher.
+    """
+    candidats = None
+    if valeur and valeur != "auto":
+        p = Path(valeur)
+        if p.is_file():
+            s = scan.charger_session(p)
+            if s:
+                return s, p
+            _ligne(f"[ERREUR] fichier illisible ou ce n'est pas une session : {valeur}")
+        elif p.is_dir():
+            candidats = sessions_reprenables(p)
+        else:
+            _ligne(f"[ERREUR] fichier introuvable : {valeur}")
+    if candidats is None:
+        candidats = sessions_reprenables(dossier)
+    if cle_disque:
+        retenus = [c for c in candidats if c["cle"] == cle_disque]
+    else:
+        retenus = candidats
+    if valeur == "auto" and retenus:
+        c = retenus[0]
+        return c["session"], c["fichier"]
+    if not candidats:
+        _ligne(f"Aucune session reprenable dans {dossier}")
+        _ligne("  (une session est reprenable si elle a ete interrompue par Ctrl+C)")
+        return None, None
+    _ligne(f"\nSessions reprenables dans {dossier} :")
+    for c in candidats:
+        _ligne(f"  {c['fichier'].name}")
+        _ligne(f"      {c['modele'] or '?'} ({c['cle']}) - mode {c['mode']}, "
+               f"{c['zones']}/{c['prevues']} zone(s) faite(s), du {c['demarre_a']}")
+    _ligne("\nA relancer avec le nom exact, par exemple :")
+    _ligne(f"  GhisdiagDisk.exe --reprendre rapports_disque\\{candidats[0]['fichier'].name}")
+    _ligne("  ou simplement :  GhisdiagDisk.exe --disque N --reprendre")
+    return None, None
 
 
 def afficher_verdict(s: dict):
@@ -193,7 +302,9 @@ def main(argv=None) -> int:
     ap.add_argument("--disque", type=int, help="index PhysicalDriveN a tester")
     ap.add_argument("--mode", choices=scan.MODES, default="express")
     ap.add_argument("--niveau", default=niveaux.NIVEAU_DEFAUT, help="T1 (seul implemente)")
-    ap.add_argument("--reprendre", help="fichier de session a reprendre")
+    ap.add_argument("--reprendre", nargs="?", const="auto", default=None,
+                    help="fichier de session a reprendre ; sans valeur, la plus "
+                         "recente session interrompue (du disque choisi)")
     ap.add_argument("--sortie", help="dossier des sessions (defaut : rapports_disque\\ a cote de l'exe)")
     ap.add_argument("--sans-smart", action="store_true", help="ne pas interroger smartctl")
     ap.add_argument("--oui", action="store_true", help="ne pas demander confirmation")
@@ -216,11 +327,14 @@ def main(argv=None) -> int:
         _ligne("Aucun disque testable.")
         return 1
 
+    dossier = scan.dossier_sessions(Path(args.sortie) if args.sortie else None)
+
     session = None
     if args.reprendre:
-        session = scan.charger_session(args.reprendre)
+        vise = testables.get(args.disque) if args.disque is not None else None
+        session, fichier = resoudre_reprise(args.reprendre, dossier,
+                                            vise["cle_identite"] if vise else None)
         if not session:
-            _ligne(f"[ERREUR] session illisible : {args.reprendre}")
             return 1
         cle = (session.get("disque") or {}).get("cle_identite")
         cible = next((d for d in testables.values() if d["cle_identite"] == cle), None)
@@ -229,8 +343,9 @@ def main(argv=None) -> int:
             return 1
         args.disque = cible["index"]
         args.mode = session.get("mode", args.mode)
-        _ligne(f"Reprise de la session {args.reprendre} sur le disque #{cible['index']} "
-               f"({len(session.get('segments') or [])} zone(s) deja faite(s)).")
+        _ligne(f"Reprise de {Path(fichier).name} sur le disque #{cible['index']} "
+               f"({len(session.get('segments') or [])} zone(s) deja faite(s) sur "
+               f"{(session.get('plan') or {}).get('nb_segments')}).")
 
     if args.disque is None:
         rep = _demander(f"Disque a tester {sorted(testables)} (vide = quitter) : ")
@@ -265,13 +380,13 @@ def main(argv=None) -> int:
             _ligne(f"[REFUS] {exc}")
             return 2
         cfg = scan.ScanConfig(**{k: v for k, v in session["config"].items()})
-    dossier = scan.dossier_sessions(Path(args.sortie) if args.sortie else None)
     _ligne(f"\nSessions ecrites dans : {dossier}")
     _ligne(f"Balayage {cfg.mode} - {len(scan.planifier(fiche['geometrie']['taille_octets'], fiche['geometrie']['secteur_logique'], cfg))} zone(s). Ctrl+C pour arreter proprement.\n")
     t0 = time.monotonic()
     s = executer_balayage(fiche, cfg, ctx, dossier, session=session)
     if s is None:
-        _ligne("Aucune session produite.")
+        _ligne("Aucune zone n'a pu etre mesuree - aucune session ecrite.")
+        _ligne(f"  (les sessions vont dans {dossier})")
         return 1
     afficher_verdict(s)
     _ligne(f"  ({round(time.monotonic() - t0)} s ecoulees)")
