@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés (verdict le 04/09, Ctrl+C et `--reprendre` le 05/09, zone coupée non relue le 08/09), tout est rejoué en tests. **Le plan de validation est terminé** : plus rien de bloquant côté moteur. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés, tout est rejoué en tests (304). **Plan de validation terminé et dernier critère de verdict réglé** ; confronté aux rapports de l'outil commercial utilisé en atelier. Prochaine étape : phase 2, le rapport client. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -914,13 +914,86 @@ Corrigé sur trois points :
 La session réelle est figée en fixture (`tests/fixtures/ghisdiagdisk_atelier_20260908/`,
 6 tests) : c'est le seul `--reprendre` de terrain qu'on ait. 297 tests au total.
 
-**Reste avant de merger la phase 1** : plus rien de bloquant côté moteur. Hors chemin
-critique, le critère de latence
-**absolue** par classe : le Lexar interrompu après une seule zone sort « à surveiller »
-(8 Mo/s, 175 ms de médiane, 483 ms de maximum) alors que le même disque en express sort
-« à remplacer » — avec une seule zone, la comparaison entre zones est impossible. Les
-mesures donnent le seuil : zones saines de SSD à 2,0-2,1 ms, WD Green déjà réalloué à
-10 ms, Lexar mourants de 27,7 à 207 ms.
+### ✅ Effondrement local — le dernier critère, 08/09/2026
+
+Le cas restant : un balayage arrêté après **une seule zone** ne peut rien conclure, ni par
+comparaison entre zones (il n'y a pas de seconde zone), ni par part de surface touchée
+(la règle des 25 % exigeait deux zones). Le Lexar `…95380` du 05/09, arrêté après une
+zone à 8 Mo/s avec 175 ms de médiane par bloc, sortait « à surveiller ».
+
+**Il n'a pas fallu inventer un seuil.** Latence et débit sont la même mesure — un bloc
+fait 1 Mio, donc débit = 1 Mio / latence — et les planchers de classe *sont* déjà des
+seuils de latence : NVMe 300 Mo/s ↔ 3,5 ms/bloc, SSD 100 ↔ 10,5 ms, HDD 25 ↔ 41,9 ms.
+Il manquait seulement un niveau de gravité : **une zone sous le plancher divisé par
+trois conclut à elle seule**, sans attendre de seconde zone.
+
+Calibré sur les 24 rapports d'atelier — marge des disques sains jusqu'à ce seuil :
+
+| Classe | Seuil | Pire zone d'un disque sain | Marge |
+|---|---|---|---|
+| NVMe | 100 Mo/s | 928 Mo/s | ×9,3 |
+| SSD | 33 Mo/s | 424 Mo/s | ×12,7 |
+| HDD | 8,3 Mo/s | 42,3 Mo/s (zone de fin d'un 5400) | ×5,1 |
+
+Effet réel sur les 24 rapports : **seuls les quatre rapports des deux Lexar mourants sont
+touchés** (zones vues à 5,1 / 6,3 / 8,0 / 28,8 Mo/s), un seul verdict change — celui
+qu'on visait. Les 12 rapports sains restent sains. Les disques derrière un pont USB en
+sont exclus, comme pour le plancher lui-même : un SSD en dock USB 2.0 plafonne vers
+35 Mo/s sans être malade.
+
+Les deux rapports du second Lexar sont figés en fixtures
+(`tests/fixtures/ghisdiagdisk_atelier_20260905/`). **304 tests.**
+
+#### 📄 Confrontation à l'outil commercial utilisé en atelier (80 €/mois)
+
+Deux rapports du prestataire, sur deux disques que GhisdiagDisk a mesurés :
+
+| | BX500 `2305E6A6D126` | WD Green `22194U800957` |
+|---|---|---|
+| Leur verdict | BON | **BON** |
+| Le nôtre | sain | **à surveiller** (4 raisons) |
+| SMART | « tous les indicateurs sont corrects » | idem — alors qu'il y a **34 secteurs réalloués** en 81 h |
+| Leur histogramme | 21 blocs à 20-50 ms, 0 au-delà | 6 280 blocs > 40 ms/Mio, dont **486 > 100 ms** et un entre 300 et 1000 ms |
+
+Écarts de méthode identifiés, et ce qu'ils valident chez nous :
+
+- ils lisent le **drapeau SMART** d'auto-évaluation (PASSED tant que la valeur normalisée
+  reste au-dessus du seuil constructeur), nous lisons les **compteurs bruts** 5/187/196/
+  197/198/199 — c'est ce qui fait toute la différence sur le WD Green ;
+- leur histogramme global noie le signal : 99,2 % des blocs dans un seul seau « < 5 ms »,
+  aucune statistique par zone. Notre comparaison entre zones voit ce qu'il ne peut pas voir ;
+- ils mesurent **sous Windows** (Build 19041 et 26100), donc avec l'I/O de fond par-dessus,
+  ce que la campagne du 03/09 a chiffré : maximums jusqu'à 4,4× la médiane contre 1,1-1,2×
+  en PE ;
+- leur taille de bloc **change d'un rapport à l'autre** (2 Mio sur le BX500, 512 Kio sur le
+  WD Green), donc leurs seuils ne veulent pas dire la même chose d'un rapport au suivant ;
+- leur propre légende dit « plus la courbe est irrégulière, plus le support est instable »
+  et la courbe du WD Green oscille entre 44 et 350 MB/s — la conclusion l'ignore.
+
+**Corroborations à notre avantage, à conserver** : leurs mesures confirment les nôtres là
+où elles se recoupent (SMART identique à un allumage près, débit à 5 % près sur le BX500,
+zéro bloc > 50 ms confirmant que l'événement du 04/09 était transitoire), et surtout leur
+courbe du WD Green a **la même forme que nos zones** — premier tiers lent, reste rapide —
+alors qu'ils mesuraient via USB et nous en direct, dix mois plus tôt. Le critère de zone
+dégradée détecte une propriété réelle du disque, pas un artefact de méthode.
+
+Une convergence à noter : leurs bornes d'histogramme ramenées au Mio donnent 2,5 / 5 / 10 /
+**25** / 75 / 250 ms. Leur quatrième borne est exactement notre plancher d'anomalie de
+25 ms, trouvé indépendamment sur nos mesures.
+
+**Reste avant de merger la phase 1 : plus rien.** Le plan de validation du 03/09 est
+terminé, les huit défauts trouvés en atelier sont corrigés et gravés en tests, et le
+dernier critère en suspens (latence absolue par classe) est réglé ci-dessus.
+
+**La suite est la phase 2, et c'est elle qui porte la valeur d'usage** : le prestataire
+facture 30 € HT le diagnostic pour un abonnement de 80 €/mois, et ce que cet abonnement
+achète n'est pas la mesure — c'est le **livrable** : une page, un logo, un technicien, un
+client, un verdict en un mot, une case signature. GhisdiagDisk produit aujourd'hui un JSON
+de 250 Ko, parfait pour l'analyse, impossible à poser sur un comptoir. Toute la matière
+d'un meilleur rapport est déjà dans les sessions : courbe de débit par zone, position des
+blocs lents, compteurs SMART bruts, portée réellement lue, niveau du test. Et la formule
+« sain sur l'échantillon lu, 1,26 % de la surface, mode express » protège là où un « BON »
+sans réserve engage.
 
 ---
 
@@ -1048,7 +1121,7 @@ principal.
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
 | 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04, 05 et 08/09** (24 rapports ; 8 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près ; `--reprendre` exercé en réel). Plan de validation terminé | gros |
-| 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
+| 2 | **Rapport client HTML + verdict + identité par n° de série** — c'est le livrable qui manque face à l'outil commercial (voir « Confrontation » ci-dessus) | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
 | 5 | T3 (écriture brute) + fichier-marqueur + saisie du n° de série + champ autorisation | moyen |

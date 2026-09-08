@@ -420,6 +420,49 @@ class TestMoteurDefauts(unittest.TestCase):
                        _cfg(), ENV_WIN, clock=self.h).run()
         self.assertEqual(s["verdict"]["etat"], "a_remplacer")
 
+    def test_zone_effondree_conclut_toute_seule(self):
+        """Lexar du 05/09 : complet arrete apres UNE zone a 8 Mo/s. Ni la
+        comparaison entre zones ni la part de surface touchee ne peuvent
+        conclure sur une zone unique - mais un effondrement, si."""
+        f = fiche_test(classe="ssd")
+        d0 = FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 2.1)      # ~500 Mo/s
+        s0 = ScanEngine(d0, f, _cfg(), ENV_PE, clock=self.h).run()
+        z = s0["plan"]["segments"][3]
+
+        def _zone_lente(ms):
+            return lambda off: ms if z["offset"] <= off < z["offset"] + z["longueur"] else 2.1
+
+        # 52,4 ms/Mio = 20 Mo/s : moins du tiers du plancher SSD (33 Mo/s).
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=_zone_lente(52.4)), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual([x["index"] for x in s["synthese"]["zones_sous_plancher"]], [3])
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+        self.assertTrue(any("moins du tiers" in r for r in s["verdict"]["raisons"]))
+
+        # 11,65 ms/Mio = 90 Mo/s : sous le plancher, mais pas effondre.
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=_zone_lente(11.65)), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual([x["index"] for x in s["synthese"]["zones_sous_plancher"]], [3])
+        self.assertEqual(s["verdict"]["etat"], "a_surveiller")
+        self.assertFalse(any("moins du tiers" in r for r in s["verdict"]["raisons"]))
+
+    def test_effondrement_conclut_meme_hors_winpe(self):
+        """Le debit conclut partout : un effondrement n'attend pas WinPE."""
+        f = fiche_test(classe="ssd")
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 52.4), f,
+                       _cfg(), ENV_WIN, clock=self.h).run()
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+
+    def test_effondrement_ignore_derriere_un_pont_usb(self):
+        """Un SSD dans un dock USB 2.0 plafonne a ~35 Mo/s sans etre malade :
+        aucune comparaison a la classe, donc aucun effondrement."""
+        f = fiche_test(classe="ssd", avert=["disque derriere un pont USB : debit non compare"])
+        s = ScanEngine(FauxDisque(self.h, 64 * GO, ms_par_mib=lambda o: 52.4), f,
+                       _cfg(), ENV_PE, clock=self.h).run()
+        self.assertEqual(s["synthese"]["zones_sous_plancher"], [])
+        self.assertNotEqual(s["verdict"]["etat"], "a_remplacer")
+        self.assertTrue(any("USB" in n for n in s["verdict"]["notes"]))
+
     def test_smart_187_pese(self):
         """ST500DM002 du 04/09 : 108 erreurs non corrigeables rapportees et
         rien dans le verdict. L'attribut 187 compte desormais."""

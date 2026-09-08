@@ -133,6 +133,61 @@ class TestRejeuAtelier0409(unittest.TestCase):
         self.assertGreaterEqual(scan.RATIO_ZONE_DEGRADEE, 4.0)
 
 
+DOSSIER_0509 = Path(__file__).parent / "fixtures" / "ghisdiagdisk_atelier_20260905"
+LEXAR_PARTIEL = "ghisdiagdisk_NM966820195380S30T_T1_20260905_111235.json"
+LEXAR_EXPRESS = "ghisdiagdisk_NM966820195380S30T_T1_20260905_111503.json"
+
+
+def charger_0509(nom: str) -> dict:
+    with gzip.open(DOSSIER_0509 / f"{nom}.gz", "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+
+class TestLexarDu0509(unittest.TestCase):
+    """Second Lexar NQ100 mourant (serie ...95380, distinct de celui du 04/09).
+    Son balayage complet a ete arrete apres UNE zone : c'est le cas qui a
+    motive la regle d'effondrement local. Meme modele, meme firmware SN14376,
+    SMART vierge dans les deux cas - deux sur deux, la serie est suspecte."""
+
+    def _conclure(self, nom):
+        s = charger_0509(nom)
+        s["synthese"] = scan.synthese(s)
+        s["verdict"] = scan.calculer_verdict(s)
+        return s
+
+    def test_une_seule_zone_effondree_suffit(self):
+        s = self._conclure(LEXAR_PARTIEL)
+        self.assertEqual(s["statut"], "interrompu")
+        self.assertEqual(s["synthese"]["nb_zones_jugees"], 1, "une seule zone mesuree")
+        self.assertEqual(s["synthese"]["zones_degradees"], [],
+                         "aucune comparaison entre zones possible avec une seule zone")
+        self.assertEqual(len(s["synthese"]["zones_sous_plancher"]), 1)
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+        self.assertTrue(any("moins du tiers" in r for r in s["verdict"]["raisons"]))
+        self.assertTrue(any("verdict partiel" in r for r in s["verdict"]["raisons"]),
+                        "la portee partielle reste dite")
+
+    def test_l_express_et_le_partiel_concordent(self):
+        """Le meme disque, 1 zone contre 12 : meme verdict."""
+        self.assertEqual(self._conclure(LEXAR_PARTIEL)["verdict"]["etat"],
+                         self._conclure(LEXAR_EXPRESS)["verdict"]["etat"])
+
+    def test_l_express_voit_tout(self):
+        s = self._conclure(LEXAR_EXPRESS)
+        syn = s["synthese"]
+        self.assertEqual(syn["nb_blocs_mourants"], 9)
+        self.assertEqual(len(syn["zones_degradees"]), 6)
+        self.assertEqual(len(syn["zones_sous_plancher"]), 7)
+        self.assertEqual(s["verdict"]["etat"], "a_remplacer")
+
+    def test_smart_vierge_sur_un_disque_qui_meurt(self):
+        """L'argument du test de surface : SMART ne voit rien."""
+        sm = charger_0509(LEXAR_EXPRESS)["disque"]["smart"]
+        self.assertTrue(sm["smart_actif"])
+        self.assertEqual(sm["attributs_ata"]["secteurs_realloues"], 0)
+        self.assertEqual(sm["attributs_ata"]["erreurs_crc_udma"], 0)
+
+
 DOSSIER_0809 = Path(__file__).parent / "fixtures" / "ghisdiagdisk_atelier_20260908"
 REPRISE_0809 = "ghisdiagdisk_0025_38D7_1145_F173_T1_20260908_105937"
 

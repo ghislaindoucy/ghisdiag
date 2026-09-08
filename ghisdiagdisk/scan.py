@@ -118,6 +118,17 @@ LECTURES_ALEATOIRES    = 200
 # lien degrade.
 DEBIT_MIN_CLASSE_MO_S = {"nvme": 300.0, "ssd": 100.0, "hdd": 25.0}
 
+# ... et en dessous du plancher DIVISE PAR CE FACTEUR, une seule zone suffit a
+# conclure : il n'y a plus de doute a avoir, et il n'y a pas toujours une
+# deuxieme zone pour comparer (Lexar NQ100 du 05/09, complet arrete apres UNE
+# zone a 8 Mo/s : la comparaison entre zones est impossible, faute de
+# reference). Calibre sur les 24 rapports d'atelier - marge des disques sains
+# jusqu'a ce seuil : NVMe x9,3 (pire zone 928 Mo/s), SSD x12,7 (424 Mo/s),
+# HDD x5,1 (42,3 Mo/s, zone de fin d'un 5400) ; zones mourantes vues a 5,1 /
+# 6,3 / 8,0 Mo/s sur SSD. Les disques derriere un pont USB en sont exclus,
+# comme pour le plancher lui-meme.
+FACTEUR_EFFONDREMENT_DEBIT = 3.0
+
 ARRET_UTILISATEUR = "arret demande par l'utilisateur (Ctrl+C) - session reprenable"
 
 ETATS = ("sain", "a_surveiller", "a_remplacer", "non_concluant")
@@ -873,6 +884,21 @@ def calculer_verdict(session: dict) -> dict:
                          f"{pire['offset_go']} Go - le debit median ({debit} Mo/s) les masque"))
     elif usb and debit is not None:
         notes.append("debit non compare a la classe (pont USB)")
+
+    # Effondrement local : une zone tres en dessous du plancher conclut a elle
+    # seule. Sans cette regle, un balayage arrete apres une seule zone ne peut
+    # rien dire (ni comparaison entre zones, ni part de surface touchee).
+    if plancher:
+        effondrees = [z for z in zones_sous
+                      if z.get("debit_mo_s") is not None
+                      and z["debit_mo_s"] < plancher / FACTEUR_EFFONDREMENT_DEBIT]
+        if effondrees:
+            pire = min(effondrees, key=lambda z: z["debit_mo_s"])
+            avis.append(("a_remplacer",
+                         f"{len(effondrees)} zone(s) a moins du tiers du plancher de la classe "
+                         f"{classe} ({plancher / FACTEUR_EFFONDREMENT_DEBIT:.0f} Mo/s), pire : "
+                         f"{pire['debit_mo_s']} Mo/s a {pire['offset_go']} Go - effondrement "
+                         "local, pas un disque simplement lent"))
 
     # Une part importante de la surface degradee ou sous le plancher : ce
     # n'est plus << a surveiller >>, c'est un disque qui part (Lexar NQ100 du
