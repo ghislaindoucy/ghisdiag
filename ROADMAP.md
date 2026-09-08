@@ -1094,9 +1094,15 @@ C'est la liste qui protège l'atelier, et c'est l'écart de fond avec un « BON 
 
 - **HTML autonome**, aucune ressource externe, aucun JavaScript : le PE n'a pas de réseau.
   Courbe et histogramme en **SVG en ligne**.
-- **CSS partagé avec Ghisdiag** : `assets/report.css` (7,7 Ko), embarqué via `datas` dans
-  `GhisdiagDisk.spec` — aujourd'hui `datas=[]`, c'est le seul changement de build. Une
-  seule identité visuelle pour les deux outils.
+- **CSS dédié, pensé pour le papier** : nouveau `assets/disk_report.css`, embarqué via
+  `datas` dans `GhisdiagDisk.spec` — aujourd'hui `datas=[]`, c'est le seul changement de
+  build. **Ne pas réutiliser `assets/report.css` tel quel** : il est en thème sombre
+  (`--bg: #1e1e2e`) et son `@media print` ne repasse que le `body` en blanc — badges et
+  cartes garderaient des aplats sombres, illisibles et coûteux à l'impression. On reprend
+  en revanche son **identité** : mêmes variables de couleur d'accent et de statut
+  (`--green` / `--yellow` / `--red`), même police, même vocabulaire de classes
+  (`badge-ok` / `badge-warn` / `badge-crit`, `card`, `alert-box`), en version claire.
+  Un rapport client se lit d'abord sur papier.
 - `@media print` : A4 portrait, marges 12 mm, coupures de page maîtrisées.
 - Rappel de contrainte : `GhisdiagDisk.spec` **exclut tkinter**. Le rapport est produit en
   ligne de commande, sans interface.
