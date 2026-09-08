@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04 et 05/09** (14 disques, 23 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Cinq défauts de verdict corrigés le 04/09, deux défauts de `--reprendre` corrigés le 05/09, tout est rejoué en tests. Reste le seul essai jamais fait : `--reprendre` sur une session réelle. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés (verdict le 04/09, Ctrl+C et `--reprendre` le 05/09, zone coupée non relue le 08/09), tout est rejoué en tests. **Le plan de validation est terminé** : plus rien de bloquant côté moteur. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -887,9 +887,35 @@ testée avec un Event qui lève `KeyboardInterrupt`, et un vrai `interrupt_main(
 un balayage vérifie de bout en bout que la session revient avec son verdict. 290 tests
 au total.
 
-**Reste à faire avant de merger la phase 1** : le seul test jamais exercé est
-`--reprendre` sur une session réelle — la session Seagate `Z1D3AEYY` du 05/09 (19 zones
-sur 932) attend sur la clé. Reste aussi, hors chemin critique, le critère de latence
+### ✅ `--reprendre` exercé pour de vrai, 08/09/2026 — et un trou de 157 Mio
+
+Samsung PM991 NVMe, mode complet, Ctrl+C pendant la zone 8, puis
+`--disque 1 --reprendre`. **La reprise fait ce qu'on lui demande** : `reprises` horodaté,
+les 8 premières zones ne sont pas relues (150 s de lecture au total contre 140 s pour un
+complet d'une traite), les 239 zones sont présentes sans doublon, statut `termine`,
+verdict `sain`.
+
+**Mais la zone coupée n'était pas relue.** Le Ctrl+C est tombé au bloc 867 sur 1024 de la
+zone 8 ; à la reprise, cette zone figurait déjà dans `segments`, donc elle était comptée
+comme faite. Résultat : **157 Mio jamais lus**, et un rapport qui annonçait pourtant
+« surface complète ». Sur un disque sain ça ne change rien, sur un disque malade le trou
+peut être exactement là où il fallait regarder.
+
+Corrigé sur trois points :
+
+- `reprendre_session` **jette les zones incomplètes** : elles sont relues en entier (au
+  plus une zone, quelques secondes) plutôt que laissées à moitié — une zone partielle
+  fausserait aussi sa propre médiane ;
+- `run()` fait le même filtrage, ceinture et bretelles, si une session vient d'ailleurs ;
+- la portée n'est **« surface complète » que si toutes les zones sont entières**, et la
+  synthèse porte `nb_zones_incompletes`. La session du 08/09 relue par le code corrigé
+  passe de « surface complète » à « échantillon », ce qui est la vérité : 99,94 %.
+
+La session réelle est figée en fixture (`tests/fixtures/ghisdiagdisk_atelier_20260908/`,
+6 tests) : c'est le seul `--reprendre` de terrain qu'on ait. 297 tests au total.
+
+**Reste avant de merger la phase 1** : plus rien de bloquant côté moteur. Hors chemin
+critique, le critère de latence
 **absolue** par classe : le Lexar interrompu après une seule zone sort « à surveiller »
 (8 Mo/s, 175 ms de médiane, 483 ms de maximum) alors que le même disque en express sort
 « à remplacer » — avec une seule zone, la comparaison entre zones est impossible. Les
@@ -1021,7 +1047,7 @@ principal.
 | Phase | Contenu | Poids |
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
-| 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04 et 05/09** (14 disques, 23 rapports ; 7 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près). Reste `--reprendre` sur une session réelle | gros |
+| 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04, 05 et 08/09** (24 rapports ; 8 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près ; `--reprendre` exercé en réel). Plan de validation terminé | gros |
 | 2 | Rapport client HTML + verdict + identité par n° de série | moyen |
 | 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |

@@ -320,6 +320,12 @@ def reprendre_session(session: dict, fiche: dict) -> dict:
     if session.get("schema") != SCHEMA_VERSION:
         raise ValueError(f"schema de session {session.get('schema')} inconnu")
     session = json.loads(json.dumps(session))          # copie profonde
+    # La zone coupee en plein milieu par le Ctrl+C n'est PAS faite : on la
+    # jette pour qu'elle soit relue entiere. Sans ca elle etait comptee comme
+    # couverte (atelier du 08/09 : 157 Mio jamais lus dans une session rendue
+    # << surface complete >>). Une zone partielle fausserait aussi sa mediane.
+    session["segments"] = [seg for seg in (session.get("segments") or [])
+                           if seg.get("complet")]
     session.setdefault("reprises", []).append(datetime.now().isoformat(timespec="seconds"))
     session["statut"] = "en_cours"
     session["arret"] = None
@@ -449,6 +455,10 @@ class ScanEngine:
     def run(self) -> dict:
         s = self.session
         plan = [Segment(**d) for d in s["plan"]["segments"]]
+        # Ceinture et bretelles avec reprendre_session : une zone incomplete
+        # est rejouee entiere, jamais comptee comme faite.
+        s["segments"] = [seg for seg in s["segments"] if seg.get("complet")]
+        self._octets_lus = sum(seg.get("octets_lus", 0) for seg in s["segments"])
         faits = {seg["index"] for seg in s["segments"]}
         restants = [seg for seg in plan if seg.index not in faits]
         self._t_debut = self.clock()
@@ -757,6 +767,7 @@ def synthese(session: dict) -> dict:
         "nb_blocs_mourants":      sum(s.get("nb_blocs_mourants", 0) for s in segs),
         "reference_zones_ms":     reference,
         "nb_zones_jugees":        len(juges),
+        "nb_zones_incompletes":   sum(1 for z in segs if not z.get("complet")),
         "zones_degradees":        degradees,
         "zones_sous_plancher":    sous_plancher,
         "nb_blocs_illisibles":    sum(s.get("nb_blocs_illisibles", 0) for s in segs),
@@ -902,7 +913,12 @@ def calculer_verdict(session: dict) -> dict:
         etat = max(etats, key=lambda e: _RANG[e])
         # Un << non concluant >> ne masque pas un defaut avere, et un defaut
         # avere ne rend pas le reste concluant : on garde les deux raisons.
-    portee = "surface complete" if mode == "complet" and statut == "termine" else "echantillon"
+    # << surface complete >> exige que TOUTE zone ait ete lue en entier : une
+    # zone coupee par un Ctrl+C laisse un trou, meme si le plan est fini.
+    entieres = all(z.get("complet") for z in (session.get("segments") or []))
+    portee = ("surface complete"
+              if mode == "complet" and statut == "termine" and entieres
+              else "echantillon")
     couverture = synth.get("couverture_disque_pct")
     if etat == "sain" and portee == "echantillon":
         notes.append(f"sain sur l'echantillon lu ({couverture} % de la surface, mode {mode})")

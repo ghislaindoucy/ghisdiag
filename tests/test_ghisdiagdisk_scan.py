@@ -520,6 +520,49 @@ class TestSessionEtReprise(unittest.TestCase):
         self.assertNotIn(0, offsets_relus, "la zone 0 ne doit pas etre relue")
         self.assertEqual(s2["demarre_a"], sauve["demarre_a"])
 
+    def test_zone_coupee_en_plein_milieu_est_relue_entiere(self):
+        """Atelier du 08/09 : le Ctrl+C tombe DANS une zone. Cette zone n'est
+        pas faite - la reprise doit la relire en entier, et tant qu'un trou
+        subsiste la portee n'est pas << surface complete >>."""
+        d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
+        annul = threading.Event()
+        compteur = {"n": 0}
+        original = d.lire
+
+        def _lire(off, n):
+            compteur["n"] += 1
+            if compteur["n"] == 10:          # au milieu de la 3e zone (4 blocs/zone)
+                annul.set()
+            return original(off, n)
+        d.lire = _lire
+        cfg = _cfg(mode="complet", nb_segments=None, segment_octets=4 * MIB)
+        s1 = ScanEngine(d, self.fiche, cfg, ENV_PE, clock=self.h, annulation=annul).run()
+        self.assertEqual(s1["statut"], "interrompu")
+        coupee = s1["segments"][-1]
+        self.assertTrue(coupee["interrompu"])
+        self.assertFalse(coupee["complet"])
+        self.assertEqual(s1["synthese"]["nb_zones_incompletes"], 1)
+        self.assertEqual(s1["verdict"]["portee"], "echantillon")
+
+        d2 = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
+        repris = scan.reprendre_session(s1, self.fiche)
+        self.assertNotIn(coupee["index"], [z["index"] for z in repris["segments"]],
+                         "la zone coupee est jetee, pas conservee a moitie")
+        s2 = ScanEngine(d2, self.fiche, cfg, ENV_PE, session=repris, clock=self.h).run()
+        self.assertEqual(s2["statut"], "termine")
+        relues = {z["index"] for z in s2["segments"]}
+        self.assertIn(coupee["index"], relues)
+        self.assertEqual(len(relues), s2["plan"]["nb_segments"], "aucune zone en double")
+        self.assertTrue(all(z["complet"] for z in s2["segments"]))
+        self.assertEqual(s2["synthese"]["nb_zones_incompletes"], 0)
+        # Plus aucun trou : le disque entier a bien ete lu.
+        self.assertEqual(s2["synthese"]["octets_lus"], s2["plan"]["octets_prevus"])
+        self.assertEqual(s2["synthese"]["couverture_disque_pct"], 100.0)
+        self.assertEqual(s2["verdict"]["portee"], "surface complete")
+        # La zone coupee a bien ete relue depuis son debut.
+        debut = s1["plan"]["segments"][coupee["index"]]["offset"]
+        self.assertIn(debut, {o for o, _ in d2.lectures})
+
     def test_reprise_refusee_sur_autre_disque(self):
         d = FauxDisque(self.h, 64 * GO, ms_par_mib=_zbr)
         s = ScanEngine(d, self.fiche, _cfg(), ENV_PE, clock=self.h).run()

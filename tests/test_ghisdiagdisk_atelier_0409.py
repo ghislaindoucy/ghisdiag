@@ -1,6 +1,7 @@
 """
-Rejeu des 15 rapports de la validation atelier du 04/09/2026 (GhisdiagDisk 0.1.0,
-Hiren's BootCD PE, 8 disques reels) a travers la synthese et le verdict courants.
+Rejeu des rapports d'atelier reels a travers la synthese et le verdict courants :
+15 rapports de la validation du 04/09/2026 (GhisdiagDisk 0.1.0, Hiren's BootCD PE,
+8 disques), plus la session du 08/09 - la seule reprise apres Ctrl+C.
 
 Les fixtures sont les sessions ecrites par l'exe d'essai, au schema 1, allegees
 du plan de zones (inutile au verdict) et compressees. Chaque verdict attendu
@@ -12,7 +13,9 @@ Ce que ces rapports ont revele (et que le moteur du 03/09 ratait) :
   - Lexar NQ100 : 5 zones sur 12 a 8-14x la mediane du disque sans un seul bloc
     << anormal >>, verdict express << a surveiller >> vs << a remplacer >> en complet ;
   - ST1000DM003 : 120 blocs lents ISOLES a periode fixe (58,5 s) comptes comme
-    anomalies -> express sain, standard 20, complet 135 sur un disque sain.
+    anomalies -> express sain, standard 20, complet 135 sur un disque sain ;
+  - 08/09 : la zone coupee par le Ctrl+C n'etait pas relue a la reprise, et le
+    rapport annoncait quand meme << surface complete >> avec 157 Mio jamais lus.
 
 Lancement :  py -m unittest tests.test_ghisdiagdisk_atelier_0409 -v
 """
@@ -128,6 +131,69 @@ class TestRejeuAtelier0409(unittest.TestCase):
             self.assertEqual(s["synthese"]["zones_degradees"], [])
         self.assertLess(pire_sain, 3.0)
         self.assertGreaterEqual(scan.RATIO_ZONE_DEGRADEE, 4.0)
+
+
+DOSSIER_0809 = Path(__file__).parent / "fixtures" / "ghisdiagdisk_atelier_20260908"
+REPRISE_0809 = "ghisdiagdisk_0025_38D7_1145_F173_T1_20260908_105937"
+
+
+class TestRepriseReelle0809(unittest.TestCase):
+    """La seule session reprise pour de vrai (Samsung PM991, Ctrl+C zone 8,
+    puis `--disque 1 --reprendre`). Elle a montre que la zone coupee en plein
+    milieu n'etait PAS relue : 157 Mio jamais lus dans un rapport qui se
+    disait << surface complete >>."""
+
+    def setUp(self):
+        with gzip.open(DOSSIER_0809 / f"{REPRISE_0809}.json.gz", "rt", encoding="utf-8") as f:
+            self.s = json.load(f)
+
+    def test_la_reprise_a_bien_eu_lieu(self):
+        s = self.s
+        self.assertEqual(s["schema"], scan.SCHEMA_VERSION)
+        self.assertEqual(len(s["reprises"]), 1)
+        self.assertEqual(s["statut"], "termine")
+        self.assertEqual(len(s["segments"]), s["plan"]["nb_segments"])
+        self.assertEqual(len({z["index"] for z in s["segments"]}), len(s["segments"]))
+
+    def test_le_trou_laisse_par_le_ctrl_c(self):
+        """Une seule zone incomplete, et c'est celle qui a ete coupee."""
+        coupees = [z for z in self.s["segments"] if not z["complet"]]
+        self.assertEqual([z["index"] for z in coupees], [8])
+        z = coupees[0]
+        self.assertTrue(z["interrompu"])
+        self.assertEqual(z["longueur"] - z["octets_lus"], 164626432)      # 157 Mio
+
+    def test_le_verdict_courant_ne_dit_plus_surface_complete(self):
+        s = json.loads(json.dumps(self.s))
+        s["synthese"] = scan.synthese(s)
+        s["verdict"] = scan.calculer_verdict(s)
+        self.assertEqual(s["synthese"]["nb_zones_incompletes"], 1)
+        self.assertEqual(s["verdict"]["etat"], "sain")
+        self.assertEqual(s["verdict"]["portee"], "echantillon",
+                         "un trou de 157 Mio interdit d'annoncer la surface complete")
+        self.assertLess(s["synthese"]["couverture_disque_pct"], 100.0)
+
+    def test_une_nouvelle_reprise_relit_la_zone_coupee(self):
+        r = scan.reprendre_session(self.s, self.s["disque"])
+        gardees = {z["index"] for z in r["segments"]}
+        self.assertNotIn(8, gardees)
+        self.assertEqual(len(gardees), len(self.s["segments"]) - 1)
+
+    def test_le_nvme_reste_sain(self):
+        """Meme disque que le 04/09 : toujours aucune anomalie."""
+        syn = self.s["synthese"]
+        self.assertEqual(syn["nb_blocs_anormaux"], 0)
+        self.assertEqual(syn["nb_blocs_isoles"], 0)
+        self.assertEqual(syn["nb_secteurs_illisibles"], 0)
+        self.assertEqual(syn["zones_degradees"], [])
+
+    def test_l_absence_de_smart_est_expliquee(self):
+        """Le correctif du 04/09 rend enfin le NVMe muet diagnosticable."""
+        d = self.s["disque"]
+        self.assertFalse(d["smart_disponible"])
+        self.assertEqual(d["smart_appariement"], "aucun")
+        self.assertIn("IOCTL_STORAGE_QUERY_PROPERTY", d["smart_absence"])
+        self.assertIn("4 entree(s) smartctl", d["smart_absence"])
 
 
 if __name__ == "__main__":
