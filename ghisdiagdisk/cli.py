@@ -11,6 +11,14 @@ appelant les memes fonctions (inventaire, moteur, verdict).
     GhisdiagDisk.exe --disque 1 --mode express --oui
     GhisdiagDisk.exe --reprendre rapports_disque\ghisdiagdisk_XXX.json
     GhisdiagDisk.exe --disque 0 --reprendre        (la plus recente du disque)
+    GhisdiagDisk.exe --rapport rapports_disque\ghisdiagdisk_XXX.json --client "..."
+    GhisdiagDisk.exe --rapport                     (la session la plus recente)
+
+Le rapport client HTML est une commande A PART du balayage (spec phase 2) :
+le clavier du PE est souvent en QWERTY et une question posee entre la fin
+d'un complet de deux heures et l'ecriture du fichier peut couter la session.
+Apres un balayage le HTML est ecrit sans identite ; le technicien le
+regenere ensuite avec --rapport --client "..." depuis un vrai poste.
 
 Le balayage tourne dans un thread de travail : Ctrl+C dans la console demande
 l'arret proprement, la session est ecrite jusqu'a la derniere zone finie.
@@ -32,7 +40,7 @@ import time
 from pathlib import Path
 
 from . import __version__, OUTIL
-from . import inventory, niveaux, rawdisk, scan
+from . import inventory, niveaux, rapport, rawdisk, scan
 
 
 def _ligne(txt: str = ""):
@@ -273,6 +281,117 @@ def resoudre_reprise(valeur: str, dossier, cle_disque=None):
     return None, None
 
 
+def sessions_du_dossier(dossier) -> list:
+    """Toutes les sessions lisibles du dossier, la plus recente d'abord.
+    Contrairement a `sessions_reprenables`, le statut n'importe pas : on
+    peut rapporter une session terminee, interrompue ou arretee."""
+    out = []
+    try:
+        fichiers = list(Path(dossier).glob("ghisdiagdisk_*.json"))
+    except OSError:
+        return out
+    for f in fichiers:
+        s = scan.charger_session(f)
+        if not s:
+            continue
+        d = s.get("disque") or {}
+        out.append({"fichier": f, "session": s, "modele": d.get("modele"),
+                    "cle": d.get("cle_identite"), "mode": s.get("mode"),
+                    "statut": s.get("statut"),
+                    "etat": (s.get("verdict") or {}).get("etat"),
+                    "demarre_a": s.get("demarre_a") or ""})
+    out.sort(key=lambda x: x["demarre_a"], reverse=True)
+    return out
+
+
+def resoudre_rapport(valeur: str, dossier):
+    """-> (session, chemin) ou (None, None) apres avoir liste ce qui existe.
+
+    Meme mecanique que `resoudre_reprise` : "auto" = la session la plus
+    recente du dossier, un nom errone liste les sessions disponibles.
+    """
+    if valeur and valeur != "auto":
+        p = Path(valeur)
+        if p.is_file():
+            s = scan.charger_session(p)
+            if s:
+                return s, p
+            _ligne(f"[ERREUR] fichier illisible ou ce n'est pas une session : {valeur}")
+            return None, None
+        if p.is_dir():
+            dossier = p
+        else:
+            _ligne(f"[ERREUR] fichier introuvable : {valeur}")
+    candidats = sessions_du_dossier(dossier)
+    if valeur == "auto" and candidats:
+        c = candidats[0]
+        return c["session"], c["fichier"]
+    if not candidats:
+        _ligne(f"Aucune session dans {dossier}")
+        return None, None
+    _ligne(f"\nSessions disponibles dans {dossier} :")
+    for c in candidats:
+        _ligne(f"  {c['fichier'].name}")
+        _ligne(f"      {c['modele'] or '?'} ({c['cle']}) - mode {c['mode']}, "
+               f"{c['statut']}, verdict {c['etat'] or '?'}, du {c['demarre_a']}")
+    _ligne("\nA relancer avec le nom exact, par exemple :")
+    _ligne(f"  GhisdiagDisk.exe --rapport rapports_disque\\{candidats[0]['fichier'].name}")
+    _ligne("  ou simplement :  GhisdiagDisk.exe --rapport   (la plus recente)")
+    return None, None
+
+
+def identite_rapport(args) -> dict:
+    return {"client": args.client, "technicien": args.technicien,
+            "reference": args.reference}
+
+
+def generer_rapport(valeur: str, dossier, identite: dict) -> int:
+    """Commande --rapport. N'ouvre aucun disque, ne modifie jamais le JSON.
+    Codes de sortie : 0 ecrit, 1 session illisible, 2 refus."""
+    session, chemin = resoudre_rapport(valeur, dossier)
+    if not session:
+        return 1
+    try:
+        cible = rapport.ecrire_rapport(session, chemin, identite)
+    except rapport.RapportRefuse as exc:
+        _ligne(f"[REFUS] {exc}")
+        return 2
+    except OSError as exc:
+        _ligne(f"[ERREUR] ecriture du rapport impossible : {exc}")
+        return 1
+    v = session.get("verdict") or {}
+    _ligne(f"Rapport ecrit : {cible}")
+    _ligne(f"  session {Path(chemin).name} - verdict {scan.LIBELLES_ETAT.get(v.get('etat'), '?')}"
+           + (f", client {identite.get('client')}" if identite.get("client") else ", sans identite client"))
+    return 0
+
+
+def ecrire_rapport_apres_balayage(s: dict, identite: dict):
+    """Apres un balayage : le bloc `dossier` n'entre dans le JSON que si une
+    identite a ete donnee (sinon la cle USB reste exempte de donnees
+    personnelles), puis le HTML est ecrit a cote. Un echec du rapport ne
+    doit jamais faire perdre la session : on l'affiche, c'est tout."""
+    chemin = s.get("_fichier")
+    if not chemin:
+        return
+    bloc = rapport.bloc_dossier(**identite)
+    if bloc:
+        s["dossier"] = bloc
+        try:
+            scan.sauver_session({k: v for k, v in s.items() if not k.startswith("_")},
+                                Path(chemin))
+        except OSError as exc:
+            _ligne(f"  ! identite non enregistree dans la session : {exc}")
+    try:
+        cible = rapport.ecrire_rapport(s, chemin, identite)
+        _ligne(f"  rapport  : {cible}")
+        if not identite.get("client"):
+            _ligne('  (sans nom de client : GhisdiagDisk.exe --rapport --client "..." '
+                   "pour le regenerer avec l'identite)")
+    except (rapport.RapportRefuse, OSError) as exc:
+        _ligne(f"  ! rapport non ecrit ({exc}) - la session, elle, est bien ecrite")
+
+
 def afficher_verdict(s: dict):
     v = s.get("verdict") or {}
     syn = s.get("synthese") or {}
@@ -309,7 +428,18 @@ def main(argv=None) -> int:
     ap.add_argument("--sans-smart", action="store_true", help="ne pas interroger smartctl")
     ap.add_argument("--oui", action="store_true", help="ne pas demander confirmation")
     ap.add_argument("--segments", type=int, help="nombre de zones (express/standard)")
+    ap.add_argument("--rapport", nargs="?", const="auto", default=None,
+                    help="ecrire le rapport client HTML d'une session (sans valeur : "
+                         "la plus recente) ; n'ouvre aucun disque")
+    ap.add_argument("--client", help="nom du client (rapport HTML seulement)")
+    ap.add_argument("--technicien", help="nom du technicien (rapport HTML)")
+    ap.add_argument("--reference", help="reference du dossier (rapport HTML)")
     args = ap.parse_args(argv)
+
+    if args.rapport:
+        # Avant tout inventaire : le rapport ne touche a aucun disque.
+        dossier = scan.dossier_sessions(Path(args.sortie) if args.sortie else None)
+        return generer_rapport(args.rapport, dossier, identite_rapport(args))
 
     try:
         niveaux.verifier_niveau(args.niveau)
@@ -389,5 +519,6 @@ def main(argv=None) -> int:
         _ligne(f"  (les sessions vont dans {dossier})")
         return 1
     afficher_verdict(s)
+    ecrire_rapport_apres_balayage(s, identite_rapport(args))
     _ligne(f"  ({round(time.monotonic() - t0)} s ecoulees)")
     return 0 if (s.get("verdict") or {}).get("etat") in ("sain", "non_concluant") else 3

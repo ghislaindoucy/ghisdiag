@@ -1,0 +1,142 @@
+/* GhisdiagDisk — rapport client, thème CLAIR pensé pour le papier.
+   Reprend l'identité de report.css (variables d'accent et de statut, police,
+   vocabulaire de classes badge-ok / badge-warn / badge-crit, card, alert-box)
+   en version claire : pas d'aplat sombre à l'impression. Palette « Latte »,
+   pendant clair de la palette « Mocha » du rapport Ghisdiag. */
+:root {
+  --bg: #ffffff; --surface: #f4f5f9; --surface2: #e6e8f0;
+  --fg: #1f2230; --fg-dim: #4c5065; --fg-muted: #7b7f93;
+  --accent: #1e66f5; --green: #2f8f21; --yellow: #c97d10;
+  --red: #d20f39; --orange: #e0620d; --purple: #8839ef;
+  --radius: 6px; --mono: "Consolas", "Courier New", monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #d9dbe3; }
+body { background: var(--bg); color: var(--fg); font-family: "Segoe UI", system-ui, sans-serif;
+       font-size: 11.5px; line-height: 1.4; }
+.page { background: var(--bg); width: 210mm; min-height: 297mm; margin: 0 auto; padding: 12mm; }
+
+/* ── En-tête ── */
+.entete { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start;
+          border-bottom: 2px solid var(--accent); padding-bottom: 6px; margin-bottom: 8px; }
+.entete h1 { font-size: 22px; color: var(--accent); line-height: 1.15; }
+.entete-sous { color: var(--fg-dim); font-size: 11px; margin-top: 2px; }
+.entete-disque { font-weight: 600; margin-top: 3px; font-size: 13px; }
+.identite { border-collapse: collapse; font-size: 11px; min-width: 250px; }
+.identite th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 1px 10px 1px 0;
+               white-space: nowrap; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+.identite td { padding: 1px 0; border-bottom: 1px dotted var(--surface2); min-width: 150px; }
+
+/* ── Cartes et fiches ── */
+.colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 6px 10px; margin-bottom: 6px;
+        break-inside: avoid; page-break-inside: avoid; }
+.card h2 { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: .06em;
+           margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid var(--surface2); }
+.card h3 { font-size: 11px; color: var(--fg-dim); margin: 4px 0 1px; }
+.fiche { border-collapse: collapse; width: 100%; font-size: 11px; }
+.fiche th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 1px 8px 1px 0;
+            vertical-align: top; white-space: nowrap; width: 38%; }
+.fiche td { padding: 1px 0; vertical-align: top; }
+
+/* ── Verdict ── */
+.verdict { border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px;
+           border-left: 6px solid var(--accent); background: var(--surface);
+           break-inside: avoid; page-break-inside: avoid; }
+.verdict-ok   { border-left-color: var(--green); background: #eef8ec; }
+.verdict-warn { border-left-color: var(--yellow); background: #fbf3e4; }
+.verdict-crit { border-left-color: var(--red); background: #fbe9ed; }
+.verdict-info { border-left-color: var(--accent); background: #e9f0fd; }
+.verdict-mot { font-size: 20px; font-weight: 800; letter-spacing: .01em; display: flex; align-items: center; gap: 10px; }
+.verdict-ok .verdict-mot   { color: var(--green); }
+.verdict-warn .verdict-mot { color: var(--yellow); }
+.verdict-crit .verdict-mot { color: var(--red); }
+.verdict-info .verdict-mot { color: var(--accent); }
+.verdict-portee { font-size: 12.5px; margin-top: 3px; color: var(--fg); }
+.verdict-etendue { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.raisons { margin: 4px 0 0 18px; font-size: 11px; }
+.notes { margin: 4px 0 0 18px; font-size: 11px; color: var(--fg-dim); }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 20px; font-size: 10px;
+         font-weight: 700; text-transform: uppercase; letter-spacing: .08em; vertical-align: middle; }
+.badge-ok   { background: var(--green); color: #fff; }
+.badge-warn { background: var(--yellow); color: #fff; }
+.badge-crit { background: var(--red); color: #fff; }
+.badge-info { background: var(--accent); color: #fff; }
+
+/* ── Alertes ── */
+.alert-box { border-radius: var(--radius); padding: 4px 10px; margin: 4px 0; border-left: 4px solid;
+             font-size: 11px; background: #fff; }
+.alert-crit { border-color: var(--red); }
+.alert-warn { border-color: var(--orange); }
+.alert-info { border-color: var(--accent); }
+.alert-box .label { font-weight: 700; }
+.alert-crit .label { color: var(--red); }
+.alert-warn .label { color: var(--orange); }
+.alert-info .label { color: var(--accent); }
+
+/* ── Tables ── */
+table.smart, table.zones { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+table.smart th, table.zones th { text-align: left; color: var(--fg-muted); font-weight: 600; font-size: 10px;
+                                 text-transform: uppercase; letter-spacing: .05em; padding: 3px 8px;
+                                 border-bottom: 1px solid var(--surface2); }
+table.smart td, table.zones td { padding: 2px 8px; border-bottom: 1px solid var(--surface2); vertical-align: top; }
+.smart-grille { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 4px; }
+.smart-cell { background: #fff; border: 1px solid var(--surface2); border-radius: 4px; padding: 3px 6px;
+              font-size: 10.5px; display: flex; align-items: center; gap: 6px; }
+.smart-id { font-family: var(--mono); font-size: 10px; color: var(--fg-muted); min-width: 28px; }
+.smart-val { margin-left: auto; font-weight: 700; white-space: nowrap; }
+.smart-cell.smart-crit { background: #fbe9ed; border-color: var(--red); }
+.smart-cell.smart-warn { background: #fbf3e4; border-color: var(--yellow); }
+
+/* ── Statuts inline ── */
+.ok   { color: var(--green); font-weight: 600; }
+.warn { color: var(--yellow); font-weight: 600; }
+.crit { color: var(--red); font-weight: 600; }
+.dim  { color: var(--fg-muted); font-size: 10px; margin-top: 2px; }
+.mono { font-family: var(--mono); font-size: 11px; }
+
+/* ── SVG ── */
+svg.courbe, svg.histo { width: 100%; height: auto; display: block; margin: 2px 0; }
+svg .grille { stroke: var(--surface2); stroke-width: 1; }
+svg .axe { fill: var(--fg-muted); font-size: 10px; font-family: "Segoe UI", system-ui, sans-serif; }
+svg .trace { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+svg .point { fill: var(--accent); }
+svg .plancher { stroke: var(--red); stroke-width: 1; stroke-dasharray: 4 3; }
+svg .plancher-txt { fill: var(--red); }
+svg .zone-degradee { fill: var(--orange); stroke: #fff; stroke-width: 1; }
+svg .zone-plancher { fill: var(--red); stroke: #fff; stroke-width: 1; }
+svg .barre-ok { fill: var(--green); }
+svg .barre-warn { fill: var(--yellow); }
+svg .barre-crit { fill: var(--red); }
+
+/* ── Pied ── */
+.pied { margin-top: 4px; break-inside: avoid; page-break-inside: avoid; }
+.consigne { border-radius: var(--radius); padding: 6px 12px; font-size: 11.5px; border: 1.5px solid; }
+.consigne .label { font-weight: 700; }
+.consigne-ok   { border-color: var(--green); }
+.consigne-warn { border-color: var(--yellow); }
+.consigne-crit { border-color: var(--red); }
+.consigne-info { border-color: var(--accent); }
+.signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 8px; }
+.case { border: 1px solid var(--surface2); border-radius: var(--radius); height: 62px; padding: 5px 8px; }
+.case-titre { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .05em; }
+.case-nom { font-size: 11px; margin-top: 4px; }
+footer { margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--surface2);
+         color: var(--fg-muted); font-size: 9.5px; text-align: center; }
+
+/* ── Impression : A4 portrait, marges 12 mm, coupures maîtrisées ── */
+@page { size: A4 portrait; margin: 12mm; }
+@media print {
+  html { background: #fff; }
+  body { font-size: 10.5px; line-height: 1.25; }
+  .case { height: 50px; }
+  footer { margin-top: 4px; font-size: 9px; }
+  .consigne { padding: 4px 10px; }
+  .fiche, .identite, table.smart, table.zones, .raisons { font-size: 10px; }
+  table.smart td, table.zones td { padding: 1px 6px; }
+  .page { width: auto; min-height: 0; margin: 0; padding: 0; }
+  .card, .verdict, .pied { break-inside: avoid; page-break-inside: avoid; }
+  .page-suivante { break-before: page; page-break-before: always; }
+  .verdict-ok, .verdict-warn, .verdict-crit, .verdict-info, .card, .smart-cell,
+  .badge-ok, .badge-warn, .badge-crit, .badge-info { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

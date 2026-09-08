@@ -24,7 +24,9 @@ a = Analysis(
     ['ghisdiagdisk_main.py'],
     pathex=[],
     binaries=[('tools\\smartctl.exe', 'tools')],
-    datas=[],
+    # Le seul fichier de données de l'exe : le CSS du rapport client
+    # (phase 2). Chargé via sys._MEIPASS par ghisdiagdisk/rapport.py.
+    datas=[('assets\\disk_report.css', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
