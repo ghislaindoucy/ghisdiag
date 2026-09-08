@@ -997,6 +997,146 @@ sans réserve engage.
 
 ---
 
+### 📋 Phase 2 — le rapport client : spécification arrêtée le 08/09/2026
+
+Cadre figé avant écriture. Tout ce qui suit est décidé ; l'implémentation ne devrait
+plus avoir de choix de conception à faire.
+
+#### 1. La mesure n'est jamais bloquée par le rapport
+
+**Décision structurante : générer un rapport est une commande séparée du balayage.**
+
+Trois raisons, toutes vécues en atelier : le clavier de Hiren's démarre souvent en
+**QWERTY** (taper un nom de client y est une source de rapports à refaire) ; une question
+posée à l'écran entre la fin d'un complet de deux heures et l'écriture du fichier peut
+coûter la session ; et on veut pouvoir **rééditer** un rapport — faute de frappe, second
+exemplaire, mauvais client.
+
+| Commande | Effet |
+|---|---|
+| `--rapport <fichier.json>` | relit une session, écrit le HTML **à côté du JSON**. N'ouvre aucun disque. |
+| `--rapport` (sans valeur) | la session la plus récente du dossier — même mécanique que `--reprendre` ; un nom erroné liste ce qui existe |
+| `--client "…"` `--technicien "…"` `--reference "…"` | acceptés sur `--rapport` **et** sur un balayage |
+
+Après un balayage, le HTML est écrit automatiquement à côté du JSON, sans identité si
+elle n'a pas été donnée. Le technicien le régénère ensuite avec le nom, au clavier d'un
+vrai poste. Codes de sortie de `--rapport` : `0` écrit, `1` session illisible, `2` refus.
+
+#### 2. L'identité du client
+
+- **Par défaut, le nom n'entre pas dans le JSON.** Dès qu'il y est, la clé USB qui circule
+  à l'atelier devient un fichier de données personnelles. Le nom est passé au moment du
+  rapport et ne vit que dans le HTML.
+- Si `--client` est donné malgré tout, il est stocké dans un bloc dédié et explicite
+  `session["dossier"] = {"client", "technicien", "reference", "saisi_a"}` — jamais dispersé
+  dans le reste de la session.
+- **Le nom de fichier ne contient jamais le nom du client** : il reste
+  `ghisdiagdisk_<clé>_T1_<horodatage>`, qui classe par disque. Le HTML porte le même nom
+  de base, extension `.html`.
+
+#### 3. Structure de la page
+
+Une page A4 pour un disque sain ; une seconde page seulement s'il y a des zones à
+détailler. Huit blocs, dans cet ordre :
+
+1. **En-tête** — atelier, date du diagnostic, technicien, client, référence de dossier.
+2. **Le disque** — modèle, numéro de série, capacité, type de support, bus, heures de
+   fonctionnement, allumages, température. Plus la **source de la clé d'identité** et sa
+   confiance quand elle n'est pas `smartctl`/forte.
+3. **Le test** — niveau T1 avec la mention `mention_niveau` telle quelle (« aucune écriture
+   sur les données existantes »), mode, **couverture réellement lue**, durée, environnement,
+   et le nombre de reprises s'il y en a eu.
+4. **Le verdict** — un mot, sa couleur, puis la portée obligatoire et les raisons en clair.
+5. **La mesure** — courbe de débit par zone (SVG en ligne), et un **histogramme des latences
+   par bloc** aux bornes 5 / 10 / 25 / 50 / 150 / 500 ms. Ces bornes sont volontairement
+   celles de l'outil commercial de l'atelier, ramenées au Mio : un rapport comparable case
+   à case avec le leur est un argument commercial, pas seulement technique.
+6. **SMART** — les compteurs bruts 5 / 187 / 196 / 197 / 198 / 199, pas un drapeau. C'est
+   exactement ce qui manque au rapport concurrent (34 secteurs réalloués rendus « BON »).
+   Si le SMART est absent, afficher `smart_absence` : le rapport doit dire pourquoi.
+7. **Les zones à problème** — bloc affiché **seulement s'il y en a** : positions en Go des
+   zones dégradées, sous le plancher, et des grappes de blocs lents.
+8. **Pied** — consigne d'action, signature, tampon, prix.
+
+#### 4. Formulations exactes des verdicts
+
+Le mot du verdict et la phrase de portée sont **indissociables** : jamais l'un sans l'autre.
+
+| État | Titre client | Phrase obligatoire qui suit |
+|---|---|---|
+| `sain` | Aucun défaut détecté | « sur la surface effectivement lue : {couverture} % du disque, mode {mode} » |
+| `a_surveiller` | Signes de faiblesse | « le disque fonctionne mais présente des signaux à surveiller — voir le détail ci-dessous » |
+| `a_remplacer` | Disque défaillant | « remplacement nécessaire — **ne pas continuer à l'utiliser** » |
+| `non_concluant` | Diagnostic non concluant | la raison exacte, telle qu'elle est dans la session |
+
+Consigne d'action, par état : `sain` → rien, ou remise en service ; `a_surveiller` →
+sauvegarder, replanifier un contrôle ; `a_remplacer` → **imager d'abord, tester ensuite**,
+ne pas remettre en service ; `non_concluant` → ce qu'il faut refaire (rejouer en WinPE,
+terminer le balayage).
+
+#### 5. Ce que le rapport refuse d'affirmer
+
+C'est la liste qui protège l'atelier, et c'est l'écart de fond avec un « BON » sans réserve.
+
+- **Jamais un verdict sans sa portée.** « Sain » en express, c'est sain sur ~0,3 % de la
+  surface, et ça doit être écrit.
+- **Jamais « surface complète »** si `nb_zones_incompletes > 0` (règle déjà dans le moteur
+  depuis le 08/09).
+- **Jamais « aucun ralentissement »** quand des blocs lents isolés ont été comptés : on les
+  mentionne, en disant ce qu'ils sont (tic périodique du firmware).
+- **Jamais de durée de vie restante**, sauf la projection NVMe existante, et alors avec son
+  étiquette « projection linéaire, usage constant ».
+- **Aucune comparaison à la classe derrière un pont USB** — le rapport le dit au lieu de se
+  taire.
+- **Hors WinPE**, une ligne visible : les latences ont été mesurées mais ne concluent pas.
+
+#### 6. Rendu technique
+
+- **HTML autonome**, aucune ressource externe, aucun JavaScript : le PE n'a pas de réseau.
+  Courbe et histogramme en **SVG en ligne**.
+- **CSS partagé avec Ghisdiag** : `assets/report.css` (7,7 Ko), embarqué via `datas` dans
+  `GhisdiagDisk.spec` — aujourd'hui `datas=[]`, c'est le seul changement de build. Une
+  seule identité visuelle pour les deux outils.
+- `@media print` : A4 portrait, marges 12 mm, coupures de page maîtrisées.
+- Rappel de contrainte : `GhisdiagDisk.spec` **exclut tkinter**. Le rapport est produit en
+  ligne de commande, sans interface.
+
+#### 7. Le PDF
+
+**Pas de générateur PDF dans l'exe bootable.** Le dépôt n'en a aucun aujourd'hui (la notice
+passe par Chrome headless, à la main). L'exe doit rester petit et compatible PE — c'est la
+raison d'être de sa séparation d'avec Ghisdiag.
+
+Le **HTML est le format maître**. Le PDF se fabrique au poste de travail, là où Ghisdiag
+tourne et où un navigateur existe à coup sûr. Si le besoin d'un PDF directement depuis le PE se
+confirme, on ajoutera une bibliothèque pure Python à ce moment-là, sans rien casser.
+
+#### 8. Tests attendus
+
+Le rapport se teste sur les **18 fixtures d'atelier** déjà au dépôt, sans matériel :
+
+- chaque fixture produit un HTML **sans référence externe** (`http`, `src=`, `<script>`) ;
+- le mot du verdict et la phrase de portée sont présents et cohérents avec la session ;
+- « surface complète » n'apparaît jamais sur la session du 08/09 (trou de 157 Mio) ;
+- le WD Green fait apparaître **34 secteurs réalloués** dans le bloc SMART ;
+- le NVMe sans SMART fait apparaître `smart_absence` ;
+- un disque derrière un pont USB affiche la mention de non-comparaison ;
+- les identités (client, technicien) sont échappées — un nom avec `<` ne casse pas la page.
+
+#### 9. Ce que ça prépare pour la phase 3
+
+Le même JSON alimentera l'import dans Ghisdiag, et **jamais brut** : une session pèse 250 Ko,
+jusqu'à 832 Ko pour un complet de 932 zones. Le patron existe déjà — `ai_attachments.py`
+(budget `MAX_ATTACHMENTS_LEN = 12000`, `digest_bench`, courbe résumée à 20 points, tri-état).
+Il faut le pendant `digest_disque()` : modèle, série, classe, mode, couverture réelle,
+verdict et raisons, débit min/médian/max, courbe 20 points, compteurs SMART, zones
+dégradées. Quelques centaines de caractères.
+
+Le versionnement de schéma consolidé en phase 1 (`schema: 2`, migration du 1 au chargement)
+est ce qui rend cet import sûr dans la durée.
+
+---
+
 #### Les trois niveaux de test — séparation **structurelle**, pas une case à cocher
 
 Une case « mode destructif » est la mécanique même de l'accident : elle reste cochée de
@@ -1121,8 +1261,8 @@ principal.
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
 | 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04, 05 et 08/09** (24 rapports ; 8 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près ; `--reprendre` exercé en réel). Plan de validation terminé | gros |
-| 2 | **Rapport client HTML + verdict + identité par n° de série** — c'est le livrable qui manque face à l'outil commercial (voir « Confrontation » ci-dessus) | moyen |
-| 3 | Auto-test SMART + delta historique + remontée vers le diag IA de Ghisdiag | moyen |
+| 2 | **Rapport client HTML + verdict + identité par n° de série** — le livrable qui manque face à l'outil commercial. **Spécification arrêtée le 08/09** (voir « Phase 2 — le rapport client »), prête à implémenter | moyen |
+| 3 | Auto-test SMART + delta historique + **import du JSON disque dans le diag IA** (`digest_disque()` sur le patron de `ai_attachments.py`, jamais le JSON brut) | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
 | 5 | T3 (écriture brute) + fichier-marqueur + saisie du n° de série + champ autorisation | moyen |
 
