@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés, tout est rejoué en tests (304). **Plan de validation terminé et dernier critère de verdict réglé** ; confronté aux rapports de l'outil commercial utilisé en atelier. Prochaine étape : phase 2, le rapport client. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés, tout est rejoué en tests (334). **Plan de validation terminé et dernier critère de verdict réglé** ; confronté aux rapports de l'outil commercial utilisé en atelier. **Phase 2 (rapport client HTML) livrée le 08/09** sur la même branche, 30 tests sur les 18 sessions d'atelier ; reste sa validation sur la clé. |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -997,7 +997,71 @@ sans réserve engage.
 
 ---
 
-### 📋 Phase 2 — le rapport client : spécification arrêtée le 08/09/2026
+### ✅ Phase 2 — le rapport client est livré (08/09/2026)
+
+Implémentée le jour même de la spécification, sur la branche
+`claude/ghisdiagdisk-calibration-0409` (poussée aussi sur celle de la PR #34). La spec
+ci-dessous reste la référence ; ce qui suit dit ce qui a été fait, ce qui a été décidé en
+l'écrivant, et ce qui reste.
+
+**Livré :**
+
+| Fichier | Rôle |
+|---|---|
+| `ghisdiagdisk/rapport.py` | générateur pur : `preparer()`, `histogramme_latences()`, un `_bloc_*()` par bloc de la page, `generer_html()`, `ecrire_rapport()` (atomique, à côté du JSON, même nom de base) |
+| `assets/disk_report.css` | thème clair pensé pour le papier, palette « Latte » (pendant clair de la « Mocha » de `report.css`), mêmes noms de variables et de classes ; `@page` A4 12 mm, coupures maîtrisées |
+| `ghisdiagdisk/cli.py` | `--rapport [fichier]`, `--client`, `--technicien`, `--reference` ; HTML écrit automatiquement après un balayage ; bloc `dossier` dans le JSON **seulement** si une identité est donnée sur un balayage ; `--rapport` ne modifie jamais le JSON. Codes 0 / 1 / 2 |
+| `GhisdiagDisk.spec` | `datas=[('assets\\disk_report.css', 'assets')]` — le seul changement de build |
+| `tests/test_ghisdiagdisk_rapport.py` | les 7 invariants de la spec sur les 18 fixtures + histogramme + commande ; **30 tests, 334 au total** |
+
+Build vérifié (`py -m PyInstaller --clean --noconfirm GhisdiagDisk.spec`, 1,85 Mo, CSS dans
+`_internal\assets\`), copié sur `H:\GhisdiagDisk\` avec SHA-256 identique des deux côtés
+(`7133…d9fa`), `rapports_disque\` conservé, `LISEZ-MOI.txt` mis à jour.
+
+**Décisions prises en implémentant** (la spec n'en laissait presque aucune) :
+
+- **Le verdict est recalculé au moment du rapport** avec les règles courantes de `scan`,
+  sans réécrire le JSON. Motif : la session du 08/09 porte encore, écrit par l'exe d'alors,
+  un verdict « surface complète » qu'on sait faux depuis (157 Mio jamais lus). Un rapport
+  remis à un client dit ce que l'outil sait *aujourd'hui* de cette mesure ; le pied indique
+  la version qui a mesuré et celle qui a jugé.
+- **Histogramme, choix A (arrêté avec l'utilisateur le 08/09)** : la session ne conserve pas
+  le temps de chaque bloc, seulement les blocs lents (50 retenus + 20 isolés par zone au
+  plus) et les statistiques de zone. Le rapport ventile donc les blocs lents conservés aux
+  bornes 25 / 50 / 150 / 500 ms, compte le reste « sous le seuil d'anomalie de leur zone »,
+  et met à part les blocs lents dont le temps n'a pas été conservé (zones tronquées). Les
+  bornes 5 et 10 ms sont annoncées non calculables, en clair sur la page. **Un test l'a
+  rattrapé** : sur le Lexar du 04/09 (434 anomalies, listes tronquées), l'histogramme
+  affichait 0 bloc au-delà de 500 ms alors que le verdict en compte 7 — les 50 anomalies
+  conservées sont les premières par position, pas les pires. La dernière borne est
+  désormais alimentée par `nb_blocs_mourants` de chaque zone, qui lui est exact.
+- **Une page A4 pour un rapport sans zones à détailler, mesuré, pas supposé** : rendu en
+  mode impression avec Chrome headless sur les 18 fixtures. Les 11 rapports sans bloc
+  « zones à problème » tiennent sur une page, les 7 autres sur deux. Pour y arriver : la
+  table SMART est devenue une grille de cellules, la note « sain sur l'échantillon lu » de
+  la session (qui redit la phrase de portée obligatoire) n'est pas imprimée deux fois, et
+  les tables de zones sont abrégées à 12 lignes avec le total.
+- **Sessions d'avant le 04/09** (NVMe sans `smart_absence`) : le rapport dit « raison non
+  enregistrée par la version de l'outil qui a mesuré » plutôt que d'inventer.
+- **Atelier et prix** : aucune source dans la spec, donc deux cases vides à remplir au
+  tampon et au stylo. Pas d'option de ligne de commande ajoutée.
+- **Invariant « pont USB »** : aucune des 18 sessions n'a de disque en dock USB. Le test
+  part du BX500 sain et injecte l'avertissement produit par `inventory.regles_exclusion`.
+
+**Reste :**
+
+- **Validation sur la clé.** L'exe exige l'élévation (manifeste `uac_admin`) et n'a pas pu
+  être lancé depuis le poste de build ; le chargement du CSS en mode gelé n'a été vérifié
+  qu'en simulant `sys._MEIPASS` sur le vrai `_internal\`. À faire en atelier : un balayage
+  puis ouvrir le `.html` — il doit être **en couleurs** ; `--rapport --client` depuis
+  Windows ; impression A4 réelle ; une vraie session en dock USB (liste dans le LISEZ-MOI).
+- **Option B de l'histogramme** si les bornes 5 et 10 ms sont voulues : comptage par zone
+  aux six bornes dans `scan.py` (schéma 3), quelques lignes, à décider avant la prochaine
+  journée d'atelier pour que les nouvelles sessions les portent.
+- Nom d'atelier / logo : décider s'ils deviennent une option ou une constante.
+- Le PDF reste fabriqué au poste de travail (spec §7).
+
+### 📋 Phase 2 — le rapport client : spécification arrêtée le 08/09/2026 (référence)
 
 Cadre figé avant écriture. Tout ce qui suit est décidé ; l'implémentation ne devrait
 plus avoir de choix de conception à faire.
@@ -1267,7 +1331,7 @@ principal.
 |---|---|---|
 | 0 | ✅ **Spike WinPE — TERMINÉ le 03/09.** Les 7 points au vert en PE | fait |
 | 1 | ✅ **Moteur T1 écrit le 03/09, validé en atelier les 04, 05 et 08/09** (24 rapports ; 8 défauts corrigés et gravés en tests ; disques de référence recoupés à 0,42 ms près ; `--reprendre` exercé en réel). Plan de validation terminé | gros |
-| 2 | **Rapport client HTML + verdict + identité par n° de série** — le livrable qui manque face à l'outil commercial. **Spécification arrêtée le 08/09** (voir « Phase 2 — le rapport client »), prête à implémenter | moyen |
+| 2 | ✅ **Rapport client HTML livré le 08/09** (spec arrêtée et implémentée le même jour ; 30 tests sur les 18 sessions d'atelier ; une page A4 mesurée pour un disque sain). Reste sa validation sur la clé | moyen |
 | 3 | Auto-test SMART + delta historique + **import du JSON disque dans le diag IA** (`digest_disque()` sur le patron de `ai_attachments.py`, jamais le JSON brut) | moyen |
 | 4 | T2 (écriture espace libre) : falaise SLC, throttling NVMe | moyen |
 | 5 | T3 (écriture brute) + fichier-marqueur + saisie du n° de série + champ autorisation | moyen |
