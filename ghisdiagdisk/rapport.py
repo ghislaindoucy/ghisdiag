@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__, OUTIL
-from . import scan
+from . import inventory, scan
 
 # Bornes de l'histogramme, en ms. Ce sont celles de l'outil commercial de
 # l'atelier ramenees au Mio (ROADMAP, confrontation du 08/09) : un rapport
@@ -307,11 +307,28 @@ def _bloc_disque(s: dict) -> str:
     idt = d.get("identite") or {}
     sm = d.get("smart") or {}
     serie = sm.get("numero_serie") or idt.get("numero_serie") or d.get("cle_identite")
+    # Une serie en zeros ou trop courte n'est pas un numero de serie : c'est
+    # ce que rend un pont USB (atelier du 09/09, deux disques en dock). On
+    # le dit plutot que d'imprimer vingt zeros sur un rapport client.
+    ok_serie, pourquoi = inventory.serie_solide(serie)
+    if ok_serie:
+        serie_html = f"<span class=\"mono\">{_esc(serie)}</span>"
+    else:
+        via = " par le pont USB" if d.get("bus") == "USB" else ""
+        serie_html = (f"non expos\u00e9e{via} <span class=\"dim\">({_esc(pourquoi)})</span>")
+    # Le type est fixe a l'inventaire, sans mesure ; le profil de debit
+    # mesure ensuite peut le completer (signature mecanique calibree sur
+    # 12 disques), jamais le contredire.
+    type_sup = _esc(d.get("type_support")) or "\u2014"
+    profil = ((s.get("synthese") or {}).get("profil_zbr") or {})
+    if "indetermine" in str(d.get("type_support") or "") and profil.get("signature_mecanique"):
+        type_sup += (" \u2014 profil de d\u00e9bit d\u2019un disque m\u00e9canique "
+                     f"(ratio fin/d\u00e9but {_esc(profil.get('ratio_fin_debut'))})")
     lignes = [
         ("Mod\u00e8le", _ou_tiret(d.get("modele"))),
-        ("Num\u00e9ro de s\u00e9rie", f"<span class=\"mono\">{_ou_tiret(serie)}</span>"),
+        ("Num\u00e9ro de s\u00e9rie", serie_html),
         ("Capacit\u00e9", _fmt_nombre(d.get("taille_go"), 1, "Go")),
-        ("Type de support", _ou_tiret(d.get("type_support"))),
+        ("Type de support", type_sup),
         ("Bus", _ou_tiret(d.get("bus"))),
         ("Heures de fonctionnement", _fmt_nombre(sm.get("heures"), 0, "h") if sm else "non disponible (SMART absent)"),
         ("Allumages", _fmt_nombre(sm.get("cycles_demarrage")) if sm else "non disponible (SMART absent)"),
@@ -558,8 +575,11 @@ def _bloc_mesure(s: dict) -> str:
                      f"p50 {_fmt_nombre(la.get('p50_ms'), 2, 'ms')}, p99 {_fmt_nombre(la.get('p99_ms'), 2, 'ms')}, "
                      f"max {_fmt_nombre(la.get('max_ms'), 2, 'ms')}")
     if usb:
-        comparaison = ("<p class=\"alert-box alert-info\"><span class=\"label\">D\u00e9bit non compar\u00e9 \u00e0 la "
-                       f"classe {_esc(d.get('classe'))} :</span> le disque est derri\u00e8re un pont USB, "
+        classe = d.get("classe")
+        a_quoi = ("\u00e0 une classe de support" if classe in (None, "", "inconnue")
+                  else f"\u00e0 la classe {_esc(classe)}")
+        comparaison = ("<p class=\"alert-box alert-info\"><span class=\"label\">D\u00e9bit non compar\u00e9 "
+                       f"{a_quoi} :</span> le disque est derri\u00e8re un pont USB, "
                        "le lien plafonne le d\u00e9bit ind\u00e9pendamment de l\u2019\u00e9tat du disque. "
                        "Aucun plancher de classe n\u2019est appliqu\u00e9.</p>")
     elif plancher:

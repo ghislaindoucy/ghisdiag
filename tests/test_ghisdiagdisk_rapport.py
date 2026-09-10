@@ -15,9 +15,9 @@ ECRIT puis RELU, jamais valide sur un code retour.
   6. un disque derriere un pont USB affiche la mention de non-comparaison ;
   7. un nom de client contenant << < >> ne casse pas la page.
 
-Aucune fixture n'a de disque en dock USB : l'invariant 6 part d'une session
-reelle dans laquelle l'avertissement USB de `inventory.regles_exclusion` est
-injecte.
+L'invariant 6 est rejoue sur les deux vraies sessions en dock USB du 09/09
+(WD5000AAKX et BX500 derriere un pont ASMedia), et sur une copie du BX500 SATA
+avec l'avertissement injecte (classe connue, donc formulation differente).
 
 Lancement :  py -m unittest tests.test_ghisdiagdisk_rapport -v
 """
@@ -47,6 +47,9 @@ SOUS_WINDOWS = "ghisdiagdisk_S3S7NX0M616075_T1_20260903_222836"
 BX500_SAIN = "ghisdiagdisk_2240E6743207_T1_20260904_114807"
 LEXAR_TRONQUE = "ghisdiagdisk_NM966820193470S30T_T1_20260904_160616"
 SEAGATE_TICS = "ghisdiagdisk_Z1D3AEYY_T1_20260904_090259"
+USB_0909 = FIXTURES / "ghisdiagdisk_atelier_20260909"
+WD_USB = "ghisdiagdisk_USB_3_0_Device-500_1Go-SANS-SERIE_T1_20260909_090555"
+BX_USB = "ghisdiagdisk_USB_3_0_Device-240_1Go-SANS-SERIE_T1_20260909_120429"
 
 TITRES = {"sain": "Aucun défaut détecté",
           "a_surveiller": "Signes de faiblesse",
@@ -173,7 +176,34 @@ class TestInvariantsSurLesFixtures(unittest.TestCase):
         self.assertIn("SMART indisponible", self.html[NVME_SANS_SMART])
         self.assertIn("raison non enregistrée", self.html[NVME_SANS_SMART])
 
-    def test_6_pont_usb_mention_de_non_comparaison(self):
+    def test_6_pont_usb_sur_deux_sessions_reelles(self):
+        """Deux disques en dock USB le 09/09 : le pont rend un modele generique
+        et une serie en zeros, le rapport le dit au lieu d'imprimer vingt
+        zeros, et complete le type indetermine par le profil mesure."""
+        for nom in (WD_USB, BX_USB):
+            with self.subTest(nom):
+                with gzip.open(USB_0909 / f"{nom}.json.gz", "rt", encoding="utf-8") as fh:
+                    s = json.load(fh)
+                h = ecrire_et_relire(s, self.dossier, nom)
+                self.assertIn("pont USB", h)
+                self.assertIn("Débit non comparé à une classe de support", h)
+                self.assertNotIn("classe inconnue", h)
+                self.assertNotIn('class="plancher"', h)
+                self.assertIn("non exposée par le pont USB", h)
+                # Les zeros restent dans smart_absence (ils expliquent l'echec
+                # d'appariement), mais plus dans la fiche du disque.
+                fiche = h[h.index("Le disque"):h.index("Le test")]
+                self.assertNotIn("00000000000000000000", fiche)
+                self.assertIn("disque derriere un pont USB", h)
+                self.assertIn(TITRES["sain"], h)
+        h = ecrire_et_relire(json.load(gzip.open(USB_0909 / f"{WD_USB}.json.gz", "rt", encoding="utf-8")),
+                             self.dossier, "wd_usb")
+        self.assertIn("profil de débit d’un disque mécanique (ratio fin/début 0.5)", h)
+        h = ecrire_et_relire(json.load(gzip.open(USB_0909 / f"{BX_USB}.json.gz", "rt", encoding="utf-8")),
+                             self.dossier, "bx_usb")
+        self.assertNotIn("profil de débit", h)
+
+    def test_6bis_pont_usb_avec_classe_connue(self):
         s = json.loads(json.dumps(self.sessions[BX500_SAIN]))
         s["disque"]["bus"] = "USB"
         s["disque"]["identite"]["bus"] = "USB"
@@ -185,7 +215,7 @@ class TestInvariantsSurLesFixtures(unittest.TestCase):
         s["disque"]["avertissements"] = avert
         h = ecrire_et_relire(s, self.dossier, "usb")
         self.assertIn("pont USB", h)
-        self.assertIn("non comparé", h)
+        self.assertIn("Débit non comparé à la classe ssd", h)
         self.assertNotIn("plancher ssd", h)
         self.assertNotIn('class="plancher"', h)
         self.assertIn("disque derriere un pont USB", h)             # l'avertissement de la fiche
