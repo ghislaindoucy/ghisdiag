@@ -407,7 +407,7 @@ atelier sont traités.
 > | | État |
 > |---|---|
 > | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés, tout est rejoué en tests (334). **Plan de validation terminé et dernier critère de verdict réglé** ; confronté aux rapports de l'outil commercial utilisé en atelier. **Phase 2 (rapport client HTML) livrée le 08/09** sur la même branche, 30 tests sur les 18 sessions d'atelier ; reste sa validation sur la clé. |
+> | **GhisdiagDisk** — outil disque autonome bootable | phase 0 close, phase 1 écrite le 03/09, **validée en atelier les 04, 05 et 08/09** (24 rapports en Hiren's PE, branche `claude/ghisdiaqdisk-balayage-t1-1c9efb`). Huit défauts trouvés et corrigés, tout est rejoué en tests (334). **Plan de validation terminé et dernier critère de verdict réglé** ; confronté aux rapports de l'outil commercial utilisé en atelier. **Phase 2 (rapport client HTML) livrée le 08/09 et validée sur la clé les 09 et 10/09** (7 rapports écrits par l'exe gelé, dock USB réel, confrontation n° 2 avec l'outil commercial en deux passages). 348 tests. Reste à trancher : appariement SMART par capacité pour les docks USB, critère de régularité du tic, sens des isolés sur SSD (voir « Validation des 09 et 10/09 »). |
 >
 > **Deux points d'attention avant d'engager quoi que ce soit :**
 > 1. Les décisions d'architecture ci-dessous ont été prises après discussion et
@@ -1048,18 +1048,99 @@ Build vérifié (`py -m PyInstaller --clean --noconfirm GhisdiagDisk.spec`, 1,85
 - **Invariant « pont USB »** : aucune des 18 sessions n'a de disque en dock USB. Le test
   part du BX500 sain et injecte l'avertissement produit par `inventory.regles_exclusion`.
 
-**Reste :**
+**Reste :** validation sur la clé ✅ faite les 09 et 10/09 (section suivante) ; l'impression
+A4 réelle n'a pas encore été faite ; option B de l'histogramme (schéma 3, comptage par zone
+aux six bornes) si les bornes 5 et 10 ms sont voulues ; nom d'atelier / logo : option ou
+constante, à décider ; le PDF reste fabriqué au poste de travail (spec §7).
 
-- **Validation sur la clé.** L'exe exige l'élévation (manifeste `uac_admin`) et n'a pas pu
-  être lancé depuis le poste de build ; le chargement du CSS en mode gelé n'a été vérifié
-  qu'en simulant `sys._MEIPASS` sur le vrai `_internal\`. À faire en atelier : un balayage
-  puis ouvrir le `.html` — il doit être **en couleurs** ; `--rapport --client` depuis
-  Windows ; impression A4 réelle ; une vraie session en dock USB (liste dans le LISEZ-MOI).
-- **Option B de l'histogramme** si les bornes 5 et 10 ms sont voulues : comptage par zone
-  aux six bornes dans `scan.py` (schéma 3), quelques lignes, à décider avant la prochaine
-  journée d'atelier pour que les nouvelles sessions les portent.
-- Nom d'atelier / logo : décider s'ils deviennent une option ou une constante.
-- Le PDF reste fabriqué au poste de travail (spec §7).
+### ✅ Validation des 09 et 10/09/2026 — la phase 2 sur la clé, USB contre SATA, confrontation n° 2
+
+Sept sessions en Hiren's PE avec le build du 08/09, toutes figées en fixtures
+(`tests/fixtures/ghisdiagdisk_atelier_20260909/` et `_20260910/`, rejouées dans
+`tests/test_ghisdiagdisk_atelier_0910.py` ; **348 tests**).
+
+**La phase 2 tient sur la clé.** Les sept `.html` ont été écrits par l'exe gelé, CSS
+embarqué, en couleurs. Les deux chemins ont servi : HTML automatique après balayage (sans
+identité) et `--rapport --client` après coup (Coury, Planet18). Aucun des sept JSON ne
+contient de bloc `dossier` : le nom du client est resté dans le HTML. Trois formulations
+corrigées au vu des sorties réelles en dock USB : « classe inconnue » → « une classe de
+support », série en zéros → « non exposée par le pont USB », type « indéterminé » complété
+par le profil de débit mécanique quand il est mesuré.
+
+#### Dock USB contre SATA, même disque, même journée
+
+| WD5000AAKX (dock ASMedia USB 3.0 vs SATA) | USB, 09:05 | SATA, 17:01 |
+|---|---|---|
+| Débit médian | 109,3 Mo/s | 109,2 Mo/s |
+| Écart de médiane par zone (466 zones) | moyen **0,003 ms**, max 0,3 ms | référence |
+| Lecture aléatoire p50 | 14,8 ms | 16,5 ms |
+| Identité | « USB 3.0 Device », série en zéros, clé `SANS-SERIE` faible, SMART absent | série forte, SMART complet |
+
+Sur un mécanique, le dock ne change rien à la mesure de surface ; il fait perdre l'identité
+et le SMART. Sur le BX500 `2240E6743207` en dock : 443 Mo/s contre 519 en SATA le 04/09,
+c'est le plafond du lien, verdict sain — la désactivation de la comparaison à la classe est
+la bonne règle. **Le point utile** : dans les deux cas, `smart_absence` montre que smartctl
+a vu le disque à travers le pont avec sa vraie série (`WD-WCC2E5FK8EU6`, `2240E6743207`).
+Seul l'appariement échoue (série IOCTL nulle, modèle générique). **À décider** : un
+appariement de repli par capacité exacte quand une seule entrée smartctl a cette taille
+(confiance « moyenne ») rendrait série, modèle et SMART aux disques en dock.
+
+#### Un faux positif probable sur le disque de référence
+
+Le WD5000AAKX en SATA sort **« à surveiller »** : 10 blocs à 142,6 à 144,0 ms, cinq par
+zone dans deux zones contiguës (253 à 255 Go), **espacés de 196 à 198 Mio, durée constante**.
+Le même disque via USB huit heures plus tôt n'a rien à cet endroit (max 17 ms), et il était
+sain le 03/09, le 05/09 et le 09/09 matin. Durée constante et espacement constant, c'est un
+événement périodique du firmware pendant une vingtaine de secondes, pas un défaut de
+surface ; la règle « 4 blocs ou plus dans la zone = grappe » les retient parce que le filtre
+du tic ne regarde que le voisinage à 8 blocs. **À décider** : un critère de régularité
+(espacements et durées quasi constants dans la zone = tic, pas grappe), après un second
+passage SATA pour tester la reproductibilité. Le test `TestFauxPositifPeriodique` grave
+l'état actuel de la règle et devra changer avec elle.
+
+#### Confrontation n° 2 : MX500 `2143E5DC7BC9`, 11 080 h, deux passages chacun
+
+| | GhisdiagDisk 08:57 | Concurrent 11:52 | GhisdiagDisk 14:02 | Concurrent ~14:30 |
+|---|---|---|---|---|
+| Verdict | **à surveiller** | **BON** | **à surveiller** | **BON** |
+| 4 premiers Go | 48 à 92 Mo/s, 12 à 14 ms/bloc, **103 blocs à 80 à 110 ms** | rien (0 bloc > 20 ms par 2 Mio) | **216 Mo/s, max 8 ms, 0 anomalie** | rien |
+| Blocs lents ailleurs | 12 en grappe (86 à 94 Go) + 35 isolés à 46 à 83 ms | 0 | 14 en grappe (112, 115, 207) + 39 isolés à 55 à 93 ms | 109 blocs à 20 à 50 ms par 2 Mio, « aucun ralentissement » |
+| SMART | tout à 0 | « tous corrects » | tout à 0 | idem |
+
+Deux enseignements, chacun mesuré :
+
+1. **La bande lente des 4 premiers Go était transitoire, rafraîchie par le firmware.** Le
+   concurrent l'aurait vue à 11:52 (160 à 220 ms par bloc de 2 Mio → sa case « < 500 ms »,
+   à zéro) : elle n'y était plus. Notre lecture de 08:57 a déclenché la réécriture des pages
+   qui peinaient — même mécanisme que le BX500 du 04/09. Conséquence de méthode : **deux
+   outils passés à des heures différentes ne mesurent pas le même disque** ; pour confronter,
+   le concurrent doit passer en premier.
+2. **12 blocs lents aux mêmes offsets exacts dans les deux passages** (zones 98, 135, 186,
+   212 à 231 ; 46 à 83 ms puis 64 à 90 ms). Sur 238 476 blocs, 97 puis 53 lents conservés,
+   le hasard en donnerait 0,02 en commun. Ce sont des pages qui exigent des relectures à
+   chaque passage et que le firmware **n'a pas** rafraîchies : le signal durable de ce disque.
+   Le MX500 sain du même matin (`21132E011D35`, 1 465 h) n'a **aucun** bloc au-dessus de
+   9,9 ms sur toute sa surface. Or ces 12 blocs sont, pour le moteur, des **« isolés »** (un
+   par zone, sous 150 ms) étiquetés « tic périodique d'un firmware sain » : le filtre a été
+   calibré sur des mécaniques (Seagate, un bloc toutes les 58 s). Sur un SSD, un bloc lent
+   lié à la **position** n'est pas un tic. Le verdict de 14:02 est juste, mais grâce aux
+   grappes des zones 112 et 115 — qui, elles, n'étaient pas là à 08:57.
+
+**Ce que ça fixe pour la suite :**
+
+- le **delta entre deux passages** (phase 3, « delta historique ») n'est pas un confort :
+  c'est ce qui sépare une page faible d'un tic. Une comparaison par offset entre deux
+  sessions du même disque est peu coûteuse et tranche seule ;
+- la note « tic périodique d'un firmware sain » ne doit plus être affirmée pour un SSD : sur
+  cette classe, dire « blocs lents isolés, sens à confirmer par un second passage » ;
+- le concurrent a rendu **BON** un disque de 11 000 h avec une bande de 4 Go à 48 Mo/s (qu'il
+  n'a pas pu voir) puis 109 blocs lents (qu'il a vus et ignorés). Son histogramme n'a que
+  trois cases utiles sous 20 ms, et « aucun ralentissement » est imprimé quelle que soit la
+  case « < 50 ms ».
+
+**Message pour le client** : deux passages « à surveiller », des relectures nécessaires aux
+mêmes endroits, une bande lente que le disque a dû réparer lui-même, 11 000 h. Le disque
+fonctionne ; sauvegarder, ne pas y remettre l'unique copie d'un dossier, recontrôler.
 
 ### 📋 Phase 2 — le rapport client : spécification arrêtée le 08/09/2026 (référence)
 
