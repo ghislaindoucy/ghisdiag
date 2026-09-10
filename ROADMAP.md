@@ -397,36 +397,36 @@ atelier sont traités.
 
 ---
 
-## 🔜 Chantiers préparés — point d'entrée
+## 🔜 Prochaines étapes
 
-> | | État |
-> |---|---|
-> | **v2.2.0** — bench thermique joint au diag IA | ✅ **codée le 03/09** (branche `claude/v220-bench-piece-jointe`), section déplacée dans la roadmap ci-dessus. Reste un essai réel : un bench puis un audit IA sur la même machine. |
-> | **GhisdiagDisk** — outil disque autonome bootable | **Déplacé le 10/09/2026 dans son propre dépôt privé** : [ghislaindoucy/ghisdiagdisk](https://github.com/ghislaindoucy/ghisdiagdisk). Phases 0, 1 et 2 faites et validées en atelier (31 sessions, 27 disques). Ici ne reste que le point d'intégration ci-dessous. |
+### v2.2.0 — 📎 reste un essai réel
 
-### GhisdiagDisk — 💽 déplacé dans son propre dépôt (10/09/2026)
+Un bench thermique puis un audit IA sur la même machine, idéalement un bench écourté, pour
+vérifier que le modèle écrit « non mesuré » et pas « sain » (voir la section v2.2.0).
 
-Les deux outils sont **complémentaires** — Ghisdiag diagnostique un Windows qui démarre,
-GhisdiagDisk teste depuis une clé WinPE les disques des machines qui ne démarrent plus —
-mais ils n'ont **aucune dépendance de code**, pas le même cycle de release ni le même
-public. GhisdiagDisk a donc son dépôt (privé, une version payante est prévue) :
-[ghislaindoucy/ghisdiagdisk](https://github.com/ghislaindoucy/ghisdiagdisk), avec son
-ROADMAP propre, repris tel quel des sections qui vivaient ici (08/08 → 10/09/2026).
+### v2.3.0 — 💽 Import du diagnostic disque de GhisdiagDisk 🔜 *prochaine*
 
-Ce que ghisdiag en garde :
+GhisdiagDisk — test de santé disque autonome et bootable (WinPE, lecture seule, rapport
+client HTML) — vit depuis le 10/09/2026 dans son propre dépôt privé,
+[ghislaindoucy/ghisdiagdisk](https://github.com/ghislaindoucy/ghisdiagdisk), avec sa propre
+feuille de route. Les deux outils sont **complémentaires** — Ghisdiag diagnostique un
+Windows qui démarre, GhisdiagDisk les disques des machines qui ne démarrent plus — et n'ont
+**aucune dépendance de code**. Ce qui revient à Ghisdiag, c'est le point d'intégration :
 
-- **le point d'intégration, phase 3** : l'import du JSON de session disque dans le
-  diagnostic IA, **jamais brut** (une session pèse 250 Ko, jusqu'à 832 Ko), via un
-  `digest_disque()` sur le patron de `ai_attachments.py` (budget `MAX_ATTACHMENTS_LEN`,
-  courbe résumée, tri-état) : modèle, série, classe, mode, couverture réelle, verdict et
-  raisons, débit min/médian/max, compteurs SMART bruts, zones dégradées. Par fichier, sans
-  import de code ;
-- `tools\smartctl.exe`, partagé par les deux outils (températures disque ici) ;
-- **l'historique** : les commits d'atelier de la PR #34 (fermée sans merge) et les sections
-  disque de ce ROADMAP restent lisibles sous le tag `archive/ghisdiagdisk-avant-separation`.
-  La sonde de phase 0 (`atelier_winpe_probe.py`, `WinPEProbe.spec`) a suivi le module.
+- **une session GhisdiagDisk jointe au diagnostic IA**, comme le bench thermique l'est depuis
+  la v2.2.0 : même mécanique (`ai_attachments.py`, budget `MAX_ATTACHMENTS_LEN`, tri-état,
+  courbe résumée à 20 points), un `digest_disque()` de quelques centaines de caractères —
+  modèle, série, classe, mode, couverture réelle, verdict et raisons, débit min / médian /
+  max, compteurs SMART bruts, zones dégradées. **Jamais le JSON brut** (250 Ko, jusqu'à
+  832 Ko). Par fichier : Ghisdiag lit les sessions de `rapports_disque\` de la clé, sans
+  importer de code ;
+- le schéma de session est versionné côté GhisdiagDisk (`schema: 2`, migration au chargement),
+  ce qui rend cet import sûr dans la durée ;
+- `tools\smartctl.exe` reste partagé par les deux outils (températures disque ici).
 
----
+L'historique du chantier disque (08/08 → 10/09/2026, 456 lignes de ce ROADMAP) est repris
+tel quel dans le dépôt GhisdiagDisk et reste lisible ici sous le tag
+`archive/ghisdiagdisk-avant-separation` (PR #34, fermée sans merge).
 
 ### Plus tard / opportuniste
 
