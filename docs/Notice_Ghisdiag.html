@@ -164,7 +164,7 @@ footer.pagefoot{
     <span class="badge">Dossier portable</span>
     <span class="badge">Licence non-commerciale</span>
   </div>
-  <div class="version">Version 2.2.0 — Document généré le 3 septembre 2026</div>
+  <div class="version">Version 2.3.0 — Document généré le 13 septembre 2026</div>
 </div>
 
 <!-- ============ TOC ============ -->
@@ -355,7 +355,7 @@ footer.pagefoot{
 <p>Les températures proviennent de <b>plusieurs sources</b>, pour rester fiables sur tout type de machine : le <b>CPU</b> et les ventilateurs de carte mère via <b>LibreHardwareMonitor</b> (capteurs MSR, avec un pilote signé installé automatiquement au premier lancement) ; le <b>GPU NVIDIA</b> via NVML ; les <b>disques</b> via S.M.A.R.T. La température CPU est rafraîchie en continu dans le moniteur temps réel. Si elle n'apparaît pas, l'application en indique la raison (pilote de capteurs manquant, application non lancée en administrateur…).</p>
 
 <div class="callout">
-  <b>CPU très récent non reconnu ?</b> Le moteur de capteurs (LibreHardwareMonitor) est <b>remplaçable sans réinstaller Ghisdiag</b>. Placez une version plus récente de <code>LibreHardwareMonitorLib.dll</code> et de ses fichiers compagnons dans un dossier nommé <code>tools</code>, situé soit <b>à côté de <code>Ghisdiag.exe</code></b>, soit dans <code>%LOCALAPPDATA%\Ghisdiag\tools</code>. Au lancement suivant, Ghisdiag détecte et utilise automatiquement cette version ; en son absence, il revient à la version embarquée. Pratique pour prendre en charge un processeur sorti après cette version de l'outil, sans rien recompiler.
+  <b>CPU très récent non reconnu ?</b> Le moteur de capteurs (LibreHardwareMonitor) est <b>remplaçable sans réinstaller Ghisdiag</b>. Placez une version plus récente de <code>LibreHardwareMonitorLib.dll</code> et de ses fichiers compagnons dans un dossier nommé <code>tools</code>, <b>à côté de <code>Ghisdiag.exe</code></b>. Au lancement suivant, Ghisdiag détecte et utilise automatiquement cette version ; en son absence, il revient à la version embarquée. <i>(Depuis la 2.3.0, pour raisons de sécurité, l'application ne charge plus de bibliothèque depuis <code>%LOCALAPPDATA%</code> — un dossier modifiable sans droits administrateur.)</i> Pratique pour prendre en charge un processeur sorti après cette version de l'outil, sans rien recompiler.
 </div>
 
 <h3>Métriques calculées</h3>
@@ -634,7 +634,7 @@ footer.pagefoot{
 <p>Vous avez aimé mon travail ? Si le logiciel vous est utile et que vous avez envie de m'offrir un café, vous pouvez me récompenser via PayPal : <a href="https://www.paypal.com/paypalme/spiriteom">paypal.me/spiriteom</a>. Merci, ça encourage à continuer&nbsp;! 🙏</p>
 
 <div class="callout">
-  Ce document a été établi à partir du code source de Ghisdiag version 2.2.0. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
+  Ce document a été établi à partir du code source de Ghisdiag version 2.3.0. En cas de divergence avec une version ultérieure de l'application, le comportement réel observé dans le logiciel fait foi.
 </div>
 </section>
 

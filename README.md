@@ -2,7 +2,7 @@
 
 > **Diagnostic Windows professionnel + Analyse IA.** Découvrez tous les soucis de votre PC en 2 clics, puis laissez l'IA de votre choix (Claude, Mistral, GPT, Grok ou Gemini) vous générer un plan d'action détaillé.
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.2.0)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.3.0)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
 ![Windows Only](https://img.shields.io/badge/platform-Windows%20Only-0078D4.svg)
@@ -159,6 +159,14 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ---
 
 ## 📝 Changelog
+
+### v2.3.0 (Septembre 2026)
+🖥️ **Fiche machine à l'ouverture + durcissement sécurité**
+- **Nouvel onglet « Machine »** en tête de Setup / MAJ, affiché à l'ouverture : identité, Windows, processeur, mémoire, stockage (avec BitLocker), **comptes locaux et Microsoft**, sécurité (TPM, Secure Boot), batterie, réseau, périphériques en erreur — plus des « Points d'attention » triés par gravité et un bouton « Copier la fiche ». Lecture seule ; une valeur non lue n'est jamais présentée comme une valeur.
+- **Dépannage → imprimante par défaut** en un clic, et raccourci vers l'ancien gestionnaire « Périphériques et imprimantes ».
+- 🔒 **Sécurité (audit interne)** — quatre correctifs : injection de commande PowerShell via les arguments des scripts (SSID, nom d'imprimante… exécutés en admin) ; DLL capteurs qui pouvaient être chargées depuis un dossier modifiable sans droits ; clé API Gemini qui transitait par l'URL ; chiffrement des clés API renforcé (**DPAPI** de Windows, migration automatique).
+
+[📖 Notes complètes →](./RELEASE_NOTES_v2.3.0.md)
 
 ### v2.2.0 (Septembre 2026)
 📎 **Le bench thermique du jour rejoint l'audit IA**
