@@ -6,6 +6,7 @@ Exécute les collecteurs PowerShell et agrège les données.
 import subprocess
 import json
 import os
+import re
 import sys
 import time
 import logging
@@ -64,6 +65,136 @@ def _validate_script_path(script_path: Path, base_path: Path) -> bool:
         return resolved.is_file() and resolved.suffix.lower() == ".ps1"
     except (ValueError, OSError):
         return False
+
+
+# ── Passage d'arguments aux scripts PowerShell ──────────────────────────────
+#
+# On NE construit JAMAIS la ligne de commande avec les valeurs. Les anciennes
+# versions faisaient `& 'script.ps1' -Name 'valeur'` en texte, avec deux trous :
+#   - une valeur commençant par « - » était injectée sans guillemets ;
+#   - l'échappement ne doublait que l'apostrophe ASCII, pas « ’ » / « ‘ » que
+#     PowerShell traite aussi comme des guillemets.
+# Un SSID, un nom d'imprimante ou un chemin bien choisi exécutait alors du code
+# arbitraire dans le PowerShell élevé (démontré). Les mots de passe, eux,
+# atterrissaient dans le journal Script Block Logging.
+#
+# Désormais : les arguments partent en JSON sur l'entrée standard, et le script
+# est appelé par SPLATTING (`& $script @params`). Une valeur reste toujours une
+# donnée, jamais du code — quels que soient ses caractères. Bénéfice au passage :
+# un mot de passe commençant par « - » fonctionne enfin, et aucune valeur ne
+# transite plus par la ligne de commande visible du processus.
+_WRAPPER = (
+    "$ErrorActionPreference='Stop'; "
+    "[Console]::InputEncoding=[System.Text.Encoding]::UTF8; "
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+    "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+    "$__in=[Console]::In.ReadToEnd()|ConvertFrom-Json; "
+    "$__p=@{}; "
+    "foreach($__e in $__in.args.PSObject.Properties){$__p[$__e.Name]=$__e.Value}; "
+    "& $__in.script @__p"
+)
+
+# Cache nom de script -> {param_minuscule: est_un_switch}. Le bloc param() d'un
+# collecteur ne change pas en cours d'exécution.
+_PARAM_CACHE: dict[str, dict[str, bool]] = {}
+
+
+def _script_params(script_path: Path) -> dict[str, bool]:
+    """Paramètres déclarés par le bloc param() du script : nom (minuscule) -> switch ?
+
+    Sert à valider les noms d'arguments fournis par l'appelant (on rejette un
+    « -Nimporte ») et à savoir quels arguments sont des interrupteurs (sans
+    valeur qui suit) plutôt que des paramètres à valeur.
+    """
+    key = str(script_path).lower()
+    cached = _PARAM_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    params: dict[str, bool] = {}
+    try:
+        text = script_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return params
+
+    block = _extract_param_block(text)
+    if block:
+        # Chaque paramètre : d'éventuelles annotations `[...]` puis $Nom. Le type
+        # `[switch]` (quelle que soit la casse) marque un interrupteur, qui n'a
+        # pas de valeur qui le suit dans la liste d'arguments.
+        for pm in re.finditer(r"((?:\[[^\]]*\]\s*)*)\$([A-Za-z_]\w*)", block):
+            annotations = re.findall(r"\[([^\]]+)\]", pm.group(1))
+            is_switch = any(a.strip().lower() == "switch" for a in annotations)
+            params[pm.group(2).lower()] = is_switch
+    _PARAM_CACHE[key] = params
+    return params
+
+
+def _extract_param_block(text: str) -> str:
+    """Contenu du premier bloc param(...), parenthèses équilibrées.
+
+    Une recherche naïve `\\(.*?\\)` s'arrête au premier « ) », or les
+    annotations `[ValidateSet(...)]` / `[Parameter(...)]` en contiennent : le
+    bloc était tronqué et les paramètres passaient inaperçus (validation
+    désactivée en silence pour spooler_fix, entre autres)."""
+    m = re.search(r"\bparam\s*\(", text, re.IGNORECASE)
+    if not m:
+        return ""
+    depth = 0
+    start = m.end()
+    for i in range(m.end() - 1, len(text)):
+        c = text[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+    return ""
+
+
+def _build_ps_args(script_path: Path, extra_args: list) -> dict:
+    """Transforme la liste plate [-Nom, valeur, -Interrupteur, …] en dict de
+    splatting {Nom: valeur/True}, en validant chaque nom contre le script.
+
+    Lève ValueError sur un nom de paramètre inconnu ou une valeur orpheline :
+    une faute de frappe d'appelant ne doit pas passer en silence.
+    """
+    declared = _script_params(script_path)
+    result: dict[str, object] = {}
+    i = 0
+    n = len(extra_args)
+    while i < n:
+        token = extra_args[i]
+        if not isinstance(token, str) or not token.startswith("-"):
+            raise ValueError(f"Argument inattendu (nom de paramètre attendu) : {token!r}")
+        name = token[1:]
+        key = name.lower()
+        if declared and key not in declared:
+            raise ValueError(f"Paramètre inconnu pour {script_path.name} : -{name}")
+        if declared.get(key, False):
+            result[name] = True          # interrupteur : pas de valeur qui suit
+            i += 1
+        else:
+            if i + 1 >= n:
+                raise ValueError(f"Valeur manquante pour -{name}")
+            result[name] = extra_args[i + 1]   # valeur telle quelle, même « -x »
+            i += 2
+    return result
+
+
+def _ps_argv(ps_exe: str) -> list:
+    return [ps_exe, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-Command", _WRAPPER]
+
+
+def _ps_payload(script_path: Path, args: dict) -> bytes:
+    """JSON envoyé sur stdin : chemin du script + arguments. ASCII strict pour
+    ne dépendre d'aucun réglage de page de code du tuyau."""
+    return json.dumps(
+        {"script": str(script_path), "args": args},
+        ensure_ascii=True,
+    ).encode("ascii")
 
 
 def run_collector(name: str, script_path: Path, base_path: Path,
@@ -144,32 +275,21 @@ def run_collector(name: str, script_path: Path, base_path: Path,
 
 def run_ps_action(script_rel: str, extra_args: list[str], timeout: int = 60) -> dict:
     """Exécute un script PowerShell de dépannage et retourne le JSON parsé.
-    Même forçage UTF-8 que run_collector pour éviter les problèmes CP850/OEM."""
+
+    Les arguments passent en JSON sur stdin, jamais dans la ligne de commande
+    (voir _WRAPPER) : une valeur reste une donnée, pas du code injectable."""
     base     = get_base_path()
     script_p = (base / script_rel).resolve()
 
     if not _validate_script_path(script_p, base):
         raise RuntimeError(f"Chemin de script invalide : {script_rel}")
 
-    escaped_path = str(script_p).replace("'", "''")
-
-    args_parts = []
-    for arg in extra_args:
-        if arg.startswith("-"):
-            args_parts.append(arg)
-        else:
-            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
-    args_str = " ".join(args_parts)
-
-    ps_cmd = (
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
-        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
-        f"& '{escaped_path}' {args_str}"
-    )
+    ps_args = _build_ps_args(script_p, extra_args)
+    payload = _ps_payload(script_p, ps_args)
 
     result = subprocess.run(
-        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
-         "-Command", ps_cmd],
+        _ps_argv(_PS_EXE),
+        input=payload,
         capture_output=True,
         timeout=timeout,
         shell=False,
@@ -195,29 +315,23 @@ def run_ps_stream(script_rel: str, extra_args: list[str], on_line, timeout: int 
     if not _validate_script_path(script_p, base):
         raise RuntimeError(f"Chemin de script invalide : {script_rel}")
 
-    escaped_path = str(script_p).replace("'", "''")
-
-    args_parts = []
-    for arg in extra_args:
-        if arg.startswith("-"):
-            args_parts.append(arg)
-        else:
-            args_parts.append(f"'{arg.replace(chr(39), chr(39) * 2)}'")
-    args_str = " ".join(args_parts)
-
-    ps_cmd = (
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
-        "$OutputEncoding=[System.Text.Encoding]::UTF8; "
-        f"& '{escaped_path}' {args_str}"
-    )
+    ps_args = _build_ps_args(script_p, extra_args)
+    payload = _ps_payload(script_p, ps_args)
 
     proc = subprocess.Popen(
-        [_PS_EXE, "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass",
-         "-Command", ps_cmd],
+        _ps_argv(_PS_EXE),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         shell=False,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+    # Écrire le JSON puis fermer stdin : le wrapper attend un ReadToEnd(). Sans
+    # cette fermeture, le script bloquerait indéfiniment.
+    try:
+        proc.stdin.write(payload)
+        proc.stdin.close()
+    except OSError:
+        pass
     try:
         for raw in proc.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
