@@ -88,7 +88,9 @@ PROVIDERS: dict[str, dict] = {
         "model":       "gemini-2.5-pro",
         "model_label": "Gemini 2.5 Pro",
         "key_pref":    "gemini_api_key",
-        # {model} est substitué + la clé est ajoutée en ?key= dans _call_gemini.
+        # {model} est substitué ; la clé part dans l'en-tête x-goog-api-key,
+        # JAMAIS dans l'URL (une URL se retrouve dans les journaux et les
+        # messages d'erreur — la clé fuyait).
         "url":         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
     },
 }
@@ -311,8 +313,8 @@ def _call_openai(provider: dict, api_key: str, user_prompt: str) -> str:
 
 
 def _call_gemini(provider: dict, api_key: str, user_prompt: str) -> str:
-    """Famille Google Gemini (generateContent). Clé en ?key=, system_instruction séparé."""
-    url = provider["url"].format(model=provider["model"]) + f"?key={api_key}"
+    """Famille Google Gemini (generateContent). Clé en en-tête, system_instruction séparé."""
+    url = provider["url"].format(model=provider["model"])
     payload = {
         "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
@@ -320,7 +322,9 @@ def _call_gemini(provider: dict, api_key: str, user_prompt: str) -> str:
     }
 
     response = requests.post(
-        url, json=payload, headers={"Content-Type": "application/json"}, timeout=provider.get("timeout", AI_TIMEOUT)
+        url, json=payload,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        timeout=provider.get("timeout", AI_TIMEOUT),
     )
     _raise_for_status(response, provider)
 
@@ -379,6 +383,18 @@ _API_DISPATCH = {
     "anthropic": _call_anthropic,
     "gemini":    _call_gemini,
 }
+
+
+def _redact(text, api_key: str) -> str:
+    """Retire la clé API d'un message avant journalisation ou affichage.
+
+    Filet de sécurité : la clé ne devrait plus apparaître dans aucun message
+    (elle ne passe plus par l'URL), mais un corps d'erreur d'un fournisseur
+    pourrait la renvoyer. On ne la laisse jamais sortir en clair."""
+    s = str(text)
+    if api_key and len(api_key) >= 8 and api_key in s:
+        s = s.replace(api_key, "***")
+    return s
 
 
 def _is_invalid_key_400(response) -> bool:
@@ -463,8 +479,9 @@ def analyze_diagnostic(
         raise RuntimeError(f"Timeout {label} — L'analyse a pris trop de temps. Réessayez plus tard.")
 
     except requests.exceptions.ConnectionError as e:
-        logger.error(f"Erreur de connexion {label}: {e}")
-        raise RuntimeError(f"Impossible de contacter {label}: {e}")
+        msg = _redact(e, api_key)
+        logger.error(f"Erreur de connexion {label}: {msg}")
+        raise RuntimeError(f"Impossible de contacter {label}: {msg}")
 
     except json.JSONDecodeError as e:
         logger.error(f"Erreur parsing JSON {label}: {e}")
@@ -476,7 +493,7 @@ def analyze_diagnostic(
 
     except Exception as e:
         logger.exception(f"Erreur inattendue lors de l'analyse {label}")
-        raise RuntimeError(f"Erreur analyse {label}: {e}")
+        raise RuntimeError(f"Erreur analyse {label}: {_redact(e, api_key)}")
 
 
 def test_api_key(provider_id: str, api_key: str) -> tuple[str, str]:
@@ -508,14 +525,14 @@ def test_api_key(provider_id: str, api_key: str) -> tuple[str, str]:
                 timeout=10,
             )
         elif provider["api"] == "gemini":
-            url = provider["url"].format(model=provider["model"]) + f"?key={api_key}"
+            url = provider["url"].format(model=provider["model"])
             response = requests.post(
                 url,
                 json={
                     "contents": [{"role": "user", "parts": [{"text": "Bonjour"}]}],
                     "generationConfig": {"maxOutputTokens": 10},
                 },
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 timeout=10,
             )
         else:  # openai-compatible (utilise le bon champ tokens, sans sampling)
@@ -537,11 +554,11 @@ def test_api_key(provider_id: str, api_key: str) -> tuple[str, str]:
             return ("ok", f"✅  Clé API {label} valide !")
         if response.status_code in (401, 403) or _is_invalid_key_400(response):
             return ("invalid", f"❌  Clé API {label} invalide")
-        return ("error", f"Erreur {response.status_code}: {response.text[:200]}")
+        return ("error", f"Erreur {response.status_code}: {_redact(response.text[:200], api_key)}")
 
     except requests.exceptions.Timeout:
         return ("error", f"Timeout — Impossible de contacter {label}")
     except requests.exceptions.ConnectionError:
         return ("error", "Erreur de connexion")
     except Exception as e:
-        return ("error", f"Erreur: {e}")
+        return ("error", f"Erreur: {_redact(e, api_key)}")
