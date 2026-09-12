@@ -127,6 +127,7 @@ logger = logging.getLogger(__name__)
 
 from orchestrator import DiagnosticOrchestrator, VERSION, AUTHORS, COLLECTORS, run_ps_action, run_ps_stream
 from report.generator import ReportGenerator, DEFAULT_REPORTS_DIR
+import machine_info
 
 try:
     import ai_analyzer
@@ -633,6 +634,11 @@ class GhisdiagApp(tk.Tk):
 
         inner.bind("<Configure>", _sync)
         canvas.bind("<Configure>", _sync)
+        # _sync fixe la hauteur de `inner` : un contenu ajouté APRÈS coup (relevé
+        # asynchrone) change sa hauteur demandée mais pas sa taille réelle, donc
+        # aucun <Configure> ne part et la barre n'apparaît qu'au prochain
+        # redimensionnement de la fenêtre. Qui remplit tard appelle resync().
+        inner.resync = lambda: (inner.update_idletasks(), _sync())
 
         # La molette est routée par _on_mousewheel (un seul bind_all pour toute
         # l'app) : chaque zone s'enregistre par le chemin de son canvas.
@@ -4889,26 +4895,324 @@ class GhisdiagApp(tk.Tk):
         sub_nb = ttk.Notebook(parent, style="Setup.TNotebook")
         sub_nb.pack(fill="both", expand=True)
 
-        # « Heure & veille » en tête : sur une machine fraîchement réinstallée,
-        # remettre l'horloge à l'heure est le préalable à tout le reste (winget,
-        # activation, certificats HTTPS refusent une horloge fausse).
+        # « Machine » en tête : c'est ce que l'app affiche à l'ouverture, et ce
+        # qu'un technicien veut voir avant tout geste (modèle, série, stockage,
+        # comptes, BitLocker). « Heure & veille » suit : sur une machine
+        # fraîchement réinstallée, remettre l'horloge à l'heure est le préalable
+        # au reste (winget, activation, certificats HTTPS refusent une horloge
+        # fausse).
+        machine_frame  = tk.Frame(sub_nb, bg=BG)
         heure_frame    = tk.Frame(sub_nb, bg=BG)
         comptes_frame  = tk.Frame(sub_nb, bg=BG)
         maj_frame      = tk.Frame(sub_nb, bg=BG)
         pcneuf_frame   = tk.Frame(sub_nb, bg=BG)
         recup_frame    = tk.Frame(sub_nb, bg=BG)
 
+        sub_nb.add(machine_frame, text="  Machine  ")
         sub_nb.add(heure_frame,   text="  Heure & veille  ")
         sub_nb.add(comptes_frame, text="  Comptes  ")
         sub_nb.add(maj_frame,     text="  Mises à jour  ")
         sub_nb.add(pcneuf_frame,  text="  PC Neuf  ")
         sub_nb.add(recup_frame,   text="  Récupération  ")
 
+        self._build_machine_panel(machine_frame)
         self._build_time_panel(heure_frame)
         self._build_comptes_panel(comptes_frame)
         self._build_maj_panel(maj_frame)
         self._build_pcneuf_panel(pcneuf_frame)
         self._build_recuperation_panel(recup_frame)
+
+    # ── Panneau Machine (fiche de la machine) ─────────────────────────────────
+
+    def _build_machine_panel(self, parent: tk.Frame):
+        inner = self._scrollable(parent)
+
+        head = tk.Frame(inner, bg=BG, pady=16)
+        head.pack(fill="x", padx=28)
+        tk.Label(head, text="🖥  Fiche machine",
+                 font=("Segoe UI", 13, "bold"), bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(head,
+                 text="Ce qu'il faut savoir avant d'intervenir : matériel, Windows, "
+                      "stockage, comptes et sécurité. Lecture seule.",
+                 font=("Segoe UI", 9), bg=BG, fg=FG_MUTED,
+                 wraplength=760, justify="left").pack(anchor="w", pady=(2, 10))
+
+        bar = tk.Frame(head, bg=BG)
+        bar.pack(fill="x")
+        self._machine_btn_refresh = tk.Button(
+            bar, text="🔄  Actualiser", font=("Segoe UI", 9),
+            bg=SURFACE2, fg=FG, activebackground=ACCENT, relief="flat",
+            cursor="hand2", padx=12, pady=5, command=self._machine_refresh)
+        self._machine_btn_refresh.pack(side="left")
+        self._machine_btn_copy = tk.Button(
+            bar, text="📋  Copier la fiche", font=("Segoe UI", 9),
+            bg=SURFACE2, fg=FG, activebackground=ACCENT, relief="flat",
+            cursor="hand2", padx=12, pady=5, state="disabled",
+            command=self._machine_copy)
+        self._machine_btn_copy.pack(side="left", padx=(6, 0))
+        self._machine_status_var = tk.StringVar(value="")
+        tk.Label(bar, textvariable=self._machine_status_var, font=("Segoe UI", 9),
+                 bg=BG, fg=FG_DIM).pack(side="left", padx=(12, 0))
+
+        self._machine_inner = inner
+        self._machine_body = tk.Frame(inner, bg=BG)
+        self._machine_body.pack(fill="x", padx=28, pady=(0, 16))
+        self._machine_data = None
+        self._machine_busy = False
+        self.after(500, self._machine_refresh)
+
+    def _machine_refresh(self):
+        if self._machine_busy:
+            return
+        self._machine_busy = True
+        self._machine_btn_refresh.configure(state="disabled")
+        self._machine_status_var.set("⏳  Relevé en cours (quelques secondes)…")
+
+        def _worker():
+            try:
+                data = run_ps_action("collectors/machine_info.ps1", [], timeout=120)
+                def _done():
+                    self._machine_busy = False
+                    self._machine_btn_refresh.configure(state="normal")
+                    self._machine_data = data
+                    try:
+                        self._render_machine_sheet(self._machine_body, data)
+                        self._machine_inner.resync()
+                    except Exception as exc:
+                        # Une fiche partielle vaut mieux qu'une page blanche muette.
+                        logger.exception("Rendu de la fiche machine")
+                        self._machine_status_var.set(f"✗ Affichage incomplet : {exc}")
+                        return
+                    self._machine_btn_copy.configure(state="normal")
+                    self._machine_status_var.set(
+                        f"Relevé du {machine_info.fmt_date(data.get('collected_at'), True)}")
+                self.after(0, _done)
+            except Exception as exc:
+                logger.warning("Fiche machine : %s", exc)
+                _exc = exc
+                def _err(e=_exc):
+                    self._machine_busy = False
+                    self._machine_btn_refresh.configure(state="normal")
+                    self._machine_status_var.set(f"✗ Relevé impossible : {e}")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _machine_copy(self):
+        if not self._machine_data:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(machine_info.summary_text(self._machine_data))
+        self._machine_status_var.set("✓ Fiche copiée dans le presse-papiers")
+
+    @staticmethod
+    def _render_machine_sheet(body: tk.Frame, data: dict):
+        """Construit la fiche dans `body` (vidé d'abord). Statique : testable
+        sans instancier l'application."""
+        mi = machine_info
+        level_fg = {"ok": GREEN, "warn": YELLOW, "crit": RED, "dim": FG_MUTED, "info": ACCENT}
+        for w in body.winfo_children():
+            w.destroy()
+
+        def card(title):
+            f = tk.Frame(body, bg=SURFACE, padx=16, pady=12)
+            f.pack(fill="x", pady=(0, 10))
+            tk.Label(f, text=title, font=("Segoe UI", 11, "bold"),
+                     bg=SURFACE, fg=FG).pack(anchor="w", pady=(0, 6))
+            return f
+
+        def row(parent, label, value, level=None):
+            r = tk.Frame(parent, bg=SURFACE)
+            r.pack(fill="x", pady=1)
+            tk.Label(r, text=label, width=20, anchor="w", font=("Segoe UI", 9),
+                     bg=SURFACE, fg=FG_DIM).pack(side="left", anchor="n")
+            tk.Label(r, text=value, anchor="w", justify="left", wraplength=620,
+                     font=("Segoe UI", 9), bg=SURFACE,
+                     fg=level_fg.get(level, FG)).pack(side="left", fill="x")
+            return r
+
+        def usage(parent, label, pct, level, text):
+            r = tk.Frame(parent, bg=SURFACE)
+            r.pack(fill="x", pady=2)
+            tk.Label(r, text=label, width=20, anchor="w", font=("Segoe UI", 9),
+                     bg=SURFACE, fg=FG_DIM).pack(side="left")
+            track = tk.Frame(r, bg=SURFACE2, width=200, height=10)
+            track.pack(side="left")
+            track.pack_propagate(False)
+            p = mi._num(pct)
+            if p is not None:
+                tk.Frame(track, bg=level_fg.get(level, ACCENT)).place(
+                    x=0, y=0, relheight=1, relwidth=max(0.0, min(1.0, p / 100)))
+            tk.Label(r, text=text, anchor="w", font=("Segoe UI", 9),
+                     bg=SURFACE, fg=FG).pack(side="left", padx=(10, 0))
+
+        m   = data.get("machine") or {}
+        win = data.get("windows") or {}
+        cpu = data.get("cpu") or {}
+        mem = data.get("memory") or {}
+        sec = data.get("security") or {}
+        bat = data.get("battery") or {}
+
+        # ── Points d'attention ────────────────────────────────────────────────
+        pts = mi.attention_points(data)
+        if pts:
+            c = card("⚠  Points d'attention")
+            for level, text in pts:
+                tk.Label(c, text=f"•  {text}", anchor="w", justify="left", wraplength=760,
+                         font=("Segoe UI", 9), bg=SURFACE,
+                         fg=level_fg.get(level, FG)).pack(anchor="w", pady=1)
+
+        # ── Identité ──────────────────────────────────────────────────────────
+        c = card("💻  Identité")
+        row(c, "Modèle", mi.model_label(m))
+        chassis = mi.chassis_label(m.get("chassis_types"), bool(bat.get("present")))
+        if chassis:
+            row(c, "Type", chassis)
+        row(c, "N° de série", m.get("serial") or mi.NON_LU)
+        row(c, "Nom du PC", m.get("name") or mi.NON_LU)
+        row(c, "Rattachement", mi.join_label(m))
+        row(c, "BIOS", f"{m.get('bios_version') or mi.NON_LU} du {mi.fmt_date(m.get('bios_date'))}")
+
+        # ── Windows ───────────────────────────────────────────────────────────
+        c = card("🪟  Windows")
+        row(c, "Version", f"{mi.windows_label(win)} · {win.get('architecture') or '?'}")
+        status = win.get("license_status")
+        row(c, "Activation", mi.license_label(win),
+            None if status is None else ("ok" if int(status) == 1 else "crit"))
+        row(c, "Installé le", mi.fmt_date(win.get("install_date")))
+        up_warn = (mi._num(win.get("uptime_hours")) or 0) >= mi.UPTIME_WARN_H
+        row(c, "Démarré depuis",
+            f"{mi.fmt_uptime(win.get('uptime_hours'))} (le {mi.fmt_date(win.get('last_boot'), True)})",
+            "warn" if up_warn else None)
+        if win.get("reboot_pending"):
+            row(c, "Redémarrage", "en attente (mises à jour)", "warn")
+
+        # ── Processeur, mémoire, graphique ────────────────────────────────────
+        c = card("⚙  Processeur et mémoire")
+        row(c, "Processeur", f"{cpu.get('name') or mi.NON_LU} — {cpu.get('cores') or '?'} cœurs / "
+                             f"{cpu.get('threads') or '?'} threads")
+        load = cpu.get("load_percent")
+        usage(c, "Charge (sur 1 s)", load, mi.usage_level(load, 80, 95),
+              f"{load} %" if load is not None else mi.NON_LU)
+        mem_pct = mem.get("used_percent")
+        usage(c, "Mémoire utilisée", mem_pct, mi.usage_level(mem_pct, mi.RAM_WARN, mi.RAM_CRIT),
+              f"{mem_pct} % — {mi.fmt_size_gb(mem.get('used_gb'))} sur {mi.fmt_size_gb(mem.get('total_gb'))}"
+              if mem_pct is not None else mi.NON_LU)
+        row(c, "Barrettes", mi.memory_modules_label(mem))
+        for g in mi.as_list(data.get("gpu")):
+            if isinstance(g, dict):
+                row(c, "Graphique", f"{g.get('name')} — pilote {g.get('driver_version') or '?'} "
+                                    f"du {mi.fmt_date(g.get('driver_date'))}",
+                    "warn" if mi.is_basic_display(g) else None)
+
+        # ── Stockage ──────────────────────────────────────────────────────────
+        c = card("💾  Stockage")
+        readable = bool(sec.get("bitlocker_readable"))
+        groups, orphans = mi.volumes_by_disk(data)
+
+        def volume_rows(vols):
+            for v in vols:
+                bl = mi.bitlocker_label(v, readable)
+                usage(c, f"   {v.get('letter') or '?'}", v.get("used_percent"), mi.volume_level(v),
+                      f"{v.get('used_percent', '?')} % — {mi.volume_label(v)}" + (f" · {bl}" if bl else ""))
+
+        for d, vols in groups:
+            health, level = mi.disk_health(d)
+            r = tk.Frame(c, bg=SURFACE)
+            r.pack(fill="x", pady=(6, 1))
+            tk.Label(r, text=mi.disk_label(d), anchor="w", font=("Segoe UI", 9, "bold"),
+                     bg=SURFACE, fg=FG).pack(side="left")
+            tk.Label(r, text=f"  ·  {health}", anchor="w", font=("Segoe UI", 9),
+                     bg=SURFACE, fg=level_fg.get(level, FG)).pack(side="left")
+            volume_rows(vols)
+        if orphans:
+            tk.Label(c, text="Hors disque physique (lecteurs virtuels, réseau)", anchor="w",
+                     font=("Segoe UI", 9, "bold"), bg=SURFACE, fg=FG_DIM).pack(anchor="w", pady=(6, 1))
+            volume_rows(orphans)
+        if not groups and not orphans:
+            row(c, "Disques", mi.NON_LU, "dim")
+
+        # ── Comptes ───────────────────────────────────────────────────────────
+        c = card("👤  Comptes")
+        shown, hidden = mi.visible_accounts(data.get("accounts"))
+        grid = tk.Frame(c, bg=SURFACE)
+        grid.pack(fill="x")
+        for col, title in enumerate(("Compte", "Type", "Rôle", "État", "Dernière activité")):
+            tk.Label(grid, text=title, font=("Segoe UI", 9, "bold"), bg=SURFACE,
+                     fg=FG_DIM, anchor="w").grid(row=0, column=col, sticky="w", padx=(0, 18), pady=(0, 2))
+        line = 1
+        for a in shown:
+            name = a.get("name") or "?"
+            if a.get("full_name") and a["full_name"] != name:
+                name += f" ({a['full_name']})"
+            cells = (
+                (name, FG),
+                (mi.account_kind(a), ACCENT if a.get("principal_source") == "MicrosoftAccount" else FG),
+                ("Administrateur" if a.get("is_admin") else "Standard", FG),
+                ("Actif" if a.get("enabled") else "Désactivé", FG if a.get("enabled") else FG_MUTED),
+                (mi.fmt_date(mi.last_activity(a)) if mi.last_activity(a) else "jamais", FG_DIM),
+            )
+            for col, (text, fg) in enumerate(cells):
+                tk.Label(grid, text=text, font=("Segoe UI", 9), bg=SURFACE, fg=fg,
+                         anchor="w").grid(row=line, column=col, sticky="w", padx=(0, 18), pady=1)
+            line += 1
+        for p in mi.as_list(data.get("other_profiles")):
+            if not isinstance(p, dict):
+                continue
+            cells = (p.get("profile_path") or "?", mi.profile_kind(p), "—", "Profil",
+                     mi.fmt_date(p.get("last_use")))
+            for col, text in enumerate(cells):
+                tk.Label(grid, text=text, font=("Segoe UI", 9), bg=SURFACE, fg=FG,
+                         anchor="w").grid(row=line, column=col, sticky="w", padx=(0, 18), pady=1)
+            line += 1
+        if hidden:
+            tk.Label(c, text=f"{hidden} compte(s) intégré(s) désactivé(s) masqué(s) "
+                             "(Invité, DefaultAccount…)",
+                     font=("Segoe UI", 8), bg=SURFACE, fg=FG_MUTED).pack(anchor="w", pady=(6, 0))
+
+        # ── Sécurité ──────────────────────────────────────────────────────────
+        c = card("🛡  Sécurité")
+        row(c, "Antivirus", *mi.antivirus_label(sec))
+        row(c, "TPM", *mi.tpm_label(sec))
+        row(c, "Secure Boot", *mi.secure_boot_label(sec))
+        row(c, "Firmware", sec.get("firmware_type") or mi.NON_LU)
+        if not readable:
+            row(c, "BitLocker", f"{mi.NON_LU} (droits administrateur requis)", "dim")
+
+        # ── Batterie ──────────────────────────────────────────────────────────
+        if bat.get("present"):
+            c = card("🔋  Batterie")
+            charge = bat.get("charge_percent")
+            usage(c, "Charge", charge, None,
+                  f"{charge} %" + (" · sur secteur" if bat.get("on_ac") else "")
+                  if charge is not None else mi.NON_LU)
+            wear = mi.battery_wear(bat)
+            usage(c, "Usure", wear, mi.usage_level(wear, mi.BATTERY_WEAR_WARN, 60),
+                  f"{wear} % — {bat.get('full_charge_mwh')} mWh sur {bat.get('design_mwh')} mWh d'origine"
+                  if wear is not None else mi.NON_LU)
+            if bat.get("cycle_count"):
+                row(c, "Cycles", str(bat["cycle_count"]))
+
+        # ── Réseau ────────────────────────────────────────────────────────────
+        nets = mi.physical_networks(data)
+        if nets:
+            c = card("🌐  Réseau")
+            for n in nets:
+                if n.get("connected"):
+                    speed = f" · {mi._num(n.get('speed_mbps')):.0f} Mb/s" if mi._num(n.get("speed_mbps")) else ""
+                    ips = ", ".join(mi.str_list(n.get("ipv4"))) or "sans IPv4"
+                    row(c, n.get("name") or "?", f"{ips} · MAC {n.get('mac') or '?'}{speed}\n"
+                                                 f"{n.get('description') or ''}")
+                else:
+                    row(c, n.get("name") or "?", f"déconnecté · MAC {n.get('mac') or '?'}", "dim")
+
+        # ── Périphériques en erreur ───────────────────────────────────────────
+        errs = [e for e in mi.as_list(data.get("device_errors")) if isinstance(e, dict)]
+        if errs:
+            c = card("🔌  Périphériques en erreur")
+            for e in errs:
+                hint = " (pilote absent)" if e.get("code") == 28 else ""
+                row(c, e.get("class") or "Périphérique", f"{e.get('name')} — code {e.get('code')}{hint}", "warn")
 
     # ── Panneau Heure & veille ────────────────────────────────────────────────
 
