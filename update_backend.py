@@ -10,8 +10,14 @@ Usage :
     py update_backend.py chemin\\vers.zip  installe depuis une archive locale (hors ligne)
     py update_backend.py --info          affiche seulement l'etat, ne change rien
 
-Le nouveau backend est depose dans %LOCALAPPDATA%\\Ghisdiag\\tools et prend le pas
-sur la DLL embarquee au prochain demarrage de Ghisdiag.
+Le nouveau backend est depose dans le dossier 'tools' A COTE de Ghisdiag.exe (le
+seul dossier de confiance que l'exe consulte, avec l'embarque) et prend le pas
+sur la DLL embarquee au prochain demarrage.
+
+SECURITE : l'exe ne charge plus de DLL depuis %LOCALAPPDATA% ni depuis une
+variable d'environnement (inscriptibles sans privileges -> risque d'elevation).
+Lance depuis les sources, cet outil ne peut pas deviner le dossier de l'exe :
+copiez alors les DLL installees dans <dossier de Ghisdiag>\\tools a la main.
 """
 
 import sys

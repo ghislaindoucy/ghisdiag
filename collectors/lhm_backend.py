@@ -9,10 +9,23 @@ debloque alors d'un simple remplacement de fichier.
 Resolution du dossier 'tools' actif, par ordre de priorite (le premier qui
 contient LibreHardwareMonitorLib.dll gagne) :
 
-    1. $GHISDIAG_TOOLS_DIR              override explicite (tests, cas avances)
-    2. <dossier de l'exe>\\tools         depot manuel, portable / cle USB [frozen]
-    3. %LOCALAPPDATA%\\Ghisdiag\\tools    gere par le mode mise a jour
-    4. <embarque>\\tools                 toujours present, fallback
+    EN PRODUCTION (exe) :
+        1. <dossier de l'exe>\\tools   depot manuel, portable / cle USB
+        2. <embarque>\\tools           toujours present, fallback
+
+    EN DEVELOPPEMENT (source) :
+        1. $GHISDIAG_TOOLS_DIR         override explicite (tests)
+        2. <embarque>\\tools           fallback
+
+SECURITE (audit du 13/09/2026) : %LOCALAPPDATA%\\Ghisdiag\\tools et la variable
+$GHISDIAG_TOOLS_DIR ne sont PLUS consultes par l'exe. %LOCALAPPDATA% est
+inscriptible par l'utilisateur courant meme quand Ghisdiag tourne en
+administrateur ; un malware sans privileges y deposait une DLL, chargee ensuite
+en ADMIN par Assembly.LoadFrom (sensors.ps1) -> elevation de privileges. On ne
+charge plus qu'un dossier de confiance : celui a cote de l'exe (le franchir
+revient a remplacer l'exe lui-meme, meme niveau de confiance) ou l'embarque. La
+mise a jour du backend (CPU recents type Zen 5) depose donc ses DLL dans
+<dossier de Ghisdiag>\\tools, pas dans %LOCALAPPDATA%.
 
 Le script PowerShell (sensors.ps1) recoit ce dossier via -ToolsDir : il n'y a
 donc qu'un seul endroit qui decide quel backend est utilise.
@@ -65,7 +78,11 @@ def embedded_tools_dir() -> Path:
 
 
 def user_tools_dir() -> Path:
-    """Dossier inscriptible gere par la mise a jour (%LOCALAPPDATA%\\Ghisdiag)."""
+    """Dossier inscriptible historique (%LOCALAPPDATA%\\Ghisdiag).
+
+    ATTENTION : n'est PLUS consulte par l'exe au chargement (inscriptible sans
+    privileges -> vecteur d'elevation, cf. en-tete). Conserve seulement comme
+    cible de repli des outils de mise a jour lances depuis les sources."""
     return (Path(os.path.expanduser("~")) / "AppData" / "Local"
             / "Ghisdiag" / "tools")
 
@@ -81,12 +98,19 @@ def exe_tools_dir() -> Optional[Path]:
 
 
 def _candidate_dirs() -> list[Path]:
+    """Dossiers 'tools' consultes, dans l'ordre. Seuls des dossiers de confiance
+    sont retenus (cf. en-tete du module) : ni %LOCALAPPDATA%, ni la variable
+    d'environnement en production."""
     cands: list[Optional[Path]] = []
-    env = os.environ.get("GHISDIAG_TOOLS_DIR")
-    if env:
-        cands.append(Path(env))
-    cands.append(exe_tools_dir())
-    cands.append(user_tools_dir())
+    if getattr(sys, "frozen", False):
+        # Production : uniquement des dossiers aussi surs que l'exe lui-meme.
+        cands.append(exe_tools_dir())
+    else:
+        # Developpement / tests : l'override par variable reste pratique, et il
+        # n'y a de toute facon pas de frontiere de privileges depuis les sources.
+        env = os.environ.get("GHISDIAG_TOOLS_DIR")
+        if env:
+            cands.append(Path(env))
     cands.append(embedded_tools_dir())
     # Dedup en gardant l'ordre, ignore None.
     seen: set[str] = set()
@@ -99,6 +123,13 @@ def _candidate_dirs() -> list[Path]:
             seen.add(key)
             out.append(c)
     return out
+
+
+def _default_install_dest() -> Path:
+    """Ou deposer une mise a jour du backend : le dossier de confiance que l'exe
+    consultera (a cote de l'exe). Hors frozen, un dossier de dev inscriptible."""
+    d = exe_tools_dir()
+    return d if d is not None else user_tools_dir()
 
 
 def _has_lib(d: Path) -> bool:
@@ -206,9 +237,10 @@ def install_from_zip(zip_path, dest: Optional[Path] = None) -> dict:
 
     Valide la presence de LibreHardwareMonitorLib.dll, copie toutes les *.dll de
     l'archive (a plat) dans un dossier temporaire, puis bascule atomiquement vers
-    `dest` (par defaut user_tools_dir). Ne leve jamais : retourne un dict statut.
+    `dest` (par defaut le dossier de confiance consulte par l'exe). Ne leve
+    jamais : retourne un dict statut.
     """
-    dest = Path(dest) if dest else user_tools_dir()
+    dest = Path(dest) if dest else _default_install_dest()
     result = {"ok": False, "action": "", "dest": str(dest),
               "version": None, "copied": [], "error": None}
     try:
