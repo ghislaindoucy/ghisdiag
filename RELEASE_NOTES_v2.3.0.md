@@ -65,11 +65,11 @@ pas « désactivé ».
 ## Vérifier l'archive téléchargée
 
 - **Nom** : `Ghisdiag.zip`
-- **Taille** : `__SIZE__`
+- **Taille** : `36 645 436 octets (≈ 35,0 Mo)`
 - **SHA-256** :
 
 ```
-__SHA256__
+3C235869437760B21B8812DD162E3DE6B7A7BB283637A0479E62114E56697A4D
 ```
 
 Pour contrôler l'empreinte après téléchargement (PowerShell, dans le dossier de
