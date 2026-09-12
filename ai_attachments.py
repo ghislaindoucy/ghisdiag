@@ -30,7 +30,7 @@ Premier client : le bench thermique (thermal_bench). Regles tranchees le
   - AVANT/APRES : si le jour compte une session « avant » et une « apres » pour
     la meme cible, c'est le DELTA (thermal_compare) qu'on joint, pas les deux.
 
-`render_attachments` accepte n'importe quelle liste de digests : la v2.3.0 y
+`render_attachments` accepte n'importe quelle liste de digests : la v2.4.0 y
 joindra le diagnostic de GhisdiagDisk (depot separe depuis le 10/09/2026), lu
 PAR FICHIER dans ses sessions JSON, jamais par import de code.
 """

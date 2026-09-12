@@ -1,6 +1,6 @@
 # Ghisdiag — Résumé & Roadmap
 
-**Version actuelle : 2.2.0** (2026-09-03) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.2.0)
+**Version actuelle : 2.3.0** (2026-09-13) — [Release](https://github.com/ghislaindoucy/ghisdiag/releases/tag/v2.3.0)
 
 ---
 
@@ -174,6 +174,36 @@ graphique (dépoussiérage, changement de pâte/pads).
 - **Correctif molette** : chaque panneau posait un `bind_all` global, la dernière
   zone construite captait la molette de toute l'app → routeur unique.
 - Validé en atelier (HP Pavilion 14-ce0009nf, 1080p en mise à l'échelle).
+
+### v2.3.0 — 🖥️ Fiche machine + durcissement sécurité ✅ *livré*
+
+**Le besoin** : à l'ouverture d'un poste en atelier, avoir sous les yeux ce qui compte
+avant d'intervenir, sans lancer un diagnostic complet — et fermer les portes qu'un
+audit interne de sécurité a trouvées ouvertes.
+
+- **Onglet « Machine »** en tête de Setup / MAJ (affiché à l'ouverture) : identité
+  (modèle commercial, série, châssis, rattachement, BIOS), Windows (édition, activation,
+  clé OEM, uptime), processeur, mémoire (barrettes), stockage par disque avec volumes et
+  BitLocker, **comptes locaux et Microsoft** (avec l'adresse), sécurité (TPM, Secure Boot,
+  antivirus), batterie, réseau, périphériques en erreur. « Points d'attention » triés par
+  gravité, bouton « Copier la fiche ». Lecture seule ; règle de fond : une valeur **non
+  lue** ne s'affiche jamais comme une valeur (`collectors/machine_info.ps1` +
+  `machine_info.py`, 34 tests).
+- **Dépannage / impression** : définir l'imprimante par défaut (en coupant la gestion
+  automatique de Windows, succès vérifié par relecture) et raccourci vers l'ancien
+  gestionnaire « Périphériques et imprimantes ».
+- **Sécurité — 4 correctifs (audit du 13/09/2026)** :
+  - **injection de commande PowerShell** via les arguments des scripts (SSID, nom
+    d'imprimante, chemin, mot de passe) : ils étaient collés dans une ligne `-Command` ;
+    un nom bien choisi exécutait du code **en administrateur**. Les arguments passent
+    désormais en JSON sur l'entrée standard, splattés côté PowerShell (`orchestrator.py`) ;
+  - **DLL capteurs** : plus de chargement depuis `%LOCALAPPDATA%` ni une variable
+    d'environnement (inscriptibles sans droits → élévation) ; seuls l'embarqué et le
+    dossier `tools\` à côté de l'exe (`collectors/lhm_backend.py`) ;
+  - **clé API Gemini** sortie de l'URL (en-tête `x-goog-api-key`), et masquée dans les
+    messages d'erreur ;
+  - **clés API** chiffrées par **DPAPI** (liées à la session Windows, indéductibles) au
+    lieu d'une clé dérivée d'infos publiques ; migration automatique, jamais de clé en clair.
 
 ### v2.2.0 — 📎 Pièces jointes au diagnostic IA ✅ *livré*
 
@@ -399,12 +429,7 @@ atelier sont traités.
 
 ## 🔜 Prochaines étapes
 
-### v2.2.0 — 📎 reste un essai réel
-
-Un bench thermique puis un audit IA sur la même machine, idéalement un bench écourté, pour
-vérifier que le modèle écrit « non mesuré » et pas « sain » (voir la section v2.2.0).
-
-### v2.3.0 — 💽 Import du diagnostic disque de GhisdiagDisk 🔜 *prochaine*
+### v2.4.0 — 💽 Import du diagnostic disque de GhisdiagDisk 🔜 *prochaine*
 
 GhisdiagDisk — test de santé disque autonome et bootable (WinPE, lecture seule, rapport
 client HTML) — vit depuis le 10/09/2026 dans son propre dépôt privé,

@@ -4,6 +4,64 @@ Toutes les modifications notables de ce projet sont documentées ici.
 
 ---
 
+## [2.3.0] — 2026-09-13
+
+### 🖥️ Fiche machine à l'ouverture
+
+Nouvel onglet **« Machine »** en tête de Setup / MAJ, affiché à l'ouverture de
+l'app : une vue en lecture seule de ce qu'un technicien veut voir avant
+d'intervenir.
+
+- Identité (modèle commercial, série, châssis, rattachement domaine/Entra ID,
+  BIOS), Windows (édition, version/build, activation + canal + clé OEM,
+  installation, uptime, redémarrage en attente).
+- Processeur, mémoire (barrettes), carte(s) graphique(s).
+- Stockage par disque (type, état) avec volumes, taux d'usage et BitLocker.
+- **Comptes locaux ET Microsoft** (avec l'adresse), admin/standard, dernière
+  activité ; profils domaine / Entra ID.
+- Sécurité (antivirus, TPM, Secure Boot, firmware), batterie (usure, cycles),
+  réseau (cartes réelles), périphériques en erreur.
+- « Points d'attention » triés par gravité ; bouton « Copier la fiche ».
+- Règle de fond : une valeur **non lue** ne s'affiche jamais comme une valeur
+  (TPM illisible sans droits ≠ absent ; BitLocker illisible ≠ désactivé).
+
+`collectors/machine_info.ps1` (lecture seule, ASCII strict, ~6 s) +
+`machine_info.py` (traduction testable) + rendu dans `main.py`. 34 tests.
+
+### 🖨️ Dépannage — impression
+
+- **Définir l'imprimante par défaut** en un clic : coupe d'abord « Laisser
+  Windows gérer mon imprimante par défaut » (sinon le choix serait repris),
+  succès **vérifié par relecture**, avertissement si l'élévation UAC a visé un
+  autre compte que la session ouverte.
+- Raccourci vers l'ancien gestionnaire **« Périphériques et imprimantes »**.
+
+### 🔒 Sécurité — 4 correctifs (audit du 13/09/2026)
+
+- **Injection de commande PowerShell** via les arguments des scripts (SSID, nom
+  d'imprimante, chemin, mot de passe) : ils étaient insérés dans une ligne
+  `-Command` construite en texte, avec deux trous (valeur commençant par `-`,
+  apostrophe typographique) qui exécutaient du code **en administrateur**. Les
+  arguments passent désormais en JSON sur l'entrée standard et sont splattés
+  côté PowerShell — une valeur reste une donnée (`orchestrator.py`).
+- **DLL capteurs** chargées depuis un dossier inscriptible sans droits :
+  `%LOCALAPPDATA%\Ghisdiag\tools` et `$GHISDIAG_TOOLS_DIR` ne sont plus consultés
+  par l'exe (vecteur d'élévation) ; seuls l'embarqué et le dossier `tools\` à
+  côté de l'exe (`collectors/lhm_backend.py`).
+- **Clé API Gemini** sortie de l'URL (en-tête `x-goog-api-key`), et masquée dans
+  tout message d'erreur.
+- **Clés API** chiffrées par **DPAPI** (liées à la session Windows, indéductibles
+  d'informations publiques) au lieu d'une clé dérivée du nom de machine +
+  utilisateur ; migration automatique, plus jamais de clé en clair
+  (`prefs.py`).
+
+### 🧹 Divers
+
+- Nettoyage des derniers restes de GhisdiagDisk (séparé le 10/09) : docstring
+  d'`ai_attachments.py` remise à jour.
+
+---
+
 ## [2.2.0] — 2026-09-03
 
 ### 📎 Le bench thermique du jour est joint à l'audit IA
