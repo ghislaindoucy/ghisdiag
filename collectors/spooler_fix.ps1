@@ -5,11 +5,13 @@
 #   -Action cancel-job  -PrinterName <n> -JobId <id>  -> annule un travail specifique
 #   -Action cancel-all  -PrinterName <n>               -> annule tous les travaux d'une imprimante
 #   -Action fix                                        -> vide tout + redemarre service
+#   -Action print-test  -PrinterName <n>               -> imprime une page de test
+#   -Action set-default -PrinterName <n>               -> definit l'imprimante par defaut
 #
 # Doit etre execute avec droits administrateur.
 
 param(
-    [ValidateSet("list", "printers", "cancel-job", "cancel-all", "fix", "print-test")]
+    [ValidateSet("list", "printers", "cancel-job", "cancel-all", "fix", "print-test", "set-default")]
     [string]$Action = "list",
 
     [Parameter(Mandatory = $false)]
@@ -290,6 +292,81 @@ if ($Action -eq "print-test") {
         exit $(if ($ok) { 0 } else { 1 })
     } catch {
         $err = @{ action = "print-test"; success = $false; name = $PrinterName; error = $_.Exception.Message }
+        Write-Output ($err | ConvertTo-Json -Depth 2)
+        exit 1
+    }
+}
+
+# -- Action: set-default ------------------------------------------------------
+if ($Action -eq "set-default") {
+    if (-not (Test-SafeName -Name $PrinterName)) {
+        $err = @{ action = "set-default"; success = $false; error = "Nom d'imprimante invalide ou non specifie." }
+        Write-Output ($err | ConvertTo-Json -Depth 2)
+        exit 1
+    }
+    $warnings     = [System.Collections.Generic.List[string]]::new()
+    $autoDisabled = $false
+    try {
+        $printer = Get-CimInstance -ClassName Win32_Printer |
+                   Where-Object { $_.Name -eq $PrinterName } |
+                   Select-Object -First 1
+        if (-not $printer) {
+            $err = @{ action = "set-default"; success = $false; name = $PrinterName; error = "Imprimante introuvable : $PrinterName" }
+            Write-Output ($err | ConvertTo-Json -Depth 2)
+            exit 1
+        }
+
+        # Windows 10/11 "Laisser Windows gerer mon imprimante par defaut" : tant que
+        # ce mode est actif, Windows reprend la main et redonne le role a la derniere
+        # imprimante utilisee. Le choix du technicien serait perdu au premier travail
+        # d'impression du client. On le coupe AVANT de definir l'imprimante.
+        $winKey = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows"
+        $legacy = $null
+        try {
+            $legacy = (Get-ItemProperty -Path $winKey -Name LegacyDefaultPrinterMode -ErrorAction Stop).LegacyDefaultPrinterMode
+        } catch {}
+        if ($legacy -ne 1) {
+            try {
+                New-ItemProperty -Path $winKey -Name LegacyDefaultPrinterMode -Value 1 `
+                                 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+                $autoDisabled = $true
+            } catch {
+                $warnings.Add("Gestion automatique par Windows non desactivee, le choix peut etre ecrase : $($_.Exception.Message)")
+            }
+        }
+
+        $cimResult = Invoke-CimMethod -InputObject $printer -MethodName "SetDefaultPrinter"
+        if ($cimResult.ReturnValue -ne 0) {
+            throw "Code d'erreur WMI : $($cimResult.ReturnValue)"
+        }
+
+        # Relire : un code retour 0 ne prouve pas que Windows a retenu le choix.
+        $current = Get-DefaultPrinterName
+        $ok      = ($current -eq $PrinterName)
+
+        # L'imprimante par defaut est un reglage PAR UTILISATEUR. Si l'elevation UAC
+        # s'est faite avec un autre compte que celui de la session ouverte, c'est ce
+        # compte-la qui a change, pas celui du client.
+        try {
+            $sessionUser = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName
+            $procUser    = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            if ($sessionUser -and $procUser -and ($sessionUser -ne $procUser)) {
+                $warnings.Add("Reglage applique au compte $procUser, pas a la session ouverte ($sessionUser).")
+            }
+        } catch {}
+
+        $result = @{
+            action             = "set-default"
+            success            = $ok
+            name               = $PrinterName
+            auto_mode_disabled = $autoDisabled
+            warning            = if ($warnings.Count -gt 0) { ($warnings -join " ") } else { $null }
+            error              = if ($ok) { $null } else { "Windows n'a pas retenu le choix (imprimante par defaut actuelle : '$current')." }
+        }
+        Write-Output ($result | ConvertTo-Json -Depth 2)
+        exit $(if ($ok) { 0 } else { 1 })
+    } catch {
+        $err = @{ action = "set-default"; success = $false; name = $PrinterName; error = $_.Exception.Message }
         Write-Output ($err | ConvertTo-Json -Depth 2)
         exit 1
     }

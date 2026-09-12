@@ -1105,6 +1105,20 @@ class GhisdiagApp(tk.Tk):
             command=self._spooler_print_test,
         )
         self.btn_print_test.pack(side="left")
+        self.btn_set_default = tk.Button(
+            test_row, text="★  Définir par défaut",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=12, pady=7, state="disabled",
+            command=self._spooler_set_default,
+        )
+        self.btn_set_default.pack(side="left", padx=(6, 0))
+        tk.Button(
+            test_row, text="🗂  Périphériques et imprimantes",
+            font=("Segoe UI", 10), bg=SURFACE, fg=FG,
+            activebackground=SURFACE2, relief="flat", cursor="hand2",
+            padx=12, pady=7, command=self._open_printers_folder,
+        ).pack(side="right")
 
         # Log
         self.spooler_log_var = tk.StringVar(value="")
@@ -1125,6 +1139,7 @@ class GhisdiagApp(tk.Tk):
         self.btn_cancel_job.configure(state="disabled")
         self.btn_cancel_all.configure(state="disabled")
         self.btn_print_test.configure(state="disabled")
+        self.btn_set_default.configure(state="disabled")
         self.spooler_status_var.set("Chargement…")
         self.printer_listbox.delete(0, "end")
         self.printer_listbox.insert("end", "  Chargement…")
@@ -1142,11 +1157,7 @@ class GhisdiagApp(tk.Tk):
                     self.spooler_status_var.set(svc.get("status", "?"))
                     self.printer_listbox.delete(0, "end")
                     for p in printers:
-                        icon   = "●" if p.get("status") == "Normal" else "○"
-                        jobs_n = p.get("job_count", 0)
-                        suffix = f"  ({jobs_n} travail{'x' if jobs_n > 1 else ''})" if jobs_n else ""
-                        dflt   = "  ★" if p.get("is_default") else ""
-                        self.printer_listbox.insert("end", f"  {icon}  {p.get('name', '?')}{dflt}{suffix}")
+                        self.printer_listbox.insert("end", self._spooler_printer_label(p))
                     if not printers:
                         self.printer_listbox.insert("end", "  Aucune imprimante trouvée")
                     self.job_listbox.delete(0, "end")
@@ -1177,11 +1188,14 @@ class GhisdiagApp(tk.Tk):
             self.btn_cancel_job.configure(state="disabled")
             self.btn_cancel_all.configure(state="disabled")
             self.btn_print_test.configure(state="disabled")
+            self.btn_set_default.configure(state="disabled")
             return
         idx = sel[0]
         if idx >= len(self._spooler_printers):
             return
         p = self._spooler_printers[idx]
+        # Déjà par défaut : rien à faire, le bouton resterait sans effet visible.
+        self.btn_set_default.configure(state="disabled" if p.get("is_default") else "normal")
         self._spooler_jobs = p.get("jobs", [])
         self._spooler_jobs_title.set(f"Travaux — {p.get('name', '?')}")
         self.job_listbox.delete(0, "end")
@@ -1421,6 +1435,83 @@ class GhisdiagApp(tk.Tk):
                 self.after(0, _err)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _spooler_printer_label(p: dict) -> str:
+        icon   = "●" if p.get("status") == "Normal" else "○"
+        jobs_n = p.get("job_count", 0)
+        suffix = f"  ({jobs_n} {'travaux' if jobs_n > 1 else 'travail'})" if jobs_n else ""
+        dflt   = "  ★" if p.get("is_default") else ""
+        return f"  {icon}  {p.get('name', '?')}{dflt}{suffix}"
+
+    @staticmethod
+    def _set_default_feedback(data: dict) -> str:
+        name = data.get("name", "")
+        if not data.get("success"):
+            return f"✗ Erreur : {data.get('error') or 'Erreur inconnue'}"
+        txt = f"✓ « {name} » est l'imprimante par défaut"
+        if data.get("auto_mode_disabled"):
+            txt += " (gestion automatique par Windows désactivée)"
+        if data.get("warning"):
+            txt += f"\n⚠ {data['warning']}"
+        return txt
+
+    def _spooler_set_default(self):
+        if self._spooler_busy:
+            return
+        sel = self.printer_listbox.curselection()
+        if not sel or sel[0] >= len(self._spooler_printers):
+            return
+        printer_name = self._spooler_printers[sel[0]].get("name", "")
+        if not printer_name:
+            return
+
+        self._spooler_busy = True
+        self.btn_set_default.configure(state="disabled")
+        self.spooler_log_var.set(f"Définition de {printer_name} comme imprimante par défaut…")
+
+        def _worker():
+            try:
+                data = run_ps_action(
+                    "collectors/spooler_fix.ps1",
+                    ["-Action", "set-default", "-PrinterName", printer_name],
+                )
+                def _result():
+                    self._spooler_busy = False
+                    if data.get("success"):
+                        # Déplacer l'étoile sans relancer tout l'inventaire (quelques
+                        # secondes de PowerShell) — et sans effacer le message.
+                        for i, p in enumerate(self._spooler_printers):
+                            p["is_default"] = (p.get("name") == printer_name)
+                            self.printer_listbox.delete(i)
+                            self.printer_listbox.insert(i, self._spooler_printer_label(p))
+                        self.printer_listbox.selection_clear(0, "end")
+                        self.printer_listbox.selection_set(sel[0])
+                    else:
+                        self.btn_set_default.configure(state="normal")
+                    self.spooler_log_var.set(self._set_default_feedback(data))
+                self.after(0, _result)
+            except Exception as exc:
+                _exc = exc
+                def _err(e=_exc):
+                    self._spooler_busy = False
+                    self.spooler_log_var.set(f"✗ Erreur : {e}")
+                    self.btn_set_default.configure(state="normal")
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # Dossier « Périphériques et imprimantes » du Panneau de configuration : plus
+    # rapide que Paramètres pour les propriétés du pilote, les ports et les
+    # préférences d'impression.
+    PRINTERS_FOLDER = "shell:::{A8A91A66-3A7D-4424-8D24-04E180695C7A}"
+
+    def _open_printers_folder(self):
+        try:
+            subprocess.Popen(["explorer.exe", self.PRINTERS_FOLDER], shell=False)
+        except OSError as e:
+            logger.warning("Impossible d'ouvrir Périphériques et imprimantes : %s", e)
+            messagebox.showerror("Erreur", f"Impossible d'ouvrir Périphériques et imprimantes : {e}")
 
     # ── Section Réseau ────────────────────────────────────────────────────────
     def _build_network_section(self, parent: tk.Frame):
