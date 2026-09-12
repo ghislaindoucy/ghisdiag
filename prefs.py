@@ -8,6 +8,7 @@ import socket
 import base64
 import hashlib
 from pathlib import Path
+from typing import Optional
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -16,6 +17,69 @@ except ImportError:
     _HAS_CRYPTO = False
 
 logger = logging.getLogger(__name__)
+
+# ── Chiffrement des clés API : DPAPI de Windows ──────────────────────────────
+#
+# L'ancien schéma dérivait la clé Fernet du nom de machine + nom d'utilisateur
+# (voir _legacy_fernet_decrypt). Ces deux valeurs figurent dans CHAQUE rapport
+# JSON produit par Ghisdiag : quiconque récupérait un rapport et le prefs.json
+# pouvait reconstruire la clé et déchiffrer les clés API. Le « chiffrement »
+# n'en était pas un.
+#
+# DPAPI (CryptProtectData, portée utilisateur) lie le secret au compte Windows
+# courant : le chiffré n'est déchiffrable que par le même utilisateur, sur la
+# même machine, protégé par ses identifiants de session — et rien n'est
+# dérivable d'informations publiques. C'est le mécanisme prévu par Windows pour
+# exactement cet usage. On ajoute une entropie secondaire propre à l'app.
+#
+# Les clés déjà enregistrées à l'ancien format sont relues (migration) puis
+# réécrites en DPAPI au premier save_prefs. Si le chiffrement échoue, la clé
+# n'est PAS écrite en clair : elle n'est pas enregistrée du tout.
+
+_DPAPI_PREFIX = "dpapi:"
+_DPAPI_ENTROPY = b"ghisdiag-api-key-v1"
+
+try:
+    import ctypes
+    from ctypes import wintypes
+
+    class _DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _crypt32.CryptProtectData.restype = wintypes.BOOL
+    _crypt32.CryptProtectData.argtypes = [
+        ctypes.POINTER(_DATA_BLOB), wintypes.LPCWSTR, ctypes.POINTER(_DATA_BLOB),
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_DATA_BLOB)]
+    _crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    _crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(_DATA_BLOB), ctypes.c_void_p, ctypes.POINTER(_DATA_BLOB),
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_DATA_BLOB)]
+    _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    _HAS_DPAPI = True
+except (ImportError, OSError, AttributeError):
+    _HAS_DPAPI = False
+
+
+def _dpapi(func, data: bytes) -> bytes:
+    """Appelle CryptProtectData / CryptUnprotectData avec l'entropie de l'app.
+
+    Les tampons source restent des variables locales le temps de l'appel : les
+    laisser filer avant le retour de l'API corromprait la mémoire lue."""
+    src = ctypes.create_string_buffer(data, len(data))
+    ent = ctypes.create_string_buffer(_DPAPI_ENTROPY, len(_DPAPI_ENTROPY))
+    blob_in = _DATA_BLOB(len(data), ctypes.cast(src, ctypes.POINTER(ctypes.c_char)))
+    blob_ent = _DATA_BLOB(len(_DPAPI_ENTROPY), ctypes.cast(ent, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DATA_BLOB()
+    if not func(ctypes.byref(blob_in), None, ctypes.byref(blob_ent),
+                None, None, 0, ctypes.byref(blob_out)):
+        raise OSError(f"DPAPI a échoué (code {ctypes.get_last_error()})")
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        _kernel32.LocalFree(blob_out.pbData)
 
 def _log_dir() -> Path:
     """Dossier du journal et des preferences.
@@ -78,57 +142,61 @@ _ENCRYPTED_KEYS = {
 }
 
 
-def _get_encryption_key() -> bytes:
-    """Génère une clé Fernet dérivée de la machine + username."""
+def _encrypt_string(plaintext: str) -> Optional[str]:
+    """Chiffre une clé API avec DPAPI. Retourne None si le chiffrement échoue :
+    on ne stocke JAMAIS une clé en clair, mieux vaut ne pas la garder."""
+    if not plaintext:
+        return None
+    if _HAS_DPAPI:
+        try:
+            blob = _dpapi(_crypt32.CryptProtectData, plaintext.encode("utf-8"))
+            return _DPAPI_PREFIX + base64.b64encode(blob).decode("ascii")
+        except OSError as e:
+            logger.error("Chiffrement DPAPI impossible : %s", e)
+    logger.error("Clé API non chiffrable : elle ne sera pas enregistrée")
+    return None
+
+
+def _decrypt_string(ciphertext: str) -> Optional[str]:
+    """Déchiffre une clé API. None = illisible (à ignorer, jamais deviner)."""
+    if ciphertext.startswith(_DPAPI_PREFIX):
+        if not _HAS_DPAPI:
+            return None
+        try:
+            blob = base64.b64decode(ciphertext[len(_DPAPI_PREFIX):])
+            return _dpapi(_crypt32.CryptUnprotectData, blob).decode("utf-8")
+        except (OSError, ValueError) as e:
+            logger.warning("Déchiffrement DPAPI impossible : %s", e)
+            return None
+    # Format hérité (Fernet dérivé du nom machine+utilisateur) : relu pour migrer,
+    # réécrit en DPAPI au prochain save_prefs.
+    return _legacy_fernet_decrypt(ciphertext)
+
+
+def _legacy_fernet_key() -> bytes:
+    """Ancienne clé Fernet dérivée de la machine + username (schéma déprécié)."""
     try:
         machine_name = socket.gethostname()
     except Exception:
         machine_name = "unknown"
-
     username = os.environ.get("USERNAME", "unknown")
     seed = f"{machine_name}:{username}:ghisdiag".encode("utf-8")
-
-    # Hash du seed pour obtenir une clé 32 bytes (256 bits)
-    key_hash = hashlib.sha256(seed).digest()
-    # Encoder en base64 pour Fernet
-    fernet_key = base64.urlsafe_b64encode(key_hash)
-    return fernet_key
+    return base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
 
 
-def _encrypt_string(plaintext: str) -> str:
-    """Chiffre une chaîne. Retourne la chaîne en clair si crypto non disponible."""
+def _legacy_fernet_decrypt(ciphertext: str) -> Optional[str]:
+    """Déchiffre une clé à l'ancien format, uniquement pour la migration."""
     if not _HAS_CRYPTO:
-        logger.warning("cryptography non disponible, clé non chiffrée")
-        return plaintext
-
+        return None
     try:
-        key = _get_encryption_key()
-        f = Fernet(key)
-        encrypted = f.encrypt(plaintext.encode("utf-8"))
-        return encrypted.decode("utf-8")
-    except Exception as e:
-        logger.warning(f"Erreur chiffrement: {e}, stockage en clair")
-        return plaintext
-
-
-def _decrypt_string(ciphertext: str) -> str:
-    """Déchiffre une chaîne. Retourne la chaîne en clair si crypto non disponible ou erreur."""
-    if not _HAS_CRYPTO:
-        return ciphertext
-
-    try:
-        key = _get_encryption_key()
-        f = Fernet(key)
-        decrypted = f.decrypt(ciphertext.encode("utf-8"))
-        return decrypted.decode("utf-8")
+        return Fernet(_legacy_fernet_key()).decrypt(ciphertext.encode("utf-8")).decode("utf-8")
     except InvalidToken:
-        # Valeur non déchiffrable : soit en clair (ancienne version / crypto absente
-        # à la sauvegarde), soit chiffrée sur une autre machine. On la rend telle quelle.
-        logger.warning("Clé non déchiffrable (texte clair ou autre machine), valeur ignorée")
-        return ciphertext
+        # Chiffrée sur une autre machine, ou déjà en clair (très ancienne version).
+        logger.warning("Clé héritée non déchiffrable, ignorée")
+        return None
     except Exception as e:
-        logger.warning(f"Erreur déchiffrement: {e}")
-        return ciphertext
+        logger.warning("Erreur déchiffrement hérité : %s", e)
+        return None
 
 
 def load_prefs() -> dict:
@@ -143,9 +211,12 @@ def load_prefs() -> dict:
         for key, expected_type in _PREFS_SCHEMA.items():
             val = raw.get(key)
             if isinstance(val, expected_type):
-                # Déchiffrer les clés sensibles
+                # Déchiffrer les clés sensibles ; None = illisible, on l'ignore
+                # (on ne charge jamais une valeur qu'on n'a pas su déchiffrer).
                 if key in _ENCRYPTED_KEYS and isinstance(val, str):
                     val = _decrypt_string(val)
+                    if val is None:
+                        continue
 
                 validator = _PREFS_VALIDATORS.get(key)
                 if validator is None or validator(val):
@@ -161,12 +232,12 @@ def save_prefs(prefs: dict):
         prefs_to_save = {}
         for key, val in prefs.items():
             if key in _ENCRYPTED_KEYS and isinstance(val, str):
-                # Clé vide (jamais saisie ou éjectée) : on n'écrit RIEN, pas même
-                # une chaîne vide chiffrée. Le fichier ne doit garder aucune trace
-                # d'un fournisseur dont la clé a été retirée.
-                if not val:
-                    continue
-                prefs_to_save[key] = _encrypt_string(val)
+                # Clé vide (jamais saisie ou éjectée), ou non chiffrable : on
+                # n'écrit RIEN. Le fichier ne garde aucune trace d'un fournisseur
+                # dont la clé a été retirée, ni jamais de clé en clair.
+                enc = _encrypt_string(val)
+                if enc:
+                    prefs_to_save[key] = enc
             else:
                 prefs_to_save[key] = val
 

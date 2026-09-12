@@ -49,7 +49,7 @@ Après ton diagnostic, active l'analyse IA et choisis ton fournisseur — **Anth
 - ✅ **Optimisations** — gagner en vitesse et stabilité
 - ✅ **Priorités claires** — critique → grave → moyen → faible
 
-Clé API par fournisseur (chiffrée AES-128), boutons « Tester la clé » et « Éjecter la clé », aucun SDK requis.
+Clé API par fournisseur (chiffrée par **DPAPI**, liée à ta session Windows), boutons « Tester la clé » et « Éjecter la clé », aucun SDK requis.
 
 ---
 
@@ -369,7 +369,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 - Popup d'attente non-bloquant
 - Conversion Markdown → HTML
 - Commandes exactes, pas de conseils vagues
-- Chiffrement clé API (AES-128)
+- Chiffrement clé API (DPAPI Windows)
 
 🎨 **UI améliorations**
 - Démarrage en mode maximisé
@@ -388,7 +388,7 @@ Ghisdiag_LAPTOP-ABC_20250603_143056_AI_ANALYSIS.html
 ## 🔒 Sécurité
 
 - ✅ **Admin requis** — pas d'accès aux données sensibles sans droits
-- ✅ **Clé API chiffrée** — jamais stockée en clair (AES-128 Fernet)
+- ✅ **Clé API chiffrée par DPAPI** — liée à ta session Windows, jamais stockée en clair, jamais déchiffrable ailleurs
 - ✅ **Clé API éjectable** — bouton « Éjecter la clé » : effacement du disque et de la mémoire avant de laisser l'appli sur un poste tiers
 - ✅ **Pas de tracking** — tout reste local, aucun envoi de données
 - ✅ **Exe signable** — prêt pour signature de code (optionnel)

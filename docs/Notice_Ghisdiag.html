@@ -581,7 +581,7 @@ footer.pagefoot{
 </ol>
 
 <div class="callout">
-  <b>Stockage sécurisé.</b> La clé API est chiffrée (AES via Fernet) avant d'être enregistrée localement dans <code>%APPDATA%\Local\Ghisdiag\prefs.json</code>. La clé de chiffrement est dérivée du nom de la machine et de l'utilisateur : elle n'est donc lisible que sur ce poste, par ce compte Windows. Aucune clé n'est jamais transmise à un tiers autre que le fournisseur d'IA choisi, au moment de l'analyse.
+  <b>Stockage sécurisé.</b> La clé API est chiffrée par <b>DPAPI</b>, le service de protection de données de Windows, avant d'être enregistrée localement dans <code>%APPDATA%\Local\Ghisdiag\prefs.json</code>. Le chiffrement est lié à ta session Windows : la clé n'est déchiffrable que par ce compte, sur ce poste, et le secret ne se déduit d'aucune information publique. Aucune clé n'est jamais transmise à un tiers autre que le fournisseur d'IA choisi, au moment de l'analyse.
 </div>
 
 <h3>Éjecter la clé (laisser Ghisdiag sur un poste tiers)</h3>
